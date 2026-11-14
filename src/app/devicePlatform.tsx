@@ -92,8 +92,11 @@ export const devicePlatform: Platform = {
     // Only while the app is in use; the precise permission is the one that counts (Android's "fine").
     permission: async () => {
       const current = await Location.getForegroundPermissionsAsync();
-      const answer = current.granted || !current.canAskAgain ? current : await Location.requestForegroundPermissionsAsync();
-      return { granted: answer.granted, precise: answer.android?.accuracy === "fine" };
+      const fine = (answer: Location.LocationPermissionResponse) => answer.android?.accuracy === "fine";
+      // Asked again when it was never given, and also when only the approximate one was: Android 12+ then offers
+      // the change to precise, which otherwise the person would only find in the system settings.
+      const answer = (current.granted && fine(current)) || !current.canAskAgain ? current : await Location.requestForegroundPermissionsAsync();
+      return { granted: answer.granted, precise: fine(answer) };
     },
     current: async () => {
       const fix = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
