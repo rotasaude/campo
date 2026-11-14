@@ -187,6 +187,51 @@ test("server item that was born on the tablet replaces the local-born row by cli
   expect(await db.get("SELECT household_key FROM registrations WHERE key = ?", [REG.id])).toEqual({ household_key: born });
 });
 
+// A household born on the tablet and already accepted: its key is the client_uuid; the server id is only known
+// through client_ids (and, once the accepted answer brought it, in the row's `id`).
+async function bornAndAccepted(db: Db, o: { idOnRow: boolean }) {
+  const born = "c0ffee30-0000-4000-8000-000000000030";
+  await db.run("INSERT INTO households (key, id, client_uuid, micro_area_id, body, street_norm, number) VALUES (?, ?, ?, ?, '{}', 'x', '1')",
+    [born, o.idOnRow ? HH.id : null, born, HH.micro_area.id]);
+  await db.run("INSERT INTO families (id, household_key) VALUES ('fa-born', ?)", [born]);
+  await db.run("INSERT INTO registrations (key, client_uuid, household_key, body, name_norm) VALUES ('rg-born', 'rg-born', ?, '{}', 'x')", [born]);
+  await outboxRepo.mapClientId(db, born, "household", HH.id);
+  return born;
+}
+
+test.each([[true], [false]])("removal of a household born on the tablet and already accepted (id on the row: %s) is found by its local key (Q70)", async (idOnRow) => {
+  const db = await createTestDb();
+  const born = await bornAndAccepted(db, { idOnRow });
+  await db.run("INSERT INTO households (key, id, micro_area_id, body, street_norm, number) VALUES ('other', 'other', ?, '{}', 'y', '2')", [HH.micro_area.id]);
+  await applyPage(db, withPage(REMOVALS, { removals: [{ type: "household", id: HH.id, reason: "moved" }] }));
+  expect(await householdRow(db, born)).toBeNull();
+  expect(await db.all("SELECT key FROM households")).toEqual([{ key: "other" }]);
+  expect([await count(db, "families"), await count(db, "registrations")]).toEqual([0, 0]);
+  // The map stays: an item still in the line may cite the record by its client_uuid.
+  expect(await outboxRepo.mappedIds(db)).toEqual(new Map([[born, HH.id]]));
+});
+
+test("removal of a registration born on the tablet and already accepted is found by client_ids (Q70)", async () => {
+  const db = await createTestDb();
+  await db.run("INSERT INTO registrations (key, id, client_uuid, body, name_norm) VALUES ('rg-born', NULL, 'rg-born', '{}', 'x')");
+  await outboxRepo.mapClientId(db, "rg-born", "individual_registration", REG.id);
+  // The same server id mapped for another type must not match.
+  await db.run("INSERT INTO households (key, id, client_uuid, micro_area_id, body, street_norm, number) VALUES ('hh-x', NULL, 'hh-x', 'ma', '{}', 'x', '1')");
+  await applyPage(db, withPage(REMOVALS, { removals: [{ type: "registration", id: REG.id, reason: "moved" }] }));
+  expect([await count(db, "registrations"), await count(db, "households")]).toEqual([0, 1]);
+});
+
+test("reset wipes a household born on the tablet and already accepted, and keeps the client_ids map (Q70)", async () => {
+  const db = await createTestDb();
+  const born = await bornAndAccepted(db, { idOnRow: false });
+  await applyPage(db, RESET);
+  expect([await count(db, "households"), await count(db, "families"), await count(db, "registrations")]).toEqual([0, 0, 0]);
+  expect(await outboxRepo.mappedIds(db)).toEqual(new Map([[born, HH.id]]));
+  // When the scope brings the record back, it is filed under its server id: the local-born row is gone for good.
+  await applyPage(db, FIRST);
+  expect((await db.all<{ key: string }>("SELECT key FROM households")).map((r) => r.key)).toEqual([HH.id]);
+});
+
 test("page failing midway applies nothing and keeps the previous cursor", async () => {
   const db = await createTestDb();
   await db.run("INSERT INTO meta (key, value) VALUES ('cursor', 'previous')");
