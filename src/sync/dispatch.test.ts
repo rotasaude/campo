@@ -176,6 +176,20 @@ describe("sendQueue", () => {
     expect((await row<{ base_version: number }>(db, "households", "hh-key"))!.base_version).toBe(5);
   });
 
+  test("a second edit of a record born on the tablet names it by the server id once the first was accepted", async () => {
+    // The schema ties `version` to `household_id` (and to `registration_id`): the second item was written
+    // before the server gave the record an id, so its body has neither.
+    const db = await createTestDb();
+    await insertHousehold(db, HOUSEHOLD.client_uuid, { id: null });
+    await enqueue(db, { type: "household", body: HOUSEHOLD.body, targetId: HOUSEHOLD.client_uuid, clientUuid: HOUSEHOLD.client_uuid }, newUuid);
+    await enqueue(db, { type: "household", body: { ...HOUSEHOLD.body, contact_phone: "41988880009" }, targetId: HOUSEHOLD.client_uuid }, newUuid);
+    const { client, batches } = fakeClient((items) => items.map((i) => accepted(i, { version: batches.length })));
+    await sendQueue({ db, client, ...noStale });
+    expect(batches).toHaveLength(2);
+    expect(batches[0][0].body).not.toHaveProperty("household_id");
+    expect(batches[1][0].body).toMatchObject({ household_id: SERVER_ID, version: 1, contact_phone: "41988880009" });
+  });
+
   test("an edit based on another version is not rebased: it will go through the merge", async () => {
     const db = await createTestDb();
     await insertHousehold(db, "hh-key", { baseVersion: 3 });

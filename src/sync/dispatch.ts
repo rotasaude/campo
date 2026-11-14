@@ -178,10 +178,22 @@ export async function applyResults(db: Db, sent: OutboxItem[], results: UploadRe
 
 export interface SendDeps { db: Db; client: Pick<FieldClient, "uploads">; onStale: ApplyHooks["onStale"] }
 
-async function rowBaseVersion(db: Db, item: OutboxItem): Promise<number | null> {
+async function targetRow(db: Db, item: OutboxItem): Promise<{ id: string | null; base_version: number | null } | null> {
   const table = targetTable(item.type);
   if (table === null || item.target_id === null) return null;
-  return (await db.get<{ base_version: number | null }>(`SELECT base_version FROM ${table} WHERE key = ?`, [item.target_id]))?.base_version ?? null;
+  return db.get<{ id: string | null; base_version: number | null }>(`SELECT id, base_version FROM ${table} WHERE key = ?`, [item.target_id]);
+}
+
+// The key that names an existing record in the body. The schema ties it to `version`: one never travels without the other.
+const ID_KEY: Record<string, string> = { household: "household_id", individual_registration: "registration_id" };
+
+// The body as it travels: the version is filled here and nowhere else.
+function wireBody(item: OutboxItem, version: number | null, rowId: string | null): Record<string, unknown> {
+  if (version === null) return item.body;
+  const idKey = ID_KEY[item.type];
+  if (idKey === undefined || typeof item.body[idKey] === "string") return { ...item.body, version };
+  // An edit written before the server gave the record an id (the creation was still in the line).
+  return rowId === null ? item.body : { ...item.body, [idKey]: rowId, version };
 }
 
 export async function sendQueue(deps: SendDeps): Promise<{ stop: "rate_limited" | "http" | null; failure?: HttpFailure }> {
@@ -198,10 +210,12 @@ export async function sendQueue(deps: SendDeps): Promise<{ stop: "rate_limited" 
     const sent: OutboxItem[] = [];
     await db.tx(async (tx) => {
       for (const item of batch) {
-        const version = VERSIONED.has(item.type) ? resolveVersion(item, await rowBaseVersion(tx, item)) : null;
+        const row = VERSIONED.has(item.type) ? await targetRow(tx, item) : null;
+        const body = wireBody(item, VERSIONED.has(item.type) ? resolveVersion(item, row?.base_version ?? null) : null, row?.id ?? null);
+        const version = typeof body.version === "number" ? body.version : null;
         await outboxRepo.update(tx, item.seq, { state: "sending", sent_version: version });
         sent.push({ ...item, state: "sending", sent_version: version });
-        wire.push({ client_uuid: item.client_uuid, type: item.type, body: version === null ? item.body : { ...item.body, version } });
+        wire.push({ client_uuid: item.client_uuid, type: item.type, body });
       }
     });
 
