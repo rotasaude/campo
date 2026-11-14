@@ -1,0 +1,77 @@
+// One phrase per code of the contract (errors.http and errors.item of
+// domains-v1.json). A phrase never carries a value: not the name, not the
+// number typed, not a coordinate. The test fails when the contract gains a
+// code that has no phrase here.
+const CHECK_FIELD = "Confira o campo destacado.";
+
+export const ERROR_PHRASES: Record<string, string> = {
+  // ── errors.http ────────────────────────────────────────────────────────
+  invalid_token: "Acesso suspenso: procure o enfermeiro da equipe ou leia o QR novo.",
+  device_suspended: "Acesso suspenso: procure o enfermeiro da equipe ou leia o QR novo.",
+  device_revoked: "Este aparelho foi revogado. Os dados do tablet foram apagados; cadastre o aparelho de novo no dashboard.",
+  feature_disabled: "A visita domiciliar pelo app está desligada nesta cidade. Seus registros ficam guardados no tablet.",
+  invalid_request: "O Rota Saúde não entendeu o envio. Atualize o app e tente de novo.",
+  invalid_cursor: "A lista mudou no Rota Saúde. O tablet vai baixar tudo de novo.",
+  invalid_limit: "O Rota Saúde não entendeu o pedido de download. Atualize o app e tente de novo.",
+  too_many_requests: "Muitos envios em pouco tempo. O tablet tenta de novo em alguns minutos.",
+  payload_too_large: "O envio ficou grande demais. Reduza o texto das observações.",
+  json_required: "O Rota Saúde não entendeu o envio. Atualize o app e tente de novo.",
+  map_not_found: "O mapa desta cidade ainda não foi gerado. O app funciona sem o mapa; avise o enfermeiro da equipe.",
+  range_not_satisfiable: "O mapa mudou no Rota Saúde. O download recomeça do início.",
+  unknown_city: "O Rota Saúde não reconhece o endereço desta cidade. Gere um QR novo no dashboard.",
+  city_suspended: "O Rota Saúde está suspenso nesta cidade. Seus registros ficam guardados no tablet.",
+  city_schema_behind: "O Rota Saúde está em atualização nesta cidade. O tablet tenta de novo em alguns minutos.",
+
+  // ── errors.item ────────────────────────────────────────────────────────
+  client_uuid_conflict: "Este registro já foi enviado com outro conteúdo. Confira os dados e grave de novo.",
+  not_found: "O Rota Saúde não encontrou este registro. Sincronize e confira se ele ainda existe.",
+  cbo_not_allowed: "Seu CBO não permite este registro.",
+  out_of_scope: "Esta microárea não está mais no seu território.",
+  invalid_home_visit: CHECK_FIELD,
+  visit_date_out_of_range: "A data da visita está fora do período aceito. Confira a data.",
+  non_residential_with_person: "Imóvel que não é domicílio não leva pessoa na visita.",
+  reasons_forbidden: "Visita recusada ou com morador ausente não leva motivo.",
+  reason_not_allowed: "Um dos motivos não vale para esta visita.",
+  measurements_forbidden: "Esta medida não vale para esta visita.",
+  patient_in_other_household: "Esta pessoa tem cadastro ativo em outro domicílio. Visite-a por lá.",
+  family_without_responsible: "A família está sem responsável ativo. Escolha a pessoa moradora.",
+  day_closed: "A folha deste dia já foi fechada. A visita não pode mais ser retirada.",
+  visit_changed: "Esta visita mudou no Rota Saúde. Sincronize e confira.",
+  invalid_collective_activity: CHECK_FIELD,
+  activity_date_out_of_range: "A data da atividade está fora do período aceito. Confira a data.",
+  duplicate_participant: "A mesma pessoa aparece duas vezes na atividade.",
+  professional_without_cns: "Seu CNS não está no cadastro de profissionais. Procure o enfermeiro da equipe.",
+  patient_unidentified: "Pessoa com cadastro provisório da urgência não pode ser registrada aqui. Ela precisa ser identificada no posto antes.",
+  duplicate_suspected: "Pode ser que esta pessoa já tenha cadastro. Confira as pessoas parecidas antes de continuar.",
+  cpf_taken: "Este CPF já pertence a outra pessoa. Confira o número.",
+  cns_taken: "Este CNS já pertence a outra pessoa. Confira o número.",
+  invalid_household: CHECK_FIELD,
+  invalid_family: CHECK_FIELD,
+  invalid_registration: CHECK_FIELD,
+  cpf_or_reason_required: "Informe o CPF ou o motivo de não ter CPF.",
+  already_registered: "Esta pessoa já tem cadastro individual ativo. Abra o cadastro dela para atualizar.",
+  identity_locked: "A identidade desta pessoa já foi validada no posto e não se altera pelo app.",
+  address_from_household: "O endereço desta pessoa vem do cadastro domiciliar. Altere pelo domicílio.",
+  invalid_ethnicity: "Etnia inválida: só vale com raça/cor indígena e com um código da lista.",
+  citizen_not_verified: "Este CPF tem cadastro feito pelo próprio cidadão, ainda sem validação no posto. A identidade precisa ser validada antes.",
+  invalid_transition: "Esta ação não vale para a situação atual do cadastro (já saiu ou recusou).",
+  household_inactive: "O domicílio está inativo. Escolha outro ou registre o imóvel sem cadastro.",
+  family_moved_out: "A família se mudou do domicílio. Escolha outra pessoa.",
+  micro_area_inactive: "A microárea está inativa.",
+  invalid_cpf: "CPF inválido: confira os 11 dígitos.",
+  invalid_cns: "CNS inválido: confira os 15 dígitos.",
+  invalid_patient: "Confira o campo destacado da pessoa.",
+  internal_error: "O Rota Saúde teve um erro ao gravar este registro. O tablet guarda o registro; tente enviar de novo mais tarde.",
+  household_changed: "O domicílio mudou no Rota Saúde depois deste cadastro. Sincronize e confira o domicílio.",
+  invalid_location: "Ponto inválido. Marque de novo no mapa ou leia o GPS outra vez.",
+  family_not_found: "O Rota Saúde não encontrou a família deste registro. Sincronize e escolha a família de novo.",
+};
+
+// The code is a contract identifier (letters, digits, underscore): anything else is not echoed.
+const CODE = /^[a-z0-9_]{1,64}$/;
+
+export function phraseFor(code: string | null | undefined): string {
+  if (code && Object.prototype.hasOwnProperty.call(ERROR_PHRASES, code)) return ERROR_PHRASES[code];
+  const shown = code && CODE.test(code) ? code : "desconhecido";
+  return `O Rota Saúde recusou este registro (código ${shown}). Fale com o enfermeiro da equipe.`;
+}

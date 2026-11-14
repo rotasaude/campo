@@ -10,7 +10,7 @@ import type { FsPort as WipeFsPort } from "../security/wipe";
  */
 export type DbPort = Db;
 export type SecurePort = SecureStorePort;
-export type HttpPort = unknown;
+export type HttpPort = typeof fetch;
 export type FsPort = WipeFsPort;
 export type NetPort = unknown;
 export type LocationPort = unknown;
