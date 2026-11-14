@@ -1,0 +1,173 @@
+import { fireEvent, screen, waitFor, within } from "@testing-library/react-native";
+import { Text } from "react-native";
+import { fakeServices, renderWithServices } from "../../app/testing";
+import type { SessionResponse } from "../../contract";
+import { example } from "../../contract/fixtures";
+import { expectValid } from "../../contract/validate";
+import { outboxRepo } from "../../db/repos/outboxRepo";
+import type { Db } from "../../db/types";
+import type { LocationPort } from "../../location/capture";
+import type { MapCanvasProps } from "../../map/canvas";
+import { AREA, HH, NEIGHBORHOOD, loadedTablet } from "../testing";
+import { HouseholdForm, NO_FIX_MARK_ON_MAP, READ_ONLY } from "./HouseholdForm";
+
+// A drawing that lets the test touch the map.
+function Canvas(props: MapCanvasProps) {
+  return <Text onPress={() => props.onPressMap?.({ latitude: -25.4285, longitude: -49.2733, zoom: 18 })}>tocar no mapa</Text>;
+}
+const map = { Canvas, readHead: async () => new Uint8Array(0) };
+const gps = (accuracy: number): LocationPort => ({
+  permission: async () => ({ granted: true, precise: true }),
+  current: async () => ({ latitude: -25.428471234, longitude: -49.273254112, accuracy }),
+});
+
+async function mount(o: { db?: Db; householdKey?: string; location?: LocationPort } = {}) {
+  const db = o.db ?? (await loadedTablet());
+  if (o.db === undefined) await db.run("INSERT INTO map_file (id, version, sha256, size_bytes, path) VALUES (1, '2026-11-01', ?, 1, 'map/x.pmtiles')", ["ab".repeat(32)]);
+  const onSaved = jest.fn();
+  await renderWithServices(<HouseholdForm householdKey={o.householdKey} map={map} onSaved={onSaved} />, fakeServices({ db, ...(o.location ? { location: o.location } : {}) }));
+  await screen.findByRole("button", { name: "Salvar" });
+  return { db, onSaved };
+}
+const field = (key: string) => within(screen.getByTestId(`field-${key}`));
+const press = (name: string) => fireEvent.press(screen.getByRole("button", { name }));
+const type = (label: string | RegExp, text: string) => fireEvent.changeText(screen.getByLabelText(label), text);
+const choose = (key: string, name: string) => fireEvent.press(field(key).getByRole("radio", { name }));
+
+// A home at a street of the list of the city, as an agent fills it standing at the gate.
+async function fillAddress() {
+  await type("CEP", "80010000");
+  await type("Buscar em Tipo de logradouro", "rua");
+  await choose("street_type", "RUA");
+  await type("Logradouro", "das Flores");
+  await type("Número", "45");
+  await choose("neighborhood_id", "Vila Nova");
+}
+
+test("a new home: address, type and living conditions become one household item that the contract accepts", async () => {
+  const t = await mount();
+  await fillAddress();
+  await choose("property_type", "Domicílio");
+  await type("Telefone de contato (com DDD)", "(41) 99999-0000");
+  await fireEvent.press(field("localizacao").getByRole("radio", { name: /^Urbana/ }));
+  await fireEvent.press(field("situacao_moradia_posse_terra").getByRole("radio", { name: /^Próprio/ }));
+  await press("Salvar");
+
+  await waitFor(() => expect(t.onSaved).toHaveBeenCalledTimes(1));
+  const [item] = await outboxRepo.all(t.db);
+  expect(item.type).toBe("household");
+  expect(t.onSaved).toHaveBeenCalledWith(item.target_id);
+  expect(item.body).toEqual({
+    micro_area_id: AREA, property_type: "1", refused: false, contact_phone: "41999990000",
+    address: { zip: "80010000", street_type: "081", street: "das Flores", number: "45", no_number: false, complement: null, neighborhood_id: NEIGHBORHOOD, district: null, reference: null },
+    living_conditions: { localizacao: 83, situacao_moradia_posse_terra: 75 },
+  });
+  expectValid("upload-request", { items: [{ client_uuid: item.client_uuid, type: item.type, body: item.body }] });
+});
+
+test("what the api would refuse is refused on screen, under its field, and nothing is saved", async () => {
+  const t = await mount();
+  await choose("property_type", "Domicílio");
+  await press("Salvar");
+  expect(await field("zip").findByText("CEP com 8 dígitos")).toBeTruthy();
+  await fillAddress();
+  await type("Logradouro", "Rua das Flores");
+  await press("Salvar");
+  expect(await field("street").findByText("o nome do logradouro não repete o tipo (RUA)")).toBeTruthy();
+  await type("Logradouro", "das Flores");
+  // Living conditions begun must be whole: a home's ask for the kind of tenure.
+  await fireEvent.press(field("localizacao").getByRole("radio", { name: /^Urbana/ }));
+  await press("Salvar");
+  expect(await field("situacao_moradia_posse_terra").findByText("informe a situação de moradia")).toBeTruthy();
+  expect(await outboxRepo.all(t.db)).toEqual([]);
+  expect(t.onSaved).not.toHaveBeenCalled();
+});
+
+test("a shop has no living conditions: the questions are not there and the item carries none", async () => {
+  const t = await mount();
+  await choose("property_type", "Domicílio");
+  expect(screen.getByTestId("field-localizacao")).toBeTruthy();
+  await fireEvent.press(field("localizacao").getByRole("radio", { name: /^Urbana/ }));
+  await choose("property_type", "Comércio");
+  expect(screen.queryByTestId("field-localizacao")).toBeNull();
+  await fillAddress();
+  await press("Salvar");
+  await waitFor(() => expect(t.onSaved).toHaveBeenCalled());
+  const [item] = await outboxRepo.all(t.db);
+  expect([item.body.property_type, item.body.living_conditions]).toEqual(["2", {}]);
+});
+
+test("the point by the GPS: a precise reading goes in the item; a bad one is never used", async () => {
+  const t = await mount({ location: gps(8.46) });
+  await fillAddress();
+  await choose("property_type", "Comércio");
+  await press("Usar o GPS aqui na frente");
+  expect(await screen.findByText("Ponto marcado pelo GPS (precisão de 8,5 m)")).toBeTruthy();
+  await press("Salvar");
+  await waitFor(() => expect(t.onSaved).toHaveBeenCalled());
+  const [item] = await outboxRepo.all(t.db);
+  expect(item.body.location).toEqual({ latitude: -25.42847123, longitude: -49.27325411, accuracy_m: 8.5, source: "gps" });
+});
+
+test("no precise position: the screen says to mark on the map, and the map gives the point", async () => {
+  const t = await mount({ location: gps(120) });
+  await fillAddress();
+  await choose("property_type", "Comércio");
+  await press("Usar o GPS aqui na frente");
+  expect(await screen.findByText(NO_FIX_MARK_ON_MAP)).toBeTruthy();
+  expect(NO_FIX_MARK_ON_MAP).toBe("Sem posição precisa. Marque no mapa.");
+
+  await press("Marcar no mapa");
+  expect(await screen.findByRole("header", { name: "Marcar o ponto do imóvel" })).toBeTruthy();
+  await fireEvent.press(await screen.findByText("tocar no mapa"));
+  await press("Usar este ponto");
+  // Back in the form, with everything that was typed.
+  expect(await screen.findByText("Ponto marcado no mapa")).toBeTruthy();
+  expect(screen.getByLabelText("Logradouro").props.value).toBe("das Flores");
+  await press("Salvar");
+  await waitFor(() => expect(t.onSaved).toHaveBeenCalled());
+  const [item] = await outboxRepo.all(t.db);
+  expect(item.body.location).toMatchObject({ latitude: -25.4285, longitude: -49.2733, source: "map" });
+  expect(JSON.stringify(item.body.location)).toMatch(/"accuracy_m":\d/);
+});
+
+test("editing: the form opens with what the household has; untouched, the point is not in the item; taken off, it goes as null", async () => {
+  const db = await loadedTablet();
+  // The example's street type is a label; the api's is the code.
+  const t = await mount({ db, householdKey: HH });
+  expect(screen.getByLabelText("CEP").props.value).toBe("80010000");
+  expect(screen.getByLabelText("Logradouro").props.value).toBe("das Flores");
+  expect(screen.getByLabelText("Telefone de contato (com DDD)").props.value).toBe("41999990000");
+  expect(screen.getByText("Ponto marcado pelo GPS (precisão de 8,5 m)")).toBeTruthy();
+  await type("Buscar em Tipo de logradouro", "rua");
+  await choose("street_type", "RUA");
+  await type("Bairro (se não está na lista)", "Centro");
+  await fireEvent.press(field("localizacao").getByRole("radio", { name: /^Urbana/ }));
+  await fireEvent.press(field("situacao_moradia_posse_terra").getByRole("radio", { name: /^Próprio/ }));
+  await type("Telefone de contato (com DDD)", "41988887777");
+  await press("Salvar");
+  await waitFor(() => expect(t.onSaved).toHaveBeenCalledWith(HH));
+  let [item] = await outboxRepo.all(db);
+  expect(item.body).toMatchObject({ household_id: HH, contact_phone: "41988887777" });
+  expect("location" in item.body).toBe(false);
+  expect(item.target_id).toBe(HH);
+
+  await press("Tirar o ponto");
+  expect(await screen.findByText("Sem ponto no mapa")).toBeTruthy();
+  await press("Salvar");
+  await waitFor(() => expect(t.onSaved).toHaveBeenCalledTimes(2));
+  [item] = await outboxRepo.all(db);
+  expect(item.body.location).toBeNull();
+});
+
+test("who is not the community health agent, or a city with the registry off, only reads", async () => {
+  const session = example<SessionResponse>("session-acs.json");
+  for (const over of [{ professional: { ...session.professional, cbo: "322255" } }, { features: { ...session.features, territory_registry: false } }]) {
+    const db = await loadedTablet({ session: over });
+    const view = await renderWithServices(<HouseholdForm householdKey={HH} map={map} onSaved={jest.fn()} />, fakeServices({ db }));
+    expect(await screen.findByText(READ_ONLY)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Salvar" })).toBeNull();
+    expect(screen.queryByLabelText("CEP")).toBeNull();
+    await view.unmount();
+  }
+});

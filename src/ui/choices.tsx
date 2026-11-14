@@ -10,7 +10,7 @@ import { Field } from "./components";
 export interface Option<T extends string | number> { code: T; label: string }
 
 // More options than this and the list is searched.
-export const SEARCH_FROM = 12;
+export const SEARCH_FROM = 20;
 const SEARCH_SHOWN = 8;
 
 function OptionButton({ label, marked, role, onPress }: { label: string; marked: boolean; role: "radio" | "checkbox"; onPress(): void }) {
