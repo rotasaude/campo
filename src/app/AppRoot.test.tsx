@@ -119,6 +119,35 @@ test("locked after 5 min: the screens below stay mounted but hidden, the schedul
   await waitFor(() => expect(platform.server.requests.length).toBeGreaterThan(before));
 });
 
+// Coming back, Android redraws the screen that was there before the app can put the PIN over it: the cover goes up on the way out.
+test("on the way to the background the main screens are covered at once; a short absence only takes the cover off", async () => {
+  const { platform } = await paired();
+  await mount(platform);
+  await unlock();
+  await fireEvent.changeText(await screen.findByLabelText("Observação"), "rascunho");
+  expect(screen.queryByTestId("lock-cover")).toBeNull();
+
+  await act(async () => { platform.appState.emit("background"); });
+  const cover = StyleSheet.flatten(screen.getByTestId("lock-cover").props.style);
+  expect(cover).toMatchObject({ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 });
+  expect(cover.backgroundColor).toMatch(/^#[0-9a-f]{6}$/i);
+  expect(screen.queryByDisplayValue("rascunho")).toBeNull();
+  expect(screen.queryByRole("header", { name: "Digite o PIN" })).toBeNull();
+
+  await act(async () => { platform.clock.now += 60_000; platform.appState.emit("active"); });
+  expect(screen.queryByTestId("lock-cover")).toBeNull();
+  expect(screen.getByDisplayValue("rascunho")).toBeTruthy();
+  expect(screen.queryByRole("header", { name: "Digite o PIN" })).toBeNull();
+
+  // Five minutes: the cover becomes the PIN, with no frame of the screens in between.
+  await act(async () => { platform.appState.emit("background"); });
+  expect(screen.getByTestId("lock-cover")).toBeTruthy();
+  await act(async () => { platform.clock.now += 5 * 60_000; platform.appState.emit("active"); });
+  expect(await screen.findByRole("header", { name: "Digite o PIN" })).toBeTruthy();
+  expect(screen.queryByTestId("lock-cover")).toBeNull();
+  expect(screen.getByTestId("lock-veil")).toBeTruthy();
+});
+
 test("a cold start has nothing below the PIN", async () => {
   const { platform } = await paired();
   await mount(platform);

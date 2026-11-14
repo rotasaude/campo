@@ -66,6 +66,9 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
   const [lastOutcome, setLastOutcome] = useState<RoundOutcome | null>(null);
   // Locked over the main screens (they stay mounted below the PIN).
   const [veiled, setVeiled] = useState(false);
+  // On the way to the background: an opaque cover with no PIN, so that coming back never shows a frame of the screens
+  // before the shell decides between the PIN and nothing.
+  const [covered, setCovered] = useState(false);
   const { colors } = useTheme();
 
   const dbRef = useRef<Db | null>(null);
@@ -161,14 +164,19 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
   // Five minutes away and the PIN is asked again.
   useEffect(() => {
     const subscription = platform.appState.addEventListener("change", (status) => {
-      if (status === "background") { leftAt.current = platform.now(); return; }
-      if (status !== "active" || !unlocked.current || leftAt.current === null) return;
-      if (shouldLock(leftAt.current, platform.now())) {
+      if (status === "background") {
+        leftAt.current = platform.now();
+        if (unlocked.current && phaseNow.current === "ready") setCovered(true);
+        return;
+      }
+      if (status !== "active") return;
+      if (unlocked.current && leftAt.current !== null && shouldLock(leftAt.current, platform.now())) {
         lock();
         // Over the main screens the PIN is a veil; anywhere else there is no work to keep.
         if (phaseNow.current === "ready") setVeiled(true);
         else setPhase("locked");
       }
+      setCovered(false);
       leftAt.current = null;
     });
     return () => subscription.remove();
@@ -226,12 +234,14 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
   else if (phase === "suspended") screen = <SuspendedScreen onScanNew={() => setPhase("pairing")} />;
   else if (phase === "initial_load") screen = <InitialLoadScreen onDone={() => setPhase("ready")} />;
   else {
+    const hidden = veiled || covered;
     screen = (
       <View style={{ flex: 1 }}>
-        <View testID="main-screens" style={{ flex: 1 }} pointerEvents={veiled ? "none" : "auto"}
-          importantForAccessibility={veiled ? "no-hide-descendants" : "auto"} accessibilityElementsHidden={veiled}>
+        <View testID="main-screens" style={{ flex: 1 }} pointerEvents={hidden ? "none" : "auto"}
+          importantForAccessibility={hidden ? "no-hide-descendants" : "auto"} accessibilityElementsHidden={hidden}>
           {children}
         </View>
+        {covered && !veiled && <View testID="lock-cover" style={[StyleSheet.absoluteFill, { backgroundColor: colors.bg }]} />}
         {veiled && (
           <View testID="lock-veil" style={[StyleSheet.absoluteFill, { backgroundColor: colors.bg }]}>
             <LockScreen onUnlocked={() => { void enter("open"); }} onScanNew={() => { setVeiled(false); setPhase("pairing"); }} />
