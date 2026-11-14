@@ -1,12 +1,14 @@
 import { createContext, useContext } from "react";
+import type { Db } from "../db/types";
+import type { SecureStorePort } from "../security/secureStore";
 
 /**
  * Ports injected into the pure modules (src/sync, src/rules, src/security, src/map).
  * Nothing in those modules imports a native module directly. The following tasks
  * replace each `unknown` with the port's interface.
  */
-export type DbPort = unknown;
-export type SecurePort = unknown;
+export type DbPort = Db;
+export type SecurePort = SecureStorePort;
 export type HttpPort = unknown;
 export type FsPort = unknown;
 export type NetPort = unknown;
