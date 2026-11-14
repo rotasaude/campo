@@ -58,6 +58,18 @@ test("a field the tablet does not send is never a conflict and is not sent back"
   expect(Object.keys(after.body).sort()).toEqual(["address", "contact_phone", "household_id", "living_conditions", "micro_area_id", "property_type", "refused"]);
 });
 
+test("the station changed only a key the tablet does not send: nobody is asked and the station's value stays (Q69)", async () => {
+  // The person saw the household inactive and without a point; the station reactivated it and marked the point.
+  // The item sends neither `status` nor `location`, and what it does send is what the station still has.
+  const { db, after } = await staleHousehold({ contact_phone: HH.contact_phone }, baseOf({ status: "inactive", location: null }));
+  expect(after).toMatchObject({ state: "pending", conflicts: null, error: null, edit_base_version: 4 });
+  expect(after.body).not.toHaveProperty("status");
+  expect(after.body).not.toHaveProperty("location");
+  const row = JSON.parse((await rowOf<Row>(db, "households", "hh-key"))!.body) as HouseholdBody;
+  expect([row.status, row.location]).toEqual([HH.status, HH.location]);
+  expect(JSON.parse((await rowOf<Row>(db, "households", "hh-key"))!.base_body)).toMatchObject({ status: HH.status, location: HH.location });
+});
+
 test("household with conflict waits for the person, carrying both values", async () => {
   const { after } = await staleHousehold({ contact_phone: "41988887777" }, baseOf({ contact_phone: "4100" }));
   expect(after.state).toBe("conflict");
