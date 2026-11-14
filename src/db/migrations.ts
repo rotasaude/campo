@@ -39,9 +39,10 @@ const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS local_activities (
      client_uuid TEXT PRIMARY KEY NOT NULL, held_on TEXT NOT NULL, summary TEXT NOT NULL, state TEXT NOT NULL,
      server_id TEXT, accepted_at TEXT)`,
+  // The four first columns are null until a first download is proved good: the row may hold only a partial.
   `CREATE TABLE IF NOT EXISTS map_file (
-     id INTEGER PRIMARY KEY CHECK (id = 1), version TEXT NOT NULL, sha256 TEXT NOT NULL, size_bytes INTEGER NOT NULL,
-     path TEXT NOT NULL, partial_path TEXT, partial_sha256 TEXT, resume_data TEXT)`,
+     id INTEGER PRIMARY KEY CHECK (id = 1), version TEXT, sha256 TEXT, size_bytes INTEGER,
+     path TEXT, partial_path TEXT, partial_sha256 TEXT, resume_data TEXT)`,
   `CREATE INDEX IF NOT EXISTS idx_households_micro_area ON households (micro_area_id)`,
   `CREATE INDEX IF NOT EXISTS idx_households_address ON households (street_norm, number)`,
   `CREATE INDEX IF NOT EXISTS idx_registrations_household ON registrations (household_key)`,
