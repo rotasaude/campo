@@ -10,7 +10,8 @@ import type { FsPort as WipeFsPort } from "../security/wipe";
  */
 export type DbPort = Db;
 export type SecurePort = SecureStorePort;
-export type HttpPort = typeof fetch;
+// Undefined: the field API client uses the platform's own fetch.
+export type HttpPort = typeof fetch | undefined;
 export type FsPort = WipeFsPort;
 export type NetPort = unknown;
 export type LocationPort = unknown;
