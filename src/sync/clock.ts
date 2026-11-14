@@ -42,3 +42,14 @@ export function cityNowIso(deviceNow: number, skewMs: number, offsetMin: number)
 export function cityToday(deviceNow: number, skewMs: number, offsetMin: number): string {
   return cityNowIso(deviceNow, skewMs, offsetMin).slice(0, 10);
 }
+
+// An instant as the city reads it: "14/11/2026 09:30" and "14/11/2026". Null when there is nothing to show.
+export function formatCityDateTime(iso: string | null, offsetMin: number): string | null {
+  const at = iso === null ? NaN : Date.parse(iso);
+  if (Number.isNaN(at)) return null;
+  const local = cityNowIso(at, 0, offsetMin);
+  return `${local.slice(8, 10)}/${local.slice(5, 7)}/${local.slice(0, 4)} ${local.slice(11, 16)}`;
+}
+export function formatCityDate(iso: string | null, offsetMin: number): string | null {
+  return formatCityDateTime(iso, offsetMin)?.slice(0, 10) ?? null;
+}
