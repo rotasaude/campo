@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# generated native folders (expo prebuild)
+android/
+ios/
+.kotlin/
+
+# signing and secrets
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+.env*
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+
+# macOS
+.DS_Store
+
+# typescript
+*.tsbuildinfo

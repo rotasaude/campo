@@ -1,0 +1,42 @@
+import { createContext, useContext } from "react";
+
+/**
+ * Ports injected into the pure modules (src/sync, src/rules, src/security, src/map).
+ * Nothing in those modules imports a native module directly. The following tasks
+ * replace each `unknown` with the port's interface.
+ */
+export type DbPort = unknown;
+export type SecurePort = unknown;
+export type HttpPort = unknown;
+export type FsPort = unknown;
+export type NetPort = unknown;
+export type LocationPort = unknown;
+export type CameraPort = unknown;
+
+export interface CryptoPort {
+  digestHex(text: string): Promise<string>;
+  randomUUID(): string;
+}
+
+export interface AppServices {
+  db: DbPort;
+  secure: SecurePort;
+  http: HttpPort;
+  fs: FsPort;
+  net: NetPort;
+  location: LocationPort;
+  camera: CameraPort;
+  crypto: CryptoPort;
+  now: () => number;
+  random: (n: number) => Uint8Array;
+}
+
+const ServicesContext = createContext<AppServices | null>(null);
+
+export const ServicesProvider = ServicesContext.Provider;
+
+export function useServices(): AppServices {
+  const services = useContext(ServicesContext);
+  if (!services) throw new Error("AppServices ausente: monte o ServicesProvider na raiz");
+  return services;
+}

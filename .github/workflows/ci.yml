@@ -1,0 +1,16 @@
+name: CI
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: mirror.gcr.io/library/node:22-alpine
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npx eslint .
+      - run: npx tsc --noEmit
+      - run: npx jest --ci
