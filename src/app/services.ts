@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import type { Db } from "../db/types";
 import type { SecureStorePort } from "../security/secureStore";
+import type { FsPort as WipeFsPort } from "../security/wipe";
 
 /**
  * Ports injected into the pure modules (src/sync, src/rules, src/security, src/map).
@@ -10,7 +11,7 @@ import type { SecureStorePort } from "../security/secureStore";
 export type DbPort = Db;
 export type SecurePort = SecureStorePort;
 export type HttpPort = unknown;
-export type FsPort = unknown;
+export type FsPort = WipeFsPort;
 export type NetPort = unknown;
 export type LocationPort = unknown;
 export type CameraPort = unknown;
