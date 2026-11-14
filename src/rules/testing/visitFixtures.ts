@@ -1,5 +1,6 @@
 // Test support: the fixtures of the dashboard's rule tests (apps/dashboard/src/test/homeVisitFixtures.ts,
 // dashboard main ceb53af), copied so the ported cases run with the same data.
+import type { CollectiveOptions } from "../collectiveActivity";
 import type { CollectiveDomains, HomeVisitDomains } from "../domains";
 import type { HomeVisitTeam, VisitHousehold, VisitHouseholdDetail } from "../homeVisit";
 import { registrationDictionaries } from "./dictionaries";
@@ -117,4 +118,15 @@ export const household = (o: Partial<VisitHousehold> = {}): VisitHousehold => ({
 export const householdDetail = (o: Partial<VisitHouseholdDetail> = {}): VisitHouseholdDetail => ({
   ...household(), residents: [ { patient_id: "pa1", display_name: "Maria Lima", sex: "female", family_id: "f1", unidentified: false },
     { patient_id: "pa2", display_name: "José Lima", sex: "male", family_id: "f1", unidentified: false } ], ...o
+});
+
+// Q57c: os profissionais vêm POR EQUIPE (quem registra fora o próprio usuário), os da equipe primeiro.
+export const options = (o: Partial<CollectiveOptions> = {}): CollectiveOptions => ({
+  today: TODAY24B, min_date: "2026-10-01",
+  teams: [ { id: "t1", ine: "0001234567", name: "ESF Vila Verde", cbo: "223505", can_register: true,
+    professionals: [ { id: "p-acs", name: "Joana ACS", cbo: "515105", has_cns: true, in_team: true },
+      { id: "p-sem", name: "Caio Sem CNS", cbo: "515105", has_cns: false, in_team: true },
+      { id: "p-out", name: "Lia de Outra Equipe", cbo: "225125", has_cns: true, in_team: false } ] } ],
+  units: [ { id: "u1", name: "UBS Vila Verde", has_cnes: true }, { id: "u2", name: "Posto Novo", has_cnes: false } ],
+  domains: COLLECTIVE_DOMAINS, ...o
 });
