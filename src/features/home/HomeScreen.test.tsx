@@ -26,7 +26,7 @@ async function seeded(session: SessionResponse = SESSION): Promise<Db> {
 }
 async function mount(db: Db, sync: Partial<SyncState> = {}) {
   const state: SyncState = { running: false, lastOutcome: null, run: jest.fn(), ...sync };
-  const nav = { onOpenWho: jest.fn(), onOpenOutbox: jest.fn() };
+  const nav = { onOpenWho: jest.fn(), onOpenOutbox: jest.fn(), onOpenAbout: jest.fn() };
   await renderWithServices(<SyncContext.Provider value={state}><HomeScreen {...nav} /></SyncContext.Provider>, fakeServices({ db, now: () => NOW }));
   return { state, nav };
 }
@@ -76,9 +76,10 @@ test("the last round's outcome is said in words when it did not finish", async (
   expect(await screen.findByText("Sem conexão: nada foi perdido. O tablet tenta de novo sozinho.")).toBeTruthy();
 });
 
-test("the shortcuts open who to visit and the outbox", async () => {
+test("the shortcuts open who to visit, the outbox and about", async () => {
   const t = await mount(await seeded());
   await fireEvent.press(await screen.findByRole("button", { name: "Quem visitar" }));
   await fireEvent.press(screen.getByRole("button", { name: "Ver envios" }));
-  expect([t.nav.onOpenWho.mock.calls.length, t.nav.onOpenOutbox.mock.calls.length]).toEqual([1, 1]);
+  await fireEvent.press(screen.getByRole("button", { name: "Sobre" }));
+  expect([t.nav.onOpenWho.mock.calls.length, t.nav.onOpenOutbox.mock.calls.length, t.nav.onOpenAbout.mock.calls.length]).toEqual([1, 1, 1]);
 });
