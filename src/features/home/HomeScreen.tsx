@@ -14,7 +14,9 @@ import { loadHome } from "./homeData";
 export const VISITS_OFF = "Visita desligada pela secretaria";
 const TABLES = ["outbox", "who_to_visit", "micro_areas", "households"];
 
-export function HomeScreen({ onOpenWho, onOpenMap, onOpenOutbox, onOpenAbout }: { onOpenWho(): void; onOpenMap(): void; onOpenOutbox(): void; onOpenAbout(): void }) {
+export function HomeScreen({ onOpenWho, onOpenHouseholds, onOpenMap, onOpenOutbox, onOpenAbout }: {
+  onOpenWho(): void; onOpenHouseholds(): void; onOpenMap(): void; onOpenOutbox(): void; onOpenAbout(): void;
+}) {
   const { now } = useServices();
   const sync = useSyncState();
   const read = useCallback((db: Db) => loadHome(db, now()), [now]);
@@ -45,6 +47,7 @@ export function HomeScreen({ onOpenWho, onOpenMap, onOpenOutbox, onOpenAbout }: 
 
       <Button label={sync.running ? "Sincronizando…" : "Sincronizar"} disabled={sync.running} onPress={sync.run} />
       {!home.visitsOff && <Button label="Quem visitar" variant="secondary" onPress={onOpenWho} />}
+      <Button label="Domicílios" variant="secondary" onPress={onOpenHouseholds} />
       <Button label="Mapa" variant="secondary" onPress={onOpenMap} />
       <Button label="Ver envios" variant="secondary" onPress={onOpenOutbox} />
       <Button label="Sobre" variant="secondary" onPress={onOpenAbout} />

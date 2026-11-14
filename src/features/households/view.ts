@@ -3,10 +3,11 @@
 // the order it was written. Nothing is stored twice: when the item is
 // accepted the row takes the accepted fields, and when the download brings
 // the record the row becomes the server's again.
-import type { HouseholdBody } from "../../contract";
+import type { HouseholdBody, Location } from "../../contract";
 import { outboxRepo, type OutboxItem } from "../../db/repos/outboxRepo";
 import { territoryRepo } from "../../db/repos/territoryRepo";
 import type { Db } from "../../db/types";
+import { dictLabel, type RegistrationDictionaries } from "../../rules/dictionaries";
 import { applyHouseholdFields, splitItemBody } from "../../sync/editable";
 
 export interface HouseholdView {
@@ -52,4 +53,21 @@ export async function listHouseholds(db: Db, microAreaId?: string): Promise<Hous
   const views: HouseholdView[] = [];
   for (const row of rows) views.push(await toView(db, row, queue));
   return views;
+}
+
+// "RUA das Flores, 120 — fundos": the address in one line, as the agent says it. Without a dictionary the street type is left out.
+export function addressLine(body: Pick<HouseholdBody, "address">, dict: RegistrationDictionaries | null): string {
+  const a = body.address ?? {};
+  const type = dict !== null && a.street_type ? dictLabel(dict, "tipo_logradouro", a.street_type) : "";
+  const street = [type, a.street ?? ""].filter((part) => part !== "").join(" ");
+  if (street === "") return "Endereço não informado";
+  const number = a.no_number ? "s/n" : a.number ?? "";
+  return [street + (number === "" ? "" : `, ${number}`), a.complement ?? ""].filter((part) => part !== "").join(" — ");
+}
+
+// The point of the household in words: never the coordinates themselves.
+export function pointText(location: Location | null): string {
+  if (location === null) return "Sem ponto no mapa";
+  if (location.source === "map") return "Ponto marcado no mapa";
+  return `Ponto marcado pelo GPS (precisão de ${String(location.accuracy_m ?? 0).replace(".", ",")} m)`;
 }

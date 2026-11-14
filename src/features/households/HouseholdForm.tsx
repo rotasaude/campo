@@ -18,7 +18,7 @@ import { SectionFields } from "../forms/SectionFields";
 import { MapScreen } from "../map/MapScreen";
 import { canEditRegistry, loadSession, myMicroAreas, type MyMicroArea } from "../session";
 import { HouseholdInConflictError, saveHousehold, type HouseholdFields } from "./save";
-import { readHousehold, type HouseholdView } from "./view";
+import { pointText, readHousehold, type HouseholdView } from "./view";
 
 export const READ_ONLY = "Só o agente comunitário de saúde edita o cadastro neste app. Aqui você consulta.";
 export const NO_FIX_MARK_ON_MAP = "Sem posição precisa. Marque no mapa.";
@@ -51,12 +51,6 @@ function draftOf(view: HouseholdView | null, areas: MyMicroArea[]): Draft {
     propertyType: body?.property_type ?? null, phone: body?.contact_phone ?? "", living: { ...((body?.living_conditions ?? {}) as Values) },
     location: undefined,
   };
-}
-
-function pointText(location: Location | null): string {
-  if (location === null) return "Sem ponto no mapa";
-  if (location.source === "map") return "Ponto marcado no mapa";
-  return `Ponto marcado pelo GPS (precisão de ${String(location.accuracy_m ?? 0).replace(".", ",")} m)`;
 }
 
 export interface HouseholdFormProps {
