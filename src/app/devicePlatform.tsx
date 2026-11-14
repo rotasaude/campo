@@ -57,10 +57,9 @@ export const devicePlatform: Platform = {
     },
   },
   net: {
-    isOnline: async () => {
-      const state = await Network.getNetworkStateAsync();
-      return state.isConnected === true && state.isInternetReachable !== false;
-    },
+    // Connected is enough: "internet reachable" on Android is the system's own probe, which a city-hall
+    // network or a captive portal may block while the secretariat's host answers. The request decides.
+    isOnline: async () => (await Network.getNetworkStateAsync()).isConnected === true,
     isWifi: async () => (await Network.getNetworkStateAsync()).type === Network.NetworkStateType.WIFI,
   },
   openRaw: openExpoDb,
