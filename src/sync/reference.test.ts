@@ -3,7 +3,7 @@ import { example } from "../contract/fixtures";
 import { expectValid } from "../contract/validate";
 import { createTestDb } from "../db/testing/sqljsDb";
 import { FieldHttpError } from "./http";
-import { healthUnitOptions, loadReference, parseReference, professionalOptions, refreshReference } from "./reference";
+import { APP_UPDATE_NOTICE, healthUnitOptions, loadReference, parseReference, professionalOptions, referenceNeedsAppUpdate, refreshReference } from "./reference";
 import { referenceFixture } from "./testing";
 
 const EXAMPLE = example<ReferenceResponse>("reference.json");
@@ -51,6 +51,40 @@ test("a domain sent as an object is refused and the previous reference stays (Q2
   const asObject = example<ReferenceResponse>("invalid-reference-domain-as-object.json");
   expect(await refreshReference(db, clientOf(asObject), "01".repeat(32))).toBe("kept_previous");
   expect((await loadReference(db))!.version).toBe(EXAMPLE.reference_version);
+});
+
+test("a reference the app does not understand asks for an app update and the work goes on with the previous one (Q71)", async () => {
+  const db = await createTestDb();
+  await refreshReference(db, clientOf(EXAMPLE), EXAMPLE.reference_version);
+  expect(await referenceNeedsAppUpdate(db)).toBe(false);
+
+  // A section this version of the app has never heard of.
+  const newer = { ...EXAMPLE, reference_version: "45".repeat(32),
+    registration_dictionaries: { ...EXAMPLE.registration_dictionaries, sections: { living_conditions: [], novidade: [] } } };
+  const client = clientOf(newer);
+  expect(await refreshReference(db, client, newer.reference_version)).toBe("kept_previous");
+  expect(await referenceNeedsAppUpdate(db)).toBe(true);
+  expect((await loadReference(db))!.version).toBe(EXAMPLE.reference_version);
+  expect(APP_UPDATE_NOTICE).toBe("Atualize o app: há novidades no cadastro que esta versão não conhece. O app segue funcionando com as regras anteriores.");
+
+  // The same refused version is not downloaded again on every round.
+  expect(await refreshReference(db, client, newer.reference_version)).toBe("kept_previous");
+  expect(client.reference).toHaveBeenCalledTimes(1);
+
+  // Another version is tried; when one is understood, the notice goes away.
+  const good = { ...referenceFixture(), reference_version: "67".repeat(32) };
+  expect(await refreshReference(db, clientOf(good), good.reference_version)).toBe("updated");
+  expect(await referenceNeedsAppUpdate(db)).toBe(false);
+});
+
+test("the server going back to the version the tablet already has also clears the notice", async () => {
+  const db = await createTestDb();
+  await refreshReference(db, clientOf(EXAMPLE), EXAMPLE.reference_version);
+  const broken = { ...EXAMPLE, reference_version: "89".repeat(32), health_units: "nenhuma" };
+  await refreshReference(db, clientOf(broken), broken.reference_version);
+  expect(await referenceNeedsAppUpdate(db)).toBe(true);
+  expect(await refreshReference(db, clientOf(EXAMPLE), EXAMPLE.reference_version)).toBe("unchanged");
+  expect(await referenceNeedsAppUpdate(db)).toBe(false);
 });
 
 test("an HTTP failure goes up to the round and the stored reference stays", async () => {

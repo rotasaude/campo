@@ -67,19 +67,39 @@ export async function loadReference(db: Db): Promise<Reference | null> {
   return row ? parseReference(JSON.parse(row.body) as ReferenceResponse) : null;
 }
 
-// A FieldHttpError goes up to the round. "kept_previous": the answer came, but in a shape the app does not read.
+// Shown by the home screen while `referenceNeedsAppUpdate` is true (Q71).
+export const APP_UPDATE_NOTICE = "Atualize o app: há novidades no cadastro que esta versão não conhece. O app segue funcionando com as regras anteriores.";
+const REFUSED = "reference_refused_version";
+
+// True while the server's reference is one this version of the app could not read: the forms keep the previous one.
+export async function referenceNeedsAppUpdate(db: Db): Promise<boolean> {
+  return (await db.get<{ value: string }>("SELECT value FROM meta WHERE key = ?", [REFUSED])) !== null;
+}
+
+// A FieldHttpError goes up to the round. "kept_previous": the answer came, but in a shape the app does not read —
+// the version is remembered, so it is not downloaded again on every round, and the person is told to update the app.
 export async function refreshReference(db: Db, client: Pick<FieldClient, "reference">, sessionVersion: string): Promise<"unchanged" | "updated" | "kept_previous"> {
   const stored = await db.get<{ version: string }>("SELECT version FROM reference WHERE id = 1");
-  if (stored?.version === sessionVersion) return "unchanged";
+  if (stored?.version === sessionVersion) {
+    await db.run("DELETE FROM meta WHERE key = ?", [REFUSED]);
+    return "unchanged";
+  }
+  const refused = await db.get<{ value: string }>("SELECT value FROM meta WHERE key = ?", [REFUSED]);
+  if (refused?.value === sessionVersion) return "kept_previous";
+
   const body = await client.reference();
   let version: string;
   try {
     version = parseReference(body).version;
   } catch (err) {
-    if (err instanceof ReferenceShapeError) return "kept_previous";
-    throw err;
+    if (!(err instanceof ReferenceShapeError)) throw err;
+    await db.run("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [REFUSED, sessionVersion]);
+    return "kept_previous";
   }
-  await db.run("INSERT INTO reference (id, version, body) VALUES (1, ?, ?) ON CONFLICT (id) DO UPDATE SET version = excluded.version, body = excluded.body",
-    [version, JSON.stringify(body)]);
+  await db.tx(async (tx) => {
+    await tx.run("INSERT INTO reference (id, version, body) VALUES (1, ?, ?) ON CONFLICT (id) DO UPDATE SET version = excluded.version, body = excluded.body",
+      [version, JSON.stringify(body)]);
+    await tx.run("DELETE FROM meta WHERE key = ?", [REFUSED]);
+  });
   return "updated";
 }
