@@ -144,3 +144,15 @@ test("the error message carries kind and code, never the token or the body", asy
     expect(JSON.stringify(err)).not.toMatch(/rsf_|Maria/);
   }
 });
+
+test("without an injected fetch the client uses the platform's, and nothing else in the app may", async () => {
+  const body = example("session-acs.json");
+  const spy = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }));
+  try {
+    const client = createFieldClient({ host: "curitiba.rotasaude.example", getToken: async () => TOKEN });
+    expect(await client.session()).toEqual(body);
+    expect(String(spy.mock.calls[0][0])).toBe("https://curitiba.rotasaude.example/field/v1/session");
+  } finally {
+    spy.mockRestore();
+  }
+});

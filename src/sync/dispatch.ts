@@ -10,6 +10,7 @@ import type { UploadItem, UploadResult } from "../contract";
 import { dbEvents } from "../db/events";
 import { outboxRepo, type OutboxItem } from "../db/repos/outboxRepo";
 import type { Db } from "../db/types";
+import { log } from "../log";
 import { FieldHttpError, type FieldClient, type HttpFailure } from "./http";
 import { targetTable } from "./outbox";
 
@@ -145,6 +146,8 @@ export async function applyResults(db: Db, sent: OutboxItem[], results: UploadRe
     if (!item || answered.has(item.client_uuid)) continue;
     answered.add(item.client_uuid);
     if (typeof result.client_uuid !== "string") { await attention(item, { error: "invalid_request" }); continue; }
+    // The verdict of each item: its uuid, type and code. Never the path, the candidates or anything of the body.
+    log("sync.item.result", { client_uuid: item.client_uuid, type: item.type, code: result.status === "rejected" ? (result.error ?? "rejected") : result.status });
 
     if (result.status === "accepted" || result.status === "duplicate") {
       await db.tx((tx) => accept(tx, item, result));

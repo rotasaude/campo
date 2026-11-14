@@ -11,6 +11,7 @@
 import type { SessionResponse } from "../contract";
 import { territoryRepo } from "../db/repos/territoryRepo";
 import type { Db } from "../db/types";
+import { log } from "../log";
 import { wipeTerritory } from "../security/wipe";
 import { cityOffsetMinutes, cityToday, measureSkew } from "./clock";
 import { sendQueue } from "./dispatch";
@@ -101,7 +102,8 @@ async function round(deps: RoundDeps): Promise<RoundOutcome> {
     await downloadAll({ db, client, now: deps.now });
     await purgeAccepted(db, cityToday(deps.now(), skew, offset));
 
-    if (deps.syncMap) void deps.syncMap(session.map).catch(() => undefined);
+    // The reason of a failure may carry a path or a message of the platform: only the fact is logged.
+    if (deps.syncMap) void deps.syncMap(session.map).catch(() => log("map.download.failed"));
     return visitsOn ? { kind: "ok", downloaded: true } : { kind: "feature_disabled" };
   } catch (err) {
     if (err instanceof FieldHttpError) return failed(deps, err.failure);
@@ -109,12 +111,18 @@ async function round(deps: RoundDeps): Promise<RoundOutcome> {
   }
 }
 
-export async function runRound(deps: RoundDeps, _trigger: RoundTrigger): Promise<RoundOutcome> {
+export async function runRound(deps: RoundDeps, trigger: RoundTrigger): Promise<RoundOutcome> {
   if (deps.isLocked()) return { kind: "skipped", reason: "locked" };
   if (running.has(deps.db)) return { kind: "skipped", reason: "running" };
   running.add(deps.db);
+  log("sync.round.start", { code: trigger });
   try {
-    return await round(deps);
+    const outcome = await round(deps);
+    log("sync.round.end", { code: "reason" in outcome ? `${outcome.kind}:${outcome.reason}` : outcome.kind });
+    return outcome;
+  } catch (err) {
+    log("sync.round.end", { code: "error" });
+    throw err;
   } finally {
     running.delete(deps.db);
   }

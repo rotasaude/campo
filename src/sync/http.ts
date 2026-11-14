@@ -50,12 +50,14 @@ export function failureFor(status: number, code: string | null): HttpFailure {
 export function createFieldClient(o: {
   host: string;
   getToken: () => Promise<string | null>;
-  fetch: typeof fetch;
+  // Tests inject one; the app uses the platform's. This file and src/map/download.ts are the only places allowed to reach the network (lint).
+  fetch?: typeof fetch;
   // Dev and e2e builds only: the request goes to this origin with the QR's host in the Host header (the api resolves the city by host).
   devOrigin?: string;
   timeoutMs?: number;
 }): FieldClient {
   const origin = o.devOrigin ?? `https://${o.host}`;
+  const send = o.fetch ?? fetch;
   const timeoutMs = o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   async function headers(write: boolean): Promise<Record<string, string>> {
@@ -77,7 +79,7 @@ export function createFieldClient(o: {
     const timer = setTimeout(() => abort.abort(), timeoutMs);
     let response: Response;
     try {
-      response = await o.fetch(`${origin}${path}`, { ...init, signal: abort.signal });
+      response = await send(`${origin}${path}`, { ...init, signal: abort.signal });
     } catch {
       throw new FieldHttpError({ kind: "network" });
     } finally {

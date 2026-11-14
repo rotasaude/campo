@@ -11,3 +11,9 @@ jest.mock("@maplibre/maplibre-react-native", () => ({}));
 jest.mock("expo-location", () => ({}));
 jest.mock("expo-camera", () => ({}));
 jest.mock("expo-network", () => ({}));
+
+// The app's only log point (src/log.ts) writes JSON lines to console.log. The suites stay quiet;
+// a test that wants to read the lines spies on console itself.
+beforeEach(() => {
+  jest.spyOn(console, "log").mockImplementation(() => {});
+});
