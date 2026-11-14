@@ -107,8 +107,9 @@ async function accept(db: Db, item: OutboxItem, result: UploadResult): Promise<v
     return;
   }
   if (item.type === "family") {
-    // The family lives in its household: the version is the household's, and the row's id and base body are not the family's.
-    await db.run(`UPDATE ${table} SET base_version = ? WHERE key = ?`, [result.version, item.target_id]);
+    // The family lives in its household: the version is the household's, and the row shows the family as accepted.
+    await territoryRepo.acceptFamily(db, item.target_id, item, { id: result.id ?? null, version: result.version });
+    dbEvents.emit("registrations");
   } else if (item.type === "household") {
     // The row shows what was accepted until the next download brings the record itself.
     await territoryRepo.acceptHousehold(db, item.target_id, item.body, { id: result.id ?? null, version: result.version });

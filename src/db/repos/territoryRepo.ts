@@ -7,7 +7,7 @@
 // server's record arrives, it is filed under that key, and whatever points to
 // the row (registrations, the outbox) stays valid.
 import type { FamilyBody, HouseholdBody, MicroAreaBody, RegistrationBody, WhoToVisit } from "../../contract";
-import { applyHouseholdFields, applyRegistrationFields, householdEditable, registrationEditable, splitItemBody } from "../../sync/editable";
+import { applyFamilyItem, applyHouseholdFields, applyRegistrationFields, householdEditable, registrationEditable, splitItemBody } from "../../sync/editable";
 import { normalizeText } from "../../sync/text";
 import { dbEvents } from "../events";
 import type { Db } from "../types";
@@ -79,6 +79,36 @@ export const territoryRepo = {
        WHERE key = ?`,
       [id, result.version, JSON.stringify(body), result.version, JSON.stringify(itemBody), body.micro_area?.id ?? row.micro_area_id,
         normalizeText(body.address?.street ?? ""), body.address?.number ?? "", body.location ? 1 : 0, key]);
+  },
+
+  // The name of a person by what a family item calls its responsible: the patient's id, or the key of a registration born here.
+  async personName(db: Db, patientRef: string): Promise<string | null> {
+    const row = await db.get<{ body: string }>("SELECT body FROM registrations WHERE patient_id = ? OR key = ? LIMIT 1", [patientRef, patientRef]);
+    return row ? (JSON.parse(row.body) as RegistrationBody).patient.display_name : null;
+  },
+
+  // The server accepted a family item: the household's row carries the family as accepted, under the server's id, and
+  // the household's new version. People filed under the family's tablet id move to the server's.
+  async acceptFamily(db: Db, householdKey: string, item: { client_uuid: string; body: Record<string, unknown> }, result: { id: string | null; version: number }): Promise<void> {
+    const row = await db.get<{ body: string }>("SELECT body FROM households WHERE key = ?", [householdKey]);
+    if (!row) return;
+    const responsible = (item.body.responsible ?? {}) as { patient_id?: string; patient_client_uuid?: string };
+    const ref = responsible.patient_id ?? responsible.patient_client_uuid ?? null;
+    let body = applyFamilyItem(JSON.parse(row.body) as HouseholdBody, item.client_uuid, item.body, ref === null ? null : await territoryRepo.personName(db, ref));
+    const born = typeof item.body.family_id !== "string" && result.id !== null;
+    if (born) body = { ...body, families: body.families.map((family) => (family.id === item.client_uuid ? { ...family, id: result.id as string } : family)) };
+    body = { ...body, version: result.version };
+    await db.run("UPDATE households SET body = ?, version = ?, base_version = ? WHERE key = ?", [JSON.stringify(body), result.version, result.version, householdKey]);
+    await db.run("DELETE FROM families WHERE household_key = ?", [householdKey]);
+    for (const family of body.families ?? []) {
+      await db.run("INSERT OR REPLACE INTO families (id, household_key, responsible_patient_id) VALUES (?, ?, ?)", [family.id, householdKey, family.responsible.patient_id]);
+    }
+    if (born) {
+      for (const person of await db.all<{ key: string; body: string }>("SELECT key, body FROM registrations WHERE family_id = ?", [item.client_uuid])) {
+        const registration = { ...(JSON.parse(person.body) as RegistrationBody), family_id: result.id };
+        await db.run("UPDATE registrations SET family_id = ?, body = ? WHERE key = ?", [result.id, JSON.stringify(registration), person.key]);
+      }
+    }
   },
 
   // The same for an accepted registration item.

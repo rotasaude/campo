@@ -62,7 +62,33 @@ export function applyRegistrationFields(r: RegistrationBody, fields: Body): Regi
 export function familyEditable(h: HouseholdBody, familyId: string): FamilyEditable | null {
   const family = h.families.find((f) => f.id === familyId);
   if (!family) return null;
-  return { income_band: family.income_band, members_count: family.members_count, living_since: family.living_since, moved_out: family.moved_out };
+  // The download gives "since" as a day and the upload takes a month: compared as a month on every side.
+  return { income_band: family.income_band, members_count: family.members_count, living_since: family.living_since?.slice(0, 7) ?? null, moved_out: family.moved_out };
+}
+
+// A family item applied to its household: an existing family (family_id) takes the fields the item carries; a new
+// one enters the household under the item's client_uuid, with its responsible, until the server gives it an id.
+export function applyFamilyItem(h: HouseholdBody, clientUuid: string, itemBody: Body, responsibleName: string | null): HouseholdBody {
+  const families = [...(h.families ?? [])];
+  const existing = typeof itemBody.family_id === "string";
+  const id = existing ? (itemBody.family_id as string) : clientUuid;
+  const patch = (family: HouseholdBody["families"][number]): HouseholdBody["families"][number] => ({
+    ...family,
+    ...("income_band" in itemBody ? { income_band: (itemBody.income_band ?? null) as string | null } : {}),
+    ...(typeof itemBody.members_count === "number" ? { members_count: itemBody.members_count } : {}),
+    ...("living_since" in itemBody ? { living_since: (itemBody.living_since ?? null) as string | null } : {}),
+    ...("moved_out" in itemBody ? { moved_out: itemBody.moved_out === true } : {}),
+  });
+  const at = families.findIndex((family) => family.id === id);
+  if (at >= 0) families[at] = patch(families[at]);
+  else if (!existing) {
+    const responsible = (itemBody.responsible ?? {}) as { patient_id?: string; patient_client_uuid?: string };
+    families.push(patch({
+      id: clientUuid, responsible: { patient_id: responsible.patient_id ?? responsible.patient_client_uuid ?? "", display_name: responsibleName ?? "" },
+      income_band: null, members_count: 1, living_since: null, moved_out: false, responsible_exited: false,
+    }));
+  }
+  return { ...h, families };
 }
 
 // Without `patient`: identity and the exit from the registry are done at the dashboard, not in the app (Q47).

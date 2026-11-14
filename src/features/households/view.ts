@@ -8,7 +8,7 @@ import { outboxRepo, type OutboxItem } from "../../db/repos/outboxRepo";
 import { territoryRepo } from "../../db/repos/territoryRepo";
 import type { Db } from "../../db/types";
 import { dictLabel, type RegistrationDictionaries } from "../../rules/dictionaries";
-import { applyHouseholdFields, splitItemBody } from "../../sync/editable";
+import { applyFamilyItem, applyHouseholdFields, splitItemBody } from "../../sync/editable";
 
 export interface HouseholdView {
   // The local key (what routes and other items point to) and the server id; null while the household only exists on the tablet.
@@ -27,7 +27,12 @@ async function toView(db: Db, row: Row, queue: OutboxItem[]): Promise<HouseholdV
   const mine = queue.filter((item) => item.target_id === row.key && (item.type === "household" || item.type === "family"));
   let body = JSON.parse(row.body) as HouseholdBody;
   for (const item of mine) {
-    if (item.type !== "household") continue;
+    if (item.type === "family") {
+      const responsible = (item.body.responsible ?? {}) as { patient_id?: string; patient_client_uuid?: string };
+      const ref = responsible.patient_id ?? responsible.patient_client_uuid ?? null;
+      body = applyFamilyItem(body, item.client_uuid, item.body, ref === null ? null : await territoryRepo.personName(db, ref));
+      continue;
+    }
     const { fields } = splitItemBody("household", item.body);
     const area = typeof fields.micro_area_id === "string" && fields.micro_area_id !== body.micro_area?.id
       ? await territoryRepo.microAreaRef(db, fields.micro_area_id) : null;

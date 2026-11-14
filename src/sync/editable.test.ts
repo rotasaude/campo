@@ -18,7 +18,7 @@ test("householdEditable: the fields a household item sends, and nothing of famil
 test("familyEditable: the family with that id, or null when it is not in the household", () => {
   const family = HOUSEHOLD.families[0];
   expect(familyEditable(HOUSEHOLD, family.id)).toEqual({
-    income_band: family.income_band, members_count: family.members_count, living_since: family.living_since, moved_out: family.moved_out,
+    income_band: family.income_band, members_count: family.members_count, living_since: "2019-03", moved_out: family.moved_out, // the day of the download, compared as a month
   });
   expect(familyEditable(HOUSEHOLD, "00000000-0000-4000-8000-000000000000")).toBeNull();
 });
