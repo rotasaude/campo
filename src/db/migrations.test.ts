@@ -52,7 +52,7 @@ test("the columns the sync depends on exist with their rules", async () => {
     "key", "id", "client_uuid", "household_key", "family_id", "patient_id", "version", "body", "base_version", "base_body", "local_body",
     "needs_reload", "name_norm", "birth_date", "mother_norm",
   ]);
-  expect(await columns("map_file")).toEqual(["id", "version", "sha256", "size_bytes", "path", "partial_path", "partial_sha256", "resume_data"]);
+  expect(await columns("map_file")).toEqual(["id", "version", "sha256", "size_bytes", "path", "partial_path", "partial_sha256"]);
 
   const outbox = (uuid: string) => db.run(
     "INSERT INTO outbox (client_uuid, type, body, state, created_at, updated_at) VALUES (?, 'household', '{}', 'pending', 't', 't')", [uuid]);

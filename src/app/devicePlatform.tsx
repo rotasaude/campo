@@ -34,8 +34,6 @@ function QrCamera({ onScanned }: { onScanned(text: string): void }) {
   );
 }
 
-const RESUME_STEP_BYTES = 1024 * 1024;
-
 export const devicePlatform: Platform = {
   secure: {
     get: (key) => SecureStore.getItemAsync(key),
@@ -69,15 +67,11 @@ export const devicePlatform: Platform = {
   forgetDb: forgetExpoDb,
   appState: { addEventListener: (event, listener) => AppState.addEventListener(event, listener) },
   downloader: {
-    // The resumable download of the file system module: a resume sends Range from where the file stopped.
-    async run({ url, fileUri, headers, resumeData, onResumeData }) {
-      let reported = 0;
-      const task = LegacyFs.createDownloadResumable(url, fileUri, { headers }, (progress) => {
-        if (progress.totalBytesWritten - reported < RESUME_STEP_BYTES) return;
-        reported = progress.totalBytesWritten;
-        onResumeData(String(progress.totalBytesWritten));
-      }, resumeData ?? undefined);
-      const result = resumeData === null ? await task.downloadAsync() : await task.resumeAsync();
+    // The resumable download of the file system module. On Android the resume data is only the offset: the
+    // request goes with "Range: bytes=<offset>-" (our headers are added after it) and the body is appended.
+    async run({ url, fileUri, headers, resumeFrom }) {
+      const task = LegacyFs.createDownloadResumable(url, fileUri, { headers }, undefined, resumeFrom === null ? undefined : String(resumeFrom));
+      const result = resumeFrom === null ? await task.downloadAsync() : await task.resumeAsync();
       if (!result) throw new Error("download interrompido");
       return { status: result.status };
     },

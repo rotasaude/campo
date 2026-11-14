@@ -10,11 +10,12 @@ const MANIFEST: MapManifest = { version: "2026-11-01", size_bytes: 1000, sha256:
 const FINAL = `${MAP_DIR}2026-11-01-${SHA.slice(0, 12)}.pmtiles`;
 const PART = `${FINAL}.part`;
 
-type Step = { status: number } | { interrupt: string; resumeData?: string } | { write: number; status: number };
+// interrupt: the transfer stops with `left` bytes in the file (400 when not told).
+type Step = { status: number } | { interrupt: string; left?: number } | { write: number; status: number };
 async function setup(o: { steps?: Step[]; wifi?: boolean; sha?: (uri: string) => string; db?: Db } = {}) {
   const db = o.db ?? (await createTestDb());
   const files = new Map<string, number>(); // uri → size
-  const requests: { url: string; fileUri: string; headers: Record<string, string>; resumeData: string | null }[] = [];
+  const requests: { url: string; fileUri: string; headers: Record<string, string>; resumeFrom: number | null }[] = [];
   const steps = [...(o.steps ?? [{ write: 1000, status: 200 }])];
   const deps: MapDeps = {
     db,
@@ -28,11 +29,10 @@ async function setup(o: { steps?: Step[]; wifi?: boolean; sha?: (uri: string) =>
     },
     downloader: {
       run: async (request) => {
-        requests.push({ url: request.url, fileUri: request.fileUri, headers: request.headers, resumeData: request.resumeData });
+        requests.push({ url: request.url, fileUri: request.fileUri, headers: request.headers, resumeFrom: request.resumeFrom });
         const step = steps.shift() ?? { write: 1000, status: 200 };
         if ("interrupt" in step) {
-          files.set(request.fileUri, 400);
-          if (step.resumeData) request.onResumeData(step.resumeData);
+          if (step.left !== 0) files.set(request.fileUri, step.left ?? 400);
           throw new Error(step.interrupt);
         }
         if ("write" in step) files.set(request.fileUri, step.write);
@@ -49,7 +49,7 @@ const uri = (path: string) => DOC + path;
 test("first download: fetched to a .part, checked, renamed and recorded", async () => {
   const t = await setup();
   expect(await syncMapFile(t.deps, MANIFEST)).toBe("downloaded");
-  expect(t.requests).toEqual([{ url: "https://curitiba.rotasaude.example/field/v1/map", fileUri: uri(PART), headers: { Authorization: `Bearer ${TOKEN}` }, resumeData: null }]);
+  expect(t.requests).toEqual([{ url: "https://curitiba.rotasaude.example/field/v1/map", fileUri: uri(PART), headers: { Authorization: `Bearer ${TOKEN}` }, resumeFrom: null }]);
   expect([...t.files.keys()]).toEqual([uri(FINAL)]);
   expect(await readMapFile(t.db)).toEqual({ version: "2026-11-01", sha256: SHA, size_bytes: 1000, path: FINAL });
   expect(mapFileName(MANIFEST)).toBe(`2026-11-01-${SHA.slice(0, 12)}.pmtiles`);
@@ -73,8 +73,8 @@ test("no manifest: none, and the map the tablet already has stays", async () => 
   expect((await readMapFile(t.db))!.sha256).toBe(SHA);
 });
 
-test("interrupted download resumes from resume_data with If-Range set to the session sha256 (Q34)", async () => {
-  const t = await setup({ steps: [{ interrupt: "connection reset", resumeData: "400" }, { write: 1000, status: 206 }] });
+test("interrupted download resumes from the size of the .part on disk, with If-Range set to the session sha256 (Q34)", async () => {
+  const t = await setup({ steps: [{ interrupt: "connection reset" }, { write: 1000, status: 206 }] });
   expect(await syncMapFile(t.deps, MANIFEST)).toBe("failed");
   expect(await readMapFile(t.db)).toBeNull(); // nothing usable yet
   expect(t.files.has(uri(PART))).toBe(true);
@@ -82,22 +82,59 @@ test("interrupted download resumes from resume_data with If-Range set to the ses
   expect(await syncMapFile(t.deps, MANIFEST)).toBe("resumed");
   expect(t.requests[1]).toEqual({
     url: "https://curitiba.rotasaude.example/field/v1/map", fileUri: uri(PART),
-    headers: { Authorization: `Bearer ${TOKEN}`, "If-Range": `"${SHA}"` }, resumeData: "400",
+    headers: { Authorization: `Bearer ${TOKEN}`, "If-Range": `"${SHA}"` }, resumeFrom: 400,
   });
   expect((await readMapFile(t.db))!.path).toBe(FINAL);
   expect([...t.files.keys()]).toEqual([uri(FINAL)]);
 });
 
+// The Android resume sends Range from the number it is given and APPENDS the body to the file: the only
+// number that is right is the size the file has now.
+test("the resume point is what is on disk, not a number remembered from before", async () => {
+  const t = await setup({ steps: [{ interrupt: "reset", left: 400 }, { write: 1000, status: 206 }] });
+  await syncMapFile(t.deps, MANIFEST);
+  t.files.set(uri(PART), 731); // more bytes reached the disk after the last thing the app saw
+  expect(await syncMapFile(t.deps, MANIFEST)).toBe("resumed");
+  expect(t.requests[1].resumeFrom).toBe(731);
+});
+
+test.each([["gone", undefined], ["empty", 0]])("a .part that is %s starts a fresh download, without If-Range", async (_name, size) => {
+  const t = await setup({ steps: [{ interrupt: "reset" }, { write: 1000, status: 200 }] });
+  await syncMapFile(t.deps, MANIFEST);
+  if (size === undefined) t.files.delete(uri(PART)); else t.files.set(uri(PART), size);
+  expect(await syncMapFile(t.deps, MANIFEST)).toBe("downloaded");
+  expect(t.requests[1].resumeFrom).toBeNull();
+  expect(t.requests[1].headers["If-Range"]).toBeUndefined();
+});
+
+test("a .part already whole is not asked for again: it goes straight to the check", async () => {
+  const t = await setup({ steps: [{ interrupt: "reset at the last byte", left: 1000 }] });
+  expect(await syncMapFile(t.deps, MANIFEST)).toBe("failed");
+  expect(await syncMapFile(t.deps, MANIFEST)).toBe("resumed");
+  expect(t.requests).toHaveLength(1); // a Range past the end would answer 416
+  expect((await readMapFile(t.db))!.path).toBe(FINAL);
+});
+
+test("a .part larger than the file is thrown away without a transfer; the next round starts fresh", async () => {
+  const t = await setup({ steps: [{ interrupt: "reset", left: 1400 }, { write: 1000, status: 200 }] });
+  await syncMapFile(t.deps, MANIFEST);
+  expect(await syncMapFile(t.deps, MANIFEST)).toBe("failed");
+  expect(t.requests).toHaveLength(1);
+  expect(t.files.size).toBe(0);
+  expect(await syncMapFile(t.deps, MANIFEST)).toBe("downloaded");
+  expect(t.requests[1].resumeFrom).toBeNull();
+});
+
 test.each([[200], [416]])("%s on a resume discards the partial and starts over once", async (status) => {
-  const t = await setup({ steps: [{ interrupt: "reset", resumeData: "400" }, { status }, { write: 1000, status: 200 }] });
+  const t = await setup({ steps: [{ interrupt: "reset" }, { status }, { write: 1000, status: 200 }] });
   await syncMapFile(t.deps, MANIFEST);
   expect(await syncMapFile(t.deps, MANIFEST)).toBe("downloaded");
-  expect(t.requests.map((r) => [r.resumeData, r.headers["If-Range"] ?? null])).toEqual([[null, null], ["400", `"${SHA}"`], [null, null]]);
+  expect(t.requests.map((r) => [r.resumeFrom, r.headers["If-Range"] ?? null])).toEqual([[null, null], [400, `"${SHA}"`], [null, null]]);
   expect([...t.files.keys()]).toEqual([uri(FINAL)]);
 });
 
 test("a resume that keeps failing does not loop: one fresh start per call", async () => {
-  const t = await setup({ steps: [{ interrupt: "reset", resumeData: "400" }, { status: 416 }, { status: 416 }] });
+  const t = await setup({ steps: [{ interrupt: "reset" }, { status: 416 }, { status: 416 }] });
   await syncMapFile(t.deps, MANIFEST);
   expect(await syncMapFile(t.deps, MANIFEST)).toBe("failed");
   expect(t.requests).toHaveLength(3);
@@ -105,12 +142,12 @@ test("a resume that keeps failing does not loop: one fresh start per call", asyn
 });
 
 test("partial of another sha is discarded before starting", async () => {
-  const t = await setup({ steps: [{ interrupt: "reset", resumeData: "400" }, { write: 2000, status: 200 }] });
+  const t = await setup({ steps: [{ interrupt: "reset" }, { write: 2000, status: 200 }] });
   await syncMapFile(t.deps, MANIFEST);
   const newer: MapManifest = { version: "2026-11-01", size_bytes: 2000, sha256: OTHER_SHA };
   const result = await syncMapFile({ ...t.deps, sha256File: async () => OTHER_SHA }, newer);
   expect(result).toBe("downloaded");
-  expect(t.requests[1].resumeData).toBeNull();
+  expect(t.requests[1].resumeFrom).toBeNull();
   expect(t.requests[1].headers["If-Range"]).toBeUndefined();
   expect([...t.files.keys()]).toEqual([uri(`${MAP_DIR}2026-11-01-${OTHER_SHA.slice(0, 12)}.pmtiles`)]);
 });
@@ -190,8 +227,8 @@ test("pmtiles uri is absolute file:// under the document directory", async () =>
   expect(mapUri(row, DOC)).toMatch(/^pmtiles:\/\/file:\/\/\/.+\/map\/2026-11-01-[0-9a-f]{12}\.pmtiles$/);
 });
 
-test("the token goes only in the request headers: never stored with the resume data", async () => {
-  const t = await setup({ steps: [{ interrupt: "reset", resumeData: "400" }] });
+test("the token goes only in the request headers: never stored with the partial", async () => {
+  const t = await setup({ steps: [{ interrupt: "reset" }] });
   await syncMapFile(t.deps, MANIFEST);
   expect(JSON.stringify(await t.db.all("SELECT * FROM map_file"))).not.toMatch(/rsf_/);
 });

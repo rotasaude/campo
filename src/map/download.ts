@@ -27,9 +27,10 @@ export interface MapFsPort {
 }
 
 // The resumable download of the file system module. Resolves with the HTTP status when the transfer ended;
-// rejects when it was interrupted. `onResumeData` receives what a later call needs to continue.
+// rejects when it was interrupted. `resumeFrom`: how many bytes the file already has — the transfer asks
+// for the rest (Range) and appends it to the file; null writes the file from the start.
 export interface MapDownloader {
-  run(request: { url: string; fileUri: string; headers: Record<string, string>; resumeData: string | null; onResumeData(data: string): void }): Promise<{ status: number }>;
+  run(request: { url: string; fileUri: string; headers: Record<string, string>; resumeFrom: number | null }): Promise<{ status: number }>;
 }
 
 export interface MapDeps {
@@ -47,9 +48,9 @@ export const MAP_DIR = "map/";
 export const mapFileName = (manifest: Pick<MapManifest, "version" | "sha256">) => `${manifest.version}-${manifest.sha256.slice(0, 12)}.pmtiles`;
 
 export interface MapFile { version: string; sha256: string; size_bytes: number; path: string }
-interface Row { version: string | null; sha256: string | null; size_bytes: number | null; path: string | null; partial_path: string | null; partial_sha256: string | null; resume_data: string | null }
+interface Row { version: string | null; sha256: string | null; size_bytes: number | null; path: string | null; partial_path: string | null; partial_sha256: string | null }
 
-const readRow = (db: Db) => db.get<Row>("SELECT version, sha256, size_bytes, path, partial_path, partial_sha256, resume_data FROM map_file WHERE id = 1");
+const readRow = (db: Db) => db.get<Row>("SELECT version, sha256, size_bytes, path, partial_path, partial_sha256 FROM map_file WHERE id = 1");
 
 // The map the tablet can show, or null. `path` is relative to the document directory.
 export async function readMapFile(db: Db): Promise<MapFile | null> {
@@ -63,11 +64,12 @@ export function mapUri(file: Pick<MapFile, "path">, documentDirectory: string): 
   return `pmtiles://${documentDirectory}${file.path}`;
 }
 
-async function setPartial(db: Db, partial: { path: string; sha256: string; resumeData: string | null } | null): Promise<void> {
+// The record only says a partial of which file is on disk; where it stopped is the file's own size.
+async function setPartial(db: Db, partial: { path: string; sha256: string } | null): Promise<void> {
   await db.run(
-    `INSERT INTO map_file (id, partial_path, partial_sha256, resume_data) VALUES (1, ?, ?, ?)
-     ON CONFLICT (id) DO UPDATE SET partial_path = excluded.partial_path, partial_sha256 = excluded.partial_sha256, resume_data = excluded.resume_data`,
-    [partial?.path ?? null, partial?.sha256 ?? null, partial?.resumeData ?? null]);
+    `INSERT INTO map_file (id, partial_path, partial_sha256) VALUES (1, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET partial_path = excluded.partial_path, partial_sha256 = excluded.partial_sha256`,
+    [partial?.path ?? null, partial?.sha256 ?? null]);
 }
 
 export async function syncMapFile(deps: MapDeps, manifest: MapManifest | null): Promise<MapSyncResult> {
@@ -88,34 +90,39 @@ export async function syncMapFile(deps: MapDeps, manifest: MapManifest | null): 
     await remove(row.partial_path);
     await setPartial(db, null);
   }
-  let resumeData = row?.partial_sha256 === manifest.sha256 ? row.resume_data : null;
-  const resumed = resumeData !== null;
+  const discard = async (): Promise<void> => { await remove(partPath); await setPartial(db, null); };
   await fs.makeDirectoryAsync(at(MAP_DIR), { intermediates: true });
 
-  const discard = async (): Promise<void> => { await remove(partPath); await setPartial(db, null); };
+  // Where to resume from is what the file has now — never a number kept from before: the resume appends
+  // to the file, and the last bytes of an interrupted transfer reach the disk after anything the app saw.
+  let resumeFrom: number | null = null;
+  if (row?.partial_sha256 === manifest.sha256) {
+    const part = await fs.getInfoAsync(at(partPath));
+    if (part.exists && (part.size ?? 0) > 0) resumeFrom = part.size ?? null;
+  }
+  const resumed = resumeFrom !== null;
+  // A partial already whole (or longer) needs no transfer: a Range past the end would only answer 416.
+  const whole = resumeFrom !== null && resumeFrom >= manifest.size_bytes;
 
   // At most two transfers: the resume and, if the server says the file changed, one fresh start.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const request = await deps.client.mapRequest(resumeData !== null ? { ifRange: manifest.sha256 } : undefined);
-    await setPartial(db, { path: partPath, sha256: manifest.sha256, resumeData });
+  for (let attempt = 0; attempt < 2 && !whole; attempt += 1) {
+    const request = await deps.client.mapRequest(resumeFrom !== null ? { ifRange: manifest.sha256 } : undefined);
+    await setPartial(db, { path: partPath, sha256: manifest.sha256 });
     let status: number;
     try {
-      status = (await deps.downloader.run({
-        url: request.url, fileUri: at(partPath), headers: request.headers, resumeData,
-        onResumeData: (data) => { void setPartial(db, { path: partPath, sha256: manifest.sha256, resumeData: data }); },
-      })).status;
+      status = (await deps.downloader.run({ url: request.url, fileUri: at(partPath), headers: request.headers, resumeFrom })).status;
     } catch {
-      // Interrupted (no network, no space, app closed): the partial and its resume data stay for the next round.
+      // Interrupted (no network, no space, app closed): the partial stays for the next round.
       return "failed";
     }
 
-    const fresh = resumeData === null;
+    const fresh = resumeFrom === null;
     if (status === 206 || (status === 200 && fresh)) break;
     await discard();
     log("map.download.failed", { status });
     if (status === 404) return "none"; // map_not_found: the published map is gone
     // On a resume, 200 (the whole new file) or 416 mean the file changed on the server: start over, once.
-    if (!fresh && (status === 200 || status === 416) && attempt === 0) { resumeData = null; continue; }
+    if (!fresh && (status === 200 || status === 416) && attempt === 0) { resumeFrom = null; continue; }
     return "failed";
   }
 
@@ -132,10 +139,10 @@ export async function syncMapFile(deps: MapDeps, manifest: MapManifest | null): 
   await db.run(
     `INSERT INTO map_file (id, version, sha256, size_bytes, path) VALUES (1, ?, ?, ?, ?)
      ON CONFLICT (id) DO UPDATE SET version = excluded.version, sha256 = excluded.sha256, size_bytes = excluded.size_bytes, path = excluded.path,
-       partial_path = NULL, partial_sha256 = NULL, resume_data = NULL`,
+       partial_path = NULL, partial_sha256 = NULL`,
     [manifest.version, manifest.sha256, manifest.size_bytes, finalPath]);
   dbEvents.emit("map_file");
   // Only now, with the new one recorded, the old file goes.
   if (previous !== null && previous !== finalPath) await remove(previous);
-  return resumed && resumeData !== null ? "resumed" : "downloaded";
+  return resumed && resumeFrom !== null ? "resumed" : "downloaded";
 }
