@@ -33,7 +33,11 @@ export const OPEN_FAILED = "Não foi possível abrir os dados do app. Feche o ap
 
 type Phase = "starting" | "fatal" | "pairing" | "pin_create" | "locked" | "suspended" | "initial_load" | "ready";
 
-export interface AppActions { appVersion: string; signOut(): void; scanNew(): void }
+export interface AppActions {
+  appVersion: string; signOut(): void; scanNew(): void;
+  // What the map route needs from the device.
+  map: { Canvas: Platform["MapCanvas"]; readHead: Platform["readFileHead"] };
+}
 const AppContext = createContext<AppActions | null>(null);
 export function useApp(): AppActions {
   const app = useContext(AppContext);
@@ -177,7 +181,7 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
   }, [enter, platform]);
 
   const services = useMemo<AppServices | null>(() => (db === null ? null : {
-    db, secure: platform.secure, http: platform.http, fs: platform.fs, net: platform.net, location: undefined, camera: undefined,
+    db, secure: platform.secure, http: platform.http, fs: platform.fs, net: platform.net, location: platform.location, camera: undefined,
     crypto: platform.crypto, now: platform.now, random: platform.random,
   }), [db, platform]);
   const sync = useMemo<SyncState>(() => ({ running, lastOutcome, run: () => { void run("button"); } }), [lastOutcome, run, running]);
@@ -185,6 +189,7 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
     appVersion: platform.build.appVersion,
     signOut: () => { void wipe().then(() => setPhase("pairing")); },
     scanNew: () => setPhase("pairing"),
+    map: { Canvas: platform.MapCanvas, readHead: platform.readFileHead },
   }), [platform, wipe]);
 
   if (phase === "starting") return <Screen><Muted>Abrindo…</Muted></Screen>;

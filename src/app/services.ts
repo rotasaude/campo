@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import type { Db } from "../db/types";
+import type { LocationPort as GpsPort } from "../location/capture";
 import type { SecureStorePort } from "../security/secureStore";
 import type { FsPort as WipeFsPort } from "../security/wipe";
 
@@ -14,7 +15,7 @@ export type SecurePort = SecureStorePort;
 export type HttpPort = typeof fetch | undefined;
 export type FsPort = WipeFsPort;
 export type NetPort = unknown;
-export type LocationPort = unknown;
+export type LocationPort = GpsPort;
 export type CameraPort = unknown;
 
 export interface CryptoPort {

@@ -3,5 +3,5 @@ import { HomeScreen } from "../../src/features/home/HomeScreen";
 
 export default function HomeRoute() {
   const router = useRouter();
-  return <HomeScreen onOpenWho={() => router.push("/who")} onOpenOutbox={() => router.push("/outbox")} onOpenAbout={() => router.push("/about")} />;
+  return <HomeScreen onOpenWho={() => router.push("/who")} onOpenMap={() => router.push("/map")} onOpenOutbox={() => router.push("/outbox")} onOpenAbout={() => router.push("/about")} />;
 }

@@ -1,4 +1,5 @@
-// The real platform: the only file of the app that imports the Expo modules.
+// The real platform: the only file of the app that imports the Expo modules
+// (MapLibre, which draws the map, is next door in mapCanvas.tsx).
 // Everything here is thin on purpose — the logic lives behind the ports and is
 // tested there; what this file does can only be proved on a device.
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -6,11 +7,13 @@ import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
 import { File } from "expo-file-system";
 import * as LegacyFs from "expo-file-system/legacy";
+import * as Location from "expo-location";
 import * as Network from "expo-network";
 import * as SecureStore from "expo-secure-store";
 import { AppState } from "react-native";
 import { forgetExpoDb, openExpoDb } from "../db/expoDb";
 import { Body, Button, Muted } from "../ui/components";
+import { MapLibreCanvas } from "./mapCanvas";
 import type { Platform } from "./platform";
 
 type Extra = { allowedHostSuffixes?: string[]; devOrigin?: string };
@@ -77,6 +80,27 @@ export const devicePlatform: Platform = {
   },
   // The whole file, hashed natively (12 ms for 15 MB in the technical proof; a JavaScript hash took seconds).
   sha256File: async (uri) => String(await new File(uri).digest("SHA-256")).toLowerCase(),
+  readFileHead: async (uri, bytes) => {
+    const handle = new File(uri).open();
+    try {
+      return await handle.readBytes(bytes);
+    } finally {
+      handle.close();
+    }
+  },
+  location: {
+    // Only while the app is in use; the precise permission is the one that counts (Android's "fine").
+    permission: async () => {
+      const current = await Location.getForegroundPermissionsAsync();
+      const answer = current.granted || !current.canAskAgain ? current : await Location.requestForegroundPermissionsAsync();
+      return { granted: answer.granted, precise: answer.android?.accuracy === "fine" };
+    },
+    current: async () => {
+      const fix = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      return { latitude: fix.coords.latitude, longitude: fix.coords.longitude, accuracy: fix.coords.accuracy };
+    },
+  },
+  MapCanvas: MapLibreCanvas,
   Camera: QrCamera,
   build: {
     appVersion: Constants.expoConfig?.version ?? "0.0.0",
