@@ -49,8 +49,10 @@ async function read(db: Db, key: string): Promise<Loaded | "missing"> {
   };
 }
 
-export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onNewResident, onStartVisit, onOpenResident }: {
-  householdKey: string; onEdit(): void; onNewFamily(): void; onNewResident(): void; onStartVisit(start: VisitStart): void; onOpenResident(registrationKey: string): void;
+export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamily, onNewResident, onStartVisit, onOpenResident }: {
+  householdKey: string; onEdit(): void; onNewFamily(): void; onEditFamily(familyId: string): void;
+  // `familyId`: the family the new resident enters; null for somebody outside any family (or the head of one yet to be registered).
+  onNewResident(familyId: string | null): void; onStartVisit(start: VisitStart): void; onOpenResident(registrationKey: string): void;
 }) {
   const { colors } = useTheme();
   const load = useCallback((db: Db) => read(db, householdKey), [householdKey]);
@@ -81,6 +83,12 @@ export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onNewReside
           <Body>{`Responsável: ${family.responsible.display_name}`}</Body>
           {family.members_count !== null && <Muted>{people(family.members_count)}</Muted>}
           {family.moved_out && <Muted>Mudou-se</Muted>}
+          {data.canEdit && !view.conflict && !family.moved_out && (
+            <>
+              <Button label="Editar família" variant="secondary" onPress={() => onEditFamily(family.id)} />
+              <Button label="Novo morador nesta família" variant="secondary" onPress={() => onNewResident(family.id)} />
+            </>
+          )}
         </View>
       ))}
       {data.canEdit && data.takesFamilies && <Button label="Nova família" variant="secondary" onPress={onNewFamily} />}
@@ -99,7 +107,7 @@ export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onNewReside
           )}
         </View>
       ))}
-      {data.canEdit && <Button label="Novo morador" variant="secondary" onPress={onNewResident} />}
+      {data.canEdit && <Button label="Novo morador" variant="secondary" onPress={() => onNewResident(null)} />}
       <Muted>{AT_THE_DASHBOARD}</Muted>
     </Screen>
   );

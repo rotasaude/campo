@@ -9,7 +9,8 @@ export default function HouseholdRoute() {
     <HouseholdScreen householdKey={key}
       onEdit={() => router.push({ pathname: "/households/[key]/edit", params: { key } })}
       onNewFamily={() => router.push({ pathname: "/families/new", params: { household: key } })}
-      onNewResident={() => router.push({ pathname: "/registrations/new", params: { household: key } })}
+      onEditFamily={(id) => router.push({ pathname: "/families/[id]/edit", params: { id, household: key } })}
+      onNewResident={(family) => router.push({ pathname: "/registrations/new", params: { household: key, family: family ?? "" } })}
       onOpenResident={(registration) => router.push({ pathname: "/registrations/[key]/edit", params: { key: registration } })}
       onStartVisit={(start) => router.push({
         pathname: "/visits/new",

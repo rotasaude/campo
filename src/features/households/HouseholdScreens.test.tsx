@@ -29,7 +29,7 @@ async function list(db: Db) {
   return nav;
 }
 async function detail(db: Db, key = HH) {
-  const nav = { onEdit: jest.fn(), onNewFamily: jest.fn(), onNewResident: jest.fn(), onStartVisit: jest.fn(), onOpenResident: jest.fn() };
+  const nav = { onEdit: jest.fn(), onNewFamily: jest.fn(), onEditFamily: jest.fn(), onNewResident: jest.fn(), onStartVisit: jest.fn(), onOpenResident: jest.fn() };
   await renderWithServices(<HouseholdScreen householdKey={key} {...nav} />, fakeServices({ db, now: () => NOW }));
   return nav;
 }
@@ -84,7 +84,11 @@ test("the household: address, point, family with its responsible, residents, and
   await fireEvent.press(screen.getByRole("button", { name: "Nova família" }));
   expect(nav.onNewFamily).toHaveBeenCalled();
   await fireEvent.press(screen.getByRole("button", { name: "Novo morador" }));
-  expect(nav.onNewResident).toHaveBeenCalled();
+  expect(nav.onNewResident).toHaveBeenCalledWith(null);
+  await fireEvent.press(family.getByRole("button", { name: "Novo morador nesta família" }));
+  expect(nav.onNewResident).toHaveBeenLastCalledWith(FAMILY);
+  await fireEvent.press(family.getByRole("button", { name: "Editar família" }));
+  expect(nav.onEditFamily).toHaveBeenCalledWith(FAMILY);
   await fireEvent.press(joana.getByRole("button", { name: "Registrar visita" }));
   expect(nav.onStartVisit).toHaveBeenCalledWith({ patient_id: JOANA, household_id: HH, family_id: FAMILY, micro_area_id: AREA });
 });
