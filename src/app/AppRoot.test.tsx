@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
-import { Text } from "react-native";
+import { useState } from "react";
+import { StyleSheet, Text, TextInput } from "react-native";
 import { UNENCRYPTED_MESSAGE, openEncryptedDb } from "../db/open";
 import { LOCKED_MESSAGE } from "../features/lock/LockScreen";
 import { phraseFor } from "../features/messages/errorPhrases";
@@ -19,9 +20,15 @@ function Main() {
   return (
     <>
       <Text>telas principais</Text>
+      <Draft />
       <Text onPress={app.signOut}>sair</Text>
     </>
   );
+}
+// A form in the middle of being filled: its text lives only in the screen's memory.
+function Draft() {
+  const [note, setNote] = useState("");
+  return <TextInput accessibilityLabel="Observação" value={note} onChangeText={setNote} />;
 }
 const mount = (platform: FakePlatform) => render(<AppRoot platform={platform}><Main /></AppRoot>);
 
@@ -75,6 +82,49 @@ test("after 5 min in background the app locks; a shorter absence does not", asyn
   await act(async () => { platform.appState.emit("background"); platform.clock.now += 5 * 60_000; platform.appState.emit("active"); });
   expect(await screen.findByRole("header", { name: "Digite o PIN" })).toBeTruthy();
   expect(screen.queryByText("telas principais")).toBeNull();
+});
+
+// Q75(8): a lock in the middle of a form keeps the form — hidden, out of reach, with nothing going to the server.
+test("locked after 5 min: the screens below stay mounted but hidden, the scheduler stops, and what was typed is back after the PIN", async () => {
+  const { platform } = await paired();
+  await mount(platform);
+  await unlock();
+  await fireEvent.changeText(await screen.findByLabelText("Observação"), "Sr. José pediu retorno na sexta");
+  await waitFor(() => expect(platform.server.requests.length).toBeGreaterThan(0));
+
+  await act(async () => { platform.appState.emit("background"); platform.clock.now += 5 * 60_000; platform.appState.emit("active"); });
+  expect(await screen.findByRole("header", { name: "Digite o PIN" })).toBeTruthy();
+  // Not for the eyes: the PIN screen is opaque and covers everything.
+  const veil = StyleSheet.flatten(screen.getByTestId("lock-veil").props.style);
+  expect(veil).toMatchObject({ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 });
+  expect(veil.backgroundColor).toMatch(/^#[0-9a-f]{6}$/i);
+  // Not for the screen reader, not for a touch: the tree below is out of accessibility.
+  expect(screen.queryByDisplayValue("Sr. José pediu retorno na sexta")).toBeNull();
+  expect(screen.queryByText("telas principais")).toBeNull();
+  const below = screen.getByTestId("main-screens", { includeHiddenElements: true });
+  expect(below.props).toMatchObject({ importantForAccessibility: "no-hide-descendants", accessibilityElementsHidden: true, pointerEvents: "none" });
+  // But still there, with what was typed.
+  expect(screen.getByDisplayValue("Sr. José pediu retorno na sexta", { includeHiddenElements: true })).toBeTruthy();
+
+  // Nothing goes to the server while locked: coming back to the app, which starts a round when unlocked, starts none.
+  const before = platform.server.requests.length;
+  await act(async () => { platform.appState.emit("background"); platform.clock.now += 60_000; platform.appState.emit("active"); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+  expect(platform.server.requests.length).toBe(before);
+
+  await unlock();
+  expect(await screen.findByDisplayValue("Sr. José pediu retorno na sexta")).toBeTruthy();
+  expect(screen.queryByTestId("lock-veil")).toBeNull();
+  expect(screen.getByTestId("main-screens").props).toMatchObject({ importantForAccessibility: "auto", accessibilityElementsHidden: false, pointerEvents: "auto" });
+  await waitFor(() => expect(platform.server.requests.length).toBeGreaterThan(before));
+});
+
+test("a cold start has nothing below the PIN", async () => {
+  const { platform } = await paired();
+  await mount(platform);
+  expect(await screen.findByRole("header", { name: "Digite o PIN" })).toBeTruthy();
+  expect(screen.queryByTestId("main-screens", { includeHiddenElements: true })).toBeNull();
+  expect(screen.queryByLabelText("Observação", { includeHiddenElements: true })).toBeNull();
 });
 
 test("a tablet that was never paired opens on the QR; a good QR leads to the PIN and then to the first load", async () => {

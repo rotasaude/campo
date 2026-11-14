@@ -5,7 +5,13 @@
 //
 // Nothing talks to the server before the PIN: the scheduler and the rounds
 // start after it and stop when the app locks.
+//
+// A lock in the middle of the work (5 minutes away) does not throw the work
+// away: the main screens stay mounted under an opaque PIN screen — out of
+// sight, out of the screen reader, out of reach of a touch — and what the
+// person was typing is there after the PIN. Nothing is drafted to the database.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { StyleSheet, View } from "react-native";
 import { MissingKeyError, UNENCRYPTED_MESSAGE, UnencryptedDatabaseError, openEncryptedDb } from "../db/open";
 import { territoryRepo } from "../db/repos/territoryRepo";
 import type { Db } from "../db/types";
@@ -24,6 +30,7 @@ import { createFieldClient } from "../sync/http";
 import { recoverSending } from "../sync/outbox";
 import { runRound, type RoundOutcome, type RoundTrigger } from "../sync/round";
 import { startScheduler } from "../sync/scheduler";
+import { useTheme } from "../theme/theme";
 import { Body, Muted, Notice, Screen } from "../ui/components";
 import type { Platform } from "./platform";
 import { ServicesProvider, type AppServices } from "./services";
@@ -57,12 +64,18 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
   const [fatal, setFatal] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [lastOutcome, setLastOutcome] = useState<RoundOutcome | null>(null);
+  // Locked over the main screens (they stay mounted below the PIN).
+  const [veiled, setVeiled] = useState(false);
+  const { colors } = useTheme();
 
   const dbRef = useRef<Db | null>(null);
   const unlocked = useRef(false);
   const busy = useRef(false);
   const stopScheduler = useRef<(() => void) | null>(null);
   const leftAt = useRef<number | null>(null);
+  // The phase as the AppState listener needs it: the one on screen now.
+  const phaseNow = useRef<Phase>("starting");
+  useEffect(() => { phaseNow.current = phase; }, [phase]);
 
   const changeDb = useCallback((next: Db | null) => { dbRef.current = next; setDb(next); }, []);
   const lock = useCallback(() => {
@@ -117,6 +130,7 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
     unlocked.current = true;
     leftAt.current = null;
     setPhase(await gateOf(current));
+    setVeiled(false);
     stopScheduler.current ??= startScheduler({ run, appState: platform.appState, net: platform.net, isLocked: () => !unlocked.current });
     void run(trigger);
   }, [platform, run]);
@@ -149,7 +163,12 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
     const subscription = platform.appState.addEventListener("change", (status) => {
       if (status === "background") { leftAt.current = platform.now(); return; }
       if (status !== "active" || !unlocked.current || leftAt.current === null) return;
-      if (shouldLock(leftAt.current, platform.now())) { lock(); setPhase("locked"); }
+      if (shouldLock(leftAt.current, platform.now())) {
+        lock();
+        // Over the main screens the PIN is a veil; anywhere else there is no work to keep.
+        if (phaseNow.current === "ready") setVeiled(true);
+        else setPhase("locked");
+      }
       leftAt.current = null;
     });
     return () => subscription.remove();
@@ -206,7 +225,21 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
   else if (phase === "locked") screen = <LockScreen onUnlocked={() => { void enter("open"); }} onScanNew={() => setPhase("pairing")} />;
   else if (phase === "suspended") screen = <SuspendedScreen onScanNew={() => setPhase("pairing")} />;
   else if (phase === "initial_load") screen = <InitialLoadScreen onDone={() => setPhase("ready")} />;
-  else screen = children;
+  else {
+    screen = (
+      <View style={{ flex: 1 }}>
+        <View testID="main-screens" style={{ flex: 1 }} pointerEvents={veiled ? "none" : "auto"}
+          importantForAccessibility={veiled ? "no-hide-descendants" : "auto"} accessibilityElementsHidden={veiled}>
+          {children}
+        </View>
+        {veiled && (
+          <View testID="lock-veil" style={[StyleSheet.absoluteFill, { backgroundColor: colors.bg }]}>
+            <LockScreen onUnlocked={() => { void enter("open"); }} onScanNew={() => { setVeiled(false); setPhase("pairing"); }} />
+          </View>
+        )}
+      </View>
+    );
+  }
 
   return (
     <ServicesProvider value={services}>
