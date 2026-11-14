@@ -9,6 +9,7 @@
 import type { HouseholdBody, RegistrationBody, UploadResult } from "../contract";
 import { dbEvents } from "../db/events";
 import { outboxRepo, type OutboxItem } from "../db/repos/outboxRepo";
+import { territoryRepo } from "../db/repos/territoryRepo";
 import type { Db } from "../db/types";
 import { familyEditable, householdEditable, registrationEditable, splitItemBody } from "./editable";
 import { applyChoices, merge } from "./merge";
@@ -18,13 +19,13 @@ type Body = Record<string, unknown>;
 const pick = (source: Body, keys: string[]): Body => Object.fromEntries(keys.filter((key) => key in source).map((key) => [key, source[key]]));
 const withoutVersion = ({ version: _version, ...rest }: Body): Body => rest;
 
-// The local row becomes the station's record: body, version and merge base, and the reload mark is cleared.
-async function writeCurrent(db: Db, item: OutboxItem, current: Body, version: number, base: Body): Promise<void> {
+// The local row becomes the station's record, through the same path as the download: body, version, merge base
+// and search columns; the reload mark is cleared.
+async function writeCurrent(db: Db, item: OutboxItem, current: Body): Promise<void> {
   const table = targetTable(item.type);
-  if (table === null || item.target_id === null) return;
-  await db.run(`UPDATE ${table} SET body = ?, version = ?, base_version = ?, base_body = ?, needs_reload = 0 WHERE key = ?`,
-    [JSON.stringify(current), version, version, JSON.stringify(base), item.target_id]);
-  dbEvents.emit(table);
+  if (table === "households") await territoryRepo.putHousehold(db, current as unknown as HouseholdBody);
+  else if (table === "registrations") await territoryRepo.putRegistration(db, current as unknown as RegistrationBody);
+  if (table !== null) dbEvents.emit(table);
 }
 
 export async function handleStale(db: Db, item: OutboxItem, result: UploadResult): Promise<void> {
@@ -41,7 +42,7 @@ export async function handleStale(db: Db, item: OutboxItem, result: UploadResult
     // For a family the answer's record is the household (Q4), as is the row.
     const rowBase = table === "households"
       ? householdEditable(current as unknown as HouseholdBody) : registrationEditable(current as unknown as RegistrationBody);
-    await writeCurrent(tx, item, current, version, rowBase as unknown as Body);
+    await writeCurrent(tx, item, current);
 
     const { ids, fields } = splitItemBody(item.type, withoutVersion(item.body));
     let station: Body = rowBase as unknown as Body;
