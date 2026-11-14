@@ -3,10 +3,10 @@
 // database; everything else only needs SQL.
 import initSqlJs, { type Database } from "sql.js";
 import { migrate } from "../migrations";
+import { serialDb } from "../serial";
 import type { Db, SqlParam } from "../types";
 
 function adapt(raw: Database): Db {
-  let depth = 0;
   const rows = <T>(sql: string, params: SqlParam[]): T[] => {
     const statement = raw.prepare(sql);
     try {
@@ -18,34 +18,19 @@ function adapt(raw: Database): Db {
       statement.free();
     }
   };
-  const db: Db = {
+  // The same line-up as on the device (serial.ts): a test that uses the outer handle inside a transaction hangs here too.
+  return serialDb({
     async exec(sql) { raw.exec(sql); },
-    async run(sql, params = []) {
+    async run(sql, params) {
       raw.run(sql, params);
       const changes = raw.getRowsModified();
       const lastInsertRowId = Number(raw.exec("SELECT last_insert_rowid()")[0].values[0][0]);
       return { changes, lastInsertRowId };
     },
-    async all<T>(sql: string, params: SqlParam[] = []) { return rows<T>(sql, params); },
-    async get<T>(sql: string, params: SqlParam[] = []) { return rows<T>(sql, params)[0] ?? null; },
-    async tx<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
-      if (depth > 0) return fn(db);
-      raw.exec("BEGIN IMMEDIATE");
-      depth += 1;
-      try {
-        const result = await fn(db);
-        raw.exec("COMMIT");
-        return result;
-      } catch (err) {
-        raw.exec("ROLLBACK");
-        throw err;
-      } finally {
-        depth -= 1;
-      }
-    },
+    async all<T>(sql: string, params: SqlParam[]) { return rows<T>(sql, params); },
+    async get<T>(sql: string, params: SqlParam[]) { return rows<T>(sql, params)[0] ?? null; },
     async close() { raw.close(); },
-  };
-  return db;
+  });
 }
 
 // A bare database: the migration tests run `migrate` themselves.

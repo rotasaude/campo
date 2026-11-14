@@ -1,35 +1,26 @@
-// The device implementation of Db: expo-sqlite built with SQLCipher. One
-// connection per process — a second one would not carry the key.
+// The device implementation of Db: expo-sqlite built with SQLCipher, on ONE
+// connection — the one that received PRAGMA key. expo-sqlite's own
+// withExclusiveTransactionAsync opens a second native connection, which never
+// gets the key (it could not read the encrypted file, and would write a new
+// one in clear), so the transactions are made here, on the same connection,
+// with everything else waiting in line (serial.ts).
 import * as SQLite from "expo-sqlite";
-import type { Db, SqlParam } from "./types";
-
-type Conn = Pick<SQLite.SQLiteDatabase, "execAsync" | "runAsync" | "getAllAsync" | "getFirstAsync">;
-
-function adapt(conn: Conn, root: SQLite.SQLiteDatabase, inTx: boolean): Db {
-  const db: Db = {
-    exec: (sql) => conn.execAsync(sql),
-    run: async (sql, params = []) => {
-      const result = await conn.runAsync(sql, params);
-      return { changes: result.changes, lastInsertRowId: result.lastInsertRowId };
-    },
-    all: <T>(sql: string, params: SqlParam[] = []) => conn.getAllAsync<T>(sql, params),
-    get: <T>(sql: string, params: SqlParam[] = []) => conn.getFirstAsync<T>(sql, params),
-    async tx<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
-      if (inTx) return fn(db);
-      let result!: T;
-      // Exclusive: nothing else of the app interleaves with the transaction; it rolls back when the task throws.
-      await root.withExclusiveTransactionAsync(async (txn) => { result = await fn(adapt(txn, root, true)); });
-      return result;
-    },
-    close: () => root.closeAsync(),
-  };
-  return db;
-}
+import { serialDb } from "./serial";
+import type { Db } from "./types";
 
 let opened: Promise<Db> | null = null;
 
 export function openExpoDb(name: string): Promise<Db> {
-  opened ??= SQLite.openDatabaseAsync(name).then((conn) => adapt(conn, conn, false));
+  opened ??= SQLite.openDatabaseAsync(name).then((conn) => serialDb({
+    exec: (sql) => conn.execAsync(sql),
+    run: async (sql, params) => {
+      const result = await conn.runAsync(sql, params);
+      return { changes: result.changes, lastInsertRowId: result.lastInsertRowId };
+    },
+    all: <T,>(sql: string, params: (string | number | null)[]) => conn.getAllAsync<T>(sql, params),
+    get: <T,>(sql: string, params: (string | number | null)[]) => conn.getFirstAsync<T>(sql, params),
+    close: () => conn.closeAsync(),
+  }));
   return opened;
 }
 

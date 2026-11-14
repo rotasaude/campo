@@ -236,11 +236,13 @@ test("page failing midway applies nothing and keeps the previous cursor", async 
   const db = await createTestDb();
   await db.run("INSERT INTO meta (key, value) VALUES ('cursor', 'previous')");
   let runs = 0;
-  const failing: Db = {
-    ...db,
-    run: async (sql, params) => { if (/INSERT INTO registrations|UPDATE registrations/.test(sql) && ++runs === 1) throw new Error("disk full"); return db.run(sql, params); },
-    tx: (fn) => db.tx(() => fn(failing)),
-  };
+  // The failure is put on whichever handle the page is written through — inside a transaction, the transaction's own.
+  const failingOver = (inner: Db): Db => ({
+    ...inner,
+    run: async (sql, params) => { if (/INSERT INTO registrations|UPDATE registrations/.test(sql) && ++runs === 1) throw new Error("disk full"); return inner.run(sql, params); },
+    tx: (fn) => inner.tx((tx) => fn(failingOver(tx))),
+  });
+  const failing = failingOver(db);
   await expect(applyPage(failing, FIRST)).rejects.toThrow("disk full");
   expect([await count(db, "micro_areas"), await count(db, "households"), await count(db, "families"), await count(db, "registrations")]).toEqual([0, 0, 0, 0]);
   expect(await meta(db, "cursor")).toBe("previous");
