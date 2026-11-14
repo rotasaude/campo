@@ -7,7 +7,7 @@
 // server's record arrives, it is filed under that key, and whatever points to
 // the row (registrations, the outbox) stays valid.
 import type { FamilyBody, HouseholdBody, MicroAreaBody, RegistrationBody, WhoToVisit } from "../../contract";
-import { householdEditable, registrationEditable } from "../../sync/editable";
+import { applyHouseholdFields, householdEditable, registrationEditable, splitItemBody } from "../../sync/editable";
 import { normalizeText } from "../../sync/text";
 import { dbEvents } from "../events";
 import type { Db } from "../types";
@@ -34,7 +34,8 @@ export const territoryRepo = {
   },
 
   // The server's household becomes the row: body, version, merge base, search columns and the family index.
-  // `local_body` (what the person is still editing) and the outbox are never touched here (Q41).
+  // The outbox is never touched here (Q41): what the person edited and has not sent stays in the line, and the screens
+  // read the row with the line applied on top (features/households/view.ts).
   async putHousehold(db: Db, body: HouseholdBody): Promise<string> {
     const key = (await keyOf(db, "households", body.id)) ?? body.id;
     const columns = [
@@ -53,6 +54,31 @@ export const territoryRepo = {
       await db.run("INSERT OR REPLACE INTO families (id, household_key, responsible_patient_id) VALUES (?, ?, ?)", [family.id, key, family.responsible.patient_id]);
     }
     return key;
+  },
+
+  // The id and code of a micro-area the tablet has; null when it does not.
+  async microAreaRef(db: Db, id: string): Promise<HouseholdBody["micro_area"] | null> {
+    const row = await db.get<{ body: string }>("SELECT body FROM micro_areas WHERE id = ?", [id]);
+    if (!row) return null;
+    const area = JSON.parse(row.body) as MicroAreaBody;
+    return { id: area.id, code: area.code };
+  },
+
+  // The server accepted a household item: the row carries what was accepted — id, version, the fields — until the next
+  // download brings the record itself. The merge base becomes the body that was sent.
+  async acceptHousehold(db: Db, key: string, itemBody: Record<string, unknown>, result: { id: string | null; version: number }): Promise<void> {
+    const { fields } = splitItemBody("household", itemBody);
+    const row = await db.get<{ body: string; id: string | null; micro_area_id: string }>("SELECT body, id, micro_area_id FROM households WHERE key = ?", [key]);
+    if (!row) return;
+    const before = JSON.parse(row.body) as HouseholdBody;
+    const area = typeof fields.micro_area_id === "string" ? await territoryRepo.microAreaRef(db, fields.micro_area_id) : null;
+    const id = result.id ?? row.id;
+    const body: HouseholdBody = { ...applyHouseholdFields(before, fields, area), version: result.version, ...(id === null ? {} : { id }) };
+    await db.run(
+      `UPDATE households SET id = ?, version = ?, body = ?, base_version = ?, base_body = ?, micro_area_id = ?, street_norm = ?, number = ?, has_location = ?
+       WHERE key = ?`,
+      [id, result.version, JSON.stringify(body), result.version, JSON.stringify(itemBody), body.micro_area?.id ?? row.micro_area_id,
+        normalizeText(body.address?.street ?? ""), body.address?.number ?? "", body.location ? 1 : 0, key]);
   },
 
   async putRegistration(db: Db, body: RegistrationBody): Promise<string> {

@@ -29,7 +29,7 @@ const WHO = LAST.who_to_visit as unknown as WhoToVisit;
 const count = async (db: Db, table: string) => (await db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`))!.n;
 const meta = async (db: Db, key: string) => (await db.get<{ value: string }>("SELECT value FROM meta WHERE key = ?", [key]))?.value ?? null;
 const householdRow = (db: Db, key: string) => db.get<{
-  key: string; id: string | null; micro_area_id: string; version: number; body: string; base_version: number; base_body: string; local_body: string | null;
+  key: string; id: string | null; micro_area_id: string; version: number; body: string; base_version: number; base_body: string;
   needs_reload: number; street_norm: string; number: string; has_location: number;
 }>("SELECT * FROM households WHERE key = ?", [key]);
 const withPage = (base: ChangesResponse, over: Partial<ChangesResponse>): ChangesResponse => ({ ...base, ...over });
@@ -46,7 +46,7 @@ test("full load from changes-first-page + changes-last-page", async () => {
 
   expect(await db.get("SELECT id, team_id FROM micro_areas")).toEqual({ id: FIRST.items[0].id, team_id: "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b" });
   const hh = (await householdRow(db, HH.id))!;
-  expect([hh.id, hh.micro_area_id, hh.version, hh.base_version, hh.needs_reload, hh.local_body]).toEqual([HH.id, HH.micro_area.id, 3, 3, 0, null]);
+  expect([hh.id, hh.micro_area_id, hh.version, hh.base_version, hh.needs_reload]).toEqual([HH.id, HH.micro_area.id, 3, 3, 0]);
   expect(JSON.parse(hh.body)).toEqual(HH);
   expect(JSON.parse(hh.base_body)).toEqual(householdEditable(HH));
   expect([hh.street_norm, hh.number, hh.has_location]).toEqual(["das flores", "120", HH.location ? 1 : 0]);
@@ -122,7 +122,6 @@ test("item with pending local edit: row updates, outbox item and its edit base u
   const db = await createTestDb();
   await applyPage(db, FIRST);
   const base = householdEditable(HH);
-  await db.run("UPDATE households SET local_body = ? WHERE key = ?", [JSON.stringify({ ...base, contact_phone: "41988887777" }), HH.id]);
   const edit = await enqueue(db, {
     type: "household", targetId: HH.id, editBase: { version: 3, body: base as unknown as Record<string, unknown> },
     body: { household_id: HH.id, micro_area_id: HH.micro_area.id, property_type: HH.property_type, contact_phone: "41988887777" },
@@ -134,7 +133,6 @@ test("item with pending local edit: row updates, outbox item and its edit base u
   const row = (await householdRow(db, HH.id))!;
   expect([row.version, row.base_version]).toEqual([4, 4]);
   expect(JSON.parse(row.body).property_type).toBe("2");
-  expect(JSON.parse(row.local_body!).contact_phone).toBe("41988887777"); // what the person typed is still there
   expect(await outboxRepo.bySeq(db, edit.seq)).toEqual(before);
 });
 

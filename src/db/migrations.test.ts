@@ -45,11 +45,11 @@ test("the columns the sync depends on exist with their rules", async () => {
     "candidates", "confirmable", "conflicts", "sent_version", "attempts", "created_at", "updated_at",
   ]);
   expect(await columns("households")).toEqual([
-    "key", "id", "client_uuid", "micro_area_id", "version", "body", "base_version", "base_body", "local_body", "needs_reload",
+    "key", "id", "client_uuid", "micro_area_id", "version", "body", "base_version", "base_body", "needs_reload",
     "street_norm", "number", "has_location",
   ]);
   expect(await columns("registrations")).toEqual([
-    "key", "id", "client_uuid", "household_key", "family_id", "patient_id", "version", "body", "base_version", "base_body", "local_body",
+    "key", "id", "client_uuid", "household_key", "family_id", "patient_id", "version", "body", "base_version", "base_body",
     "needs_reload", "name_norm", "birth_date", "mother_norm",
   ]);
   expect(await columns("map_file")).toEqual(["id", "version", "sha256", "size_bytes", "path", "partial_path", "partial_sha256"]);

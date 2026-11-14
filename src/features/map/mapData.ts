@@ -1,28 +1,26 @@
 // What the map screen draws, read from the local database in one go: the map
 // file the tablet has (or none) and one point per household that has a
 // location, coloured by what there is to do there today.
-import type { HouseholdBody, WhoItem } from "../../contract";
+import type { WhoItem } from "../../contract";
 import type { Db } from "../../db/types";
 import { readMapFile, type MapFile } from "../../map/download";
 import { householdFeatures, type HouseholdFeatureCollection, type HouseholdPoint } from "../../map/householdLayer";
 import { cityToday } from "../../sync/clock";
+import { listHouseholds } from "../households/view";
 
 export interface MapData { file: MapFile | null; points: HouseholdFeatureCollection }
 
-export const MAP_TABLES = ["map_file", "households", "who_to_visit", "local_visits", "meta"];
+export const MAP_TABLES = ["map_file", "households", "outbox", "who_to_visit", "local_visits", "meta"];
 
 // What a visit made on this tablet keeps for the screens: where it was. `household` is the household's
 // local key or server id; null for a visit to a place with no registration.
 export interface LocalVisitSummary { household: string | null }
 
 export async function loadMapData(db: Db, now: number): Promise<MapData> {
-  const rows = await db.all<{ key: string; id: string | null; body: string; local_body: string | null }>(
-    "SELECT key, id, body, local_body FROM households WHERE has_location = 1 OR local_body IS NOT NULL");
-  const points: HouseholdPoint[] = rows.map((row) => {
-    // What the person edited on the tablet and has not sent yet is what they expect to see.
-    const body = JSON.parse(row.local_body ?? row.body) as Pick<HouseholdBody, "location">;
-    const at = body.location ?? null;
-    return { key: row.key, id: row.id, location: at === null ? null : { latitude: at.latitude, longitude: at.longitude } };
+  // As the screens show them: a point the person marked and has not sent yet is the one drawn.
+  const points: HouseholdPoint[] = (await listHouseholds(db)).map((view) => {
+    const at = view.body.location ?? null;
+    return { key: view.key, id: view.id, location: at === null ? null : { latitude: at.latitude, longitude: at.longitude } };
   });
 
   const who = new Set<string>();

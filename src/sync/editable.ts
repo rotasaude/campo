@@ -26,6 +26,23 @@ export function householdEditable(h: HouseholdBody): HouseholdEditable {
   };
 }
 
+// The other way round: the record as it reads once the fields of a household item are applied to it. Only the keys
+// the item carries change (an absent key means "as the server has it"); the families are not the item's business.
+// `area`: the micro-area the item names, when it is not the record's own.
+export function applyHouseholdFields(h: HouseholdBody, fields: Body, area?: HouseholdBody["micro_area"] | null): HouseholdBody {
+  const next = { ...h };
+  const has = (key: string) => key in fields && fields[key] !== undefined;
+  if (has("address")) next.address = fields.address as HouseholdBody["address"];
+  if (has("property_type")) next.property_type = fields.property_type as HouseholdBody["property_type"];
+  if (has("living_conditions")) next.living_conditions = (fields.living_conditions ?? {}) as HouseholdBody["living_conditions"];
+  if (has("contact_phone")) next.contact_phone = fields.contact_phone as string | null;
+  if (has("refused")) next.refused = fields.refused === true;
+  if (has("status")) next.status = fields.status as HouseholdBody["status"];
+  if (has("location")) next.location = (fields.location ?? null) as HouseholdBody["location"];
+  if (has("micro_area_id") && fields.micro_area_id !== h.micro_area?.id && area) next.micro_area = area;
+  return next;
+}
+
 // The family with that id inside its household (Q43); null when it is not there any more.
 export function familyEditable(h: HouseholdBody, familyId: string): FamilyEditable | null {
   const family = h.families.find((f) => f.id === familyId);

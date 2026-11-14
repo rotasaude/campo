@@ -1,0 +1,149 @@
+import type { ChangesResponse, HouseholdBody, HouseholdItemBody, UploadRequest } from "../../contract";
+import { example } from "../../contract/fixtures";
+import { expectValid } from "../../contract/validate";
+import { outboxRepo } from "../../db/repos/outboxRepo";
+import { createTestDb } from "../../db/testing/sqljsDb";
+import type { Db } from "../../db/types";
+import { mapTapLocation } from "../../location/capture";
+import { applyResults } from "../../sync/dispatch";
+import { applyPage } from "../../sync/download";
+import { accepted, newUuid } from "../../sync/testing";
+import { CONFLICT_PENDING, saveHousehold, type HouseholdFields } from "./save";
+import { listHouseholds, readHousehold } from "./view";
+
+const HH = "8c9d0e1f-2a3b-4c4d-8e5f-6a7b8c9d0e1f";
+const AREA = "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d";
+const NOW = Date.parse("2026-11-14T15:00:00Z");
+const deps = { newUuid, now: () => NOW };
+
+// The fields of the contract's own example of a household item.
+function fields(over: Partial<HouseholdFields> = {}): HouseholdFields {
+  const { household_id: _id, version: _version, ...body } = example<UploadRequest>("upload-household-location.json").items[0].body as HouseholdItemBody;
+  return { ...body, ...over };
+}
+async function territory(): Promise<Db> {
+  const db = await createTestDb();
+  await applyPage(db, example<ChangesResponse>("changes-first-page.json"));
+  return db;
+}
+const row = (db: Db, key: string) => db.get<{ key: string; id: string | null; client_uuid: string | null; version: number | null; body: string; base_version: number | null; micro_area_id: string; has_location: number }>(
+  "SELECT key, id, client_uuid, version, body, base_version, micro_area_id, has_location FROM households WHERE key = ?", [key]);
+const wire = (items: { client_uuid: string; type: string; body: Record<string, unknown> }[]) => ({ items: items.map(({ client_uuid, type, body }) => ({ client_uuid, type, body })) });
+
+test("new household: a row born on the tablet and one household item, with the location and no household_id", async () => {
+  const db = await territory();
+  const gps = { latitude: -25.42847123, longitude: -49.27325411, accuracy_m: 8.5, source: "gps" as const };
+  const saved = await saveHousehold(db, { fields: fields({ location: gps }) }, deps);
+  expect(saved.key).toBe(saved.clientUuid);
+
+  const born = (await row(db, saved.key))!;
+  expect([born.id, born.client_uuid, born.version, born.base_version, born.micro_area_id, born.has_location]).toEqual([null, saved.clientUuid, null, null, AREA, 1]);
+  const [item] = await outboxRepo.all(db);
+  expect([item.type, item.client_uuid, item.target_id, item.state, item.edit_base_version]).toEqual(["household", saved.clientUuid, saved.key, "pending", null]);
+  expect(item.body).toEqual(fields({ location: gps }));
+  expect("household_id" in item.body).toBe(false);
+  expectValid("upload-request", wire([item]));
+});
+
+test("a point marked on the map travels with source map, and validates too", async () => {
+  const db = await territory();
+  const saved = await saveHousehold(db, { fields: fields({ location: mapTapLocation(-25.4285, -49.2733, 18) }) }, deps);
+  const [item] = await outboxRepo.all(db);
+  expect((item.body.location as { source: string }).source).toBe("map");
+  expectValid("upload-request", wire([item]));
+  expect((await readHousehold(db, saved.key))!.body.location).toMatchObject({ latitude: -25.4285, longitude: -49.2733, source: "map" });
+});
+
+test("the household just registered is on screen at once: what was typed, marked as waiting to be sent", async () => {
+  const db = await territory();
+  const saved = await saveHousehold(db, { fields: fields({ contact_phone: "41988887777", location: undefined }) }, deps);
+  const view = (await readHousehold(db, saved.key))!;
+  expect([view.id, view.bornHere, view.pending, view.conflict]).toEqual([null, true, true, false]);
+  expect(view.body.contact_phone).toBe("41988887777");
+  expect(view.body.address.street).toBe("das Flores");
+  expect(view.body.micro_area).toEqual({ id: AREA, code: "03" });
+  expect(view.body.location).toBeNull();
+  expect(view.body.families).toEqual([]);
+  expect((await listHouseholds(db)).map((h) => h.key)).toContain(saved.key);
+});
+
+test("edit of a downloaded household: household_id, the row as target and the row's base as the edit base (Q41)", async () => {
+  const db = await territory();
+  const before = (await row(db, HH))!;
+  const base = JSON.parse((await db.get<{ base_body: string }>("SELECT base_body FROM households WHERE key = ?", [HH]))!.base_body) as Record<string, unknown>;
+  const saved = await saveHousehold(db, { key: HH, fields: fields({ contact_phone: "41988887777" }) }, deps);
+  expect(saved.key).toBe(HH);
+
+  const [item] = await outboxRepo.all(db);
+  expect([item.type, item.target_id, item.edit_base_version, item.client_uuid]).toEqual(["household", HH, before.base_version, saved.clientUuid]);
+  expect(item.edit_base_body).toEqual(base);
+  expect(item.body).toMatchObject({ household_id: HH, contact_phone: "41988887777" });
+  expect("version" in item.body).toBe(false); // filled when it is sent
+  // The row keeps what the server said; the screen shows what the person typed.
+  expect((await row(db, HH))!.body).toBe(before.body);
+  const view = (await readHousehold(db, HH))!;
+  expect([view.body.contact_phone, view.pending, view.bornHere]).toEqual(["41988887777", true, false]);
+});
+
+test("second edit while the first waits is the same item: same client_uuid, new body, the first base", async () => {
+  const db = await territory();
+  const first = await saveHousehold(db, { key: HH, fields: fields({ contact_phone: "41988887777" }) }, deps);
+  const [waiting] = await outboxRepo.all(db);
+  const second = await saveHousehold(db, { key: HH, fields: fields({ contact_phone: "41977776666", refused: false }) }, deps);
+  const items = await outboxRepo.all(db);
+  expect(items).toHaveLength(1);
+  expect(second.clientUuid).toBe(first.clientUuid);
+  expect(items[0].body.contact_phone).toBe("41977776666");
+  expect([items[0].edit_base_version, items[0].edit_base_body]).toEqual([waiting.edit_base_version, waiting.edit_base_body]);
+});
+
+test("a household with an edit in conflict is not edited again until the conflict is solved", async () => {
+  const db = await territory();
+  await saveHousehold(db, { key: HH, fields: fields({ contact_phone: "41988887777" }) }, deps);
+  const [item] = await outboxRepo.all(db);
+  await outboxRepo.update(db, item.seq, { state: "conflict", conflicts: [{ field: "contact_phone", base: null, tablet: "41988887777", station: "4130000000" }] as never });
+  await expect(saveHousehold(db, { key: HH, fields: fields({ contact_phone: "41900000000" }) }, deps)).rejects.toThrow(CONFLICT_PENDING);
+  expect(CONFLICT_PENDING).toBe("Resolva o conflito deste domicílio antes de editar");
+  expect(await outboxRepo.all(db)).toHaveLength(1);
+  expect((await readHousehold(db, HH))!.conflict).toBe(true);
+});
+
+test("edit of a tablet-born household whose creation is already on its way waits for the creation's answer", async () => {
+  const db = await territory();
+  const born = await saveHousehold(db, { fields: fields() }, deps);
+  const [creation] = await outboxRepo.all(db);
+  await outboxRepo.update(db, creation.seq, { state: "sending" });
+  const edit = await saveHousehold(db, { key: born.key, fields: fields({ contact_phone: "41988887777" }) }, deps);
+  const items = await outboxRepo.all(db);
+  expect(items).toHaveLength(2);
+  expect(edit.clientUuid).not.toBe(born.clientUuid);
+  expect(items[1].depends_on).toEqual([{ client_uuid: born.clientUuid, kind: "version" }]);
+  expect([items[1].target_id, "household_id" in items[1].body]).toEqual([born.key, false]);
+});
+
+test("accepted: the row takes the server's id and version, and shows what was accepted with nothing left in the line", async () => {
+  const db = await territory();
+  const born = await saveHousehold(db, { fields: fields({ contact_phone: "41988887777" }) }, deps);
+  const [creation] = await outboxRepo.all(db);
+  const NEW_ID = "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b";
+  await applyResults(db, [creation], [accepted(creation, { id: NEW_ID, version: 1 })], { onStale: async () => undefined });
+
+  expect(await outboxRepo.all(db)).toEqual([]);
+  const after = (await row(db, born.key))!;
+  expect([after.id, after.version, after.base_version]).toEqual([NEW_ID, 1, 1]);
+  const view = (await readHousehold(db, born.key))!;
+  expect([view.id, view.pending, view.body.id, view.body.version, view.body.contact_phone]).toEqual([NEW_ID, false, NEW_ID, 1, "41988887777"]);
+
+  // And an accepted edit of a downloaded one: the row's body carries the accepted fields until the next download.
+  await saveHousehold(db, { key: HH, fields: fields({ contact_phone: "41977776666" }) }, deps);
+  const [edit] = await outboxRepo.all(db);
+  await applyResults(db, [{ ...edit, sent_version: 3 }], [accepted(edit, { id: HH, version: 4 })], { onStale: async () => undefined });
+  const edited = (await readHousehold(db, HH))!;
+  expect([edited.pending, edited.body.contact_phone, edited.body.version]).toEqual([false, "41977776666", 4]);
+  expect((JSON.parse((await row(db, HH))!.body) as HouseholdBody).families.length).toBeGreaterThan(0); // the families were not touched
+});
+
+test("an unknown household is refused", async () => {
+  const db = await territory();
+  await expect(saveHousehold(db, { key: "00000000-0000-4000-8000-00000000dead", fields: fields() }, deps)).rejects.toThrow("domicílio não encontrado");
+});

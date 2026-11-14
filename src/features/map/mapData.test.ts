@@ -2,6 +2,9 @@ import type { ChangesResponse } from "../../contract";
 import { example } from "../../contract/fixtures";
 import { createTestDb } from "../../db/testing/sqljsDb";
 import { applyPage } from "../../sync/download";
+import { newUuid } from "../../sync/testing";
+import { saveHousehold } from "../households/save";
+import { readHousehold } from "../households/view";
 import { loadMapData } from "./mapData";
 
 const NOW = Date.parse("2026-11-14T15:00:00Z");
@@ -64,11 +67,12 @@ test("a visit of another day, or one withdrawn, does not paint the point", async
   expect((await loadMapData(db, NOW)).points.features.find((f) => f.properties.key === HH1)?.properties.status).toBe("to_visit");
 });
 
-test("a point edited on the tablet and not yet sent is the one drawn", async () => {
+test("a point marked on the tablet and not yet sent is the one drawn", async () => {
   const db = await territory();
-  const row = await db.get<{ body: string }>("SELECT body FROM households WHERE key = ?", [HH1]);
-  const body = JSON.parse(row!.body) as { location: unknown };
-  body.location = { latitude: -25.5, longitude: -49.3, accuracy_m: 12.3, source: "map" };
-  await db.run("UPDATE households SET local_body = ? WHERE key = ?", [JSON.stringify(body), HH1]);
+  const view = (await readHousehold(db, HH1))!;
+  await saveHousehold(db, {
+    key: HH1,
+    fields: { micro_area_id: view.body.micro_area.id, property_type: view.body.property_type, location: { latitude: -25.5, longitude: -49.3, accuracy_m: 12.3, source: "map" } },
+  }, { newUuid, now: () => NOW });
   expect((await loadMapData(db, NOW)).points.features.find((f) => f.properties.key === HH1)?.geometry.coordinates).toEqual([-49.3, -25.5]);
 });

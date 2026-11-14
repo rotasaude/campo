@@ -15,13 +15,13 @@ const STATEMENTS = [
   // key: the server id, or the client_uuid of a household born on the tablet.
   `CREATE TABLE IF NOT EXISTS households (
      key TEXT PRIMARY KEY NOT NULL, id TEXT UNIQUE, client_uuid TEXT, micro_area_id TEXT NOT NULL, version INTEGER,
-     body TEXT NOT NULL, base_version INTEGER, base_body TEXT, local_body TEXT, ${FLAG("needs_reload")},
+     body TEXT NOT NULL, base_version INTEGER, base_body TEXT, ${FLAG("needs_reload")},
      street_norm TEXT NOT NULL, number TEXT NOT NULL, ${FLAG("has_location")})`,
   // Index only: the family's body lives in households.body.families. id: the server id or the client_uuid.
   `CREATE TABLE IF NOT EXISTS families (id TEXT PRIMARY KEY NOT NULL, household_key TEXT NOT NULL, responsible_patient_id TEXT)`,
   `CREATE TABLE IF NOT EXISTS registrations (
      key TEXT PRIMARY KEY NOT NULL, id TEXT UNIQUE, client_uuid TEXT, household_key TEXT, family_id TEXT, patient_id TEXT,
-     version INTEGER, body TEXT NOT NULL, base_version INTEGER, base_body TEXT, local_body TEXT, ${FLAG("needs_reload")},
+     version INTEGER, body TEXT NOT NULL, base_version INTEGER, base_body TEXT, ${FLAG("needs_reload")},
      name_norm TEXT NOT NULL, birth_date TEXT, mother_norm TEXT)`,
   `CREATE TABLE IF NOT EXISTS who_to_visit (micro_area_id TEXT PRIMARY KEY NOT NULL, people TEXT NOT NULL, generated_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS reference (id INTEGER PRIMARY KEY CHECK (id = 1), version TEXT NOT NULL, body TEXT NOT NULL)`,

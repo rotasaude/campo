@@ -9,6 +9,7 @@
 import type { UploadItem, UploadResult } from "../contract";
 import { dbEvents } from "../db/events";
 import { outboxRepo, type OutboxItem } from "../db/repos/outboxRepo";
+import { territoryRepo } from "../db/repos/territoryRepo";
 import type { Db } from "../db/types";
 import { log } from "../log";
 import { FieldHttpError, type FieldClient, type HttpFailure } from "./http";
@@ -108,6 +109,9 @@ async function accept(db: Db, item: OutboxItem, result: UploadResult): Promise<v
   if (item.type === "family") {
     // The family lives in its household: the version is the household's, and the row's id and base body are not the family's.
     await db.run(`UPDATE ${table} SET base_version = ? WHERE key = ?`, [result.version, item.target_id]);
+  } else if (item.type === "household") {
+    // The row shows what was accepted until the next download brings the record itself.
+    await territoryRepo.acceptHousehold(db, item.target_id, item.body, { id: result.id ?? null, version: result.version });
   } else {
     await db.run(`UPDATE ${table} SET id = COALESCE(?, id), base_version = ?, base_body = ? WHERE key = ?`,
       [result.id ?? null, result.version, JSON.stringify(item.body), item.target_id]);
