@@ -43,6 +43,21 @@ export function applyHouseholdFields(h: HouseholdBody, fields: Body, area?: Hous
   return next;
 }
 
+// The same for a registration: the sections, the race/colour, the refusal and who is the responsible. The person's
+// identity is never an item's business (Q47), and where the person lives stays as the row has it.
+export function applyRegistrationFields(r: RegistrationBody, fields: Body): RegistrationBody {
+  const next = { ...r };
+  const has = (key: string) => key in fields && fields[key] !== undefined;
+  if (has("is_responsible")) next.is_responsible = fields.is_responsible === true;
+  if (has("refused")) next.refused = fields.refused === true;
+  if (has("patient_demographics")) next.patient_demographics = { ...r.patient_demographics, ...(fields.patient_demographics as RegistrationBody["patient_demographics"]) };
+  if (has("identification")) next.identification = (fields.identification ?? {}) as RegistrationBody["identification"];
+  if (has("sociodemographic")) next.sociodemographic = (fields.sociodemographic ?? {}) as RegistrationBody["sociodemographic"];
+  if (has("health_conditions")) next.health_conditions = (fields.health_conditions ?? {}) as RegistrationBody["health_conditions"];
+  if (has("street_situation")) next.street_situation = (fields.street_situation ?? null) as RegistrationBody["street_situation"];
+  return next;
+}
+
 // The family with that id inside its household (Q43); null when it is not there any more.
 export function familyEditable(h: HouseholdBody, familyId: string): FamilyEditable | null {
   const family = h.families.find((f) => f.id === familyId);

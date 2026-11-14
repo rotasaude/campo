@@ -113,8 +113,7 @@ async function accept(db: Db, item: OutboxItem, result: UploadResult): Promise<v
     // The row shows what was accepted until the next download brings the record itself.
     await territoryRepo.acceptHousehold(db, item.target_id, item.body, { id: result.id ?? null, version: result.version });
   } else {
-    await db.run(`UPDATE ${table} SET id = COALESCE(?, id), base_version = ?, base_body = ? WHERE key = ?`,
-      [result.id ?? null, result.version, JSON.stringify(item.body), item.target_id]);
+    await territoryRepo.acceptRegistration(db, item.target_id, item.body, { id: result.id ?? null, version: result.version });
   }
   // Edits made on top of this one (their base was the version just sent) now stand on the accepted version.
   // An edit whose base came from somewhere else keeps it, and will go through the merge.

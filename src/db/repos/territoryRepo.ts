@@ -7,7 +7,7 @@
 // server's record arrives, it is filed under that key, and whatever points to
 // the row (registrations, the outbox) stays valid.
 import type { FamilyBody, HouseholdBody, MicroAreaBody, RegistrationBody, WhoToVisit } from "../../contract";
-import { applyHouseholdFields, householdEditable, registrationEditable, splitItemBody } from "../../sync/editable";
+import { applyHouseholdFields, applyRegistrationFields, householdEditable, registrationEditable, splitItemBody } from "../../sync/editable";
 import { normalizeText } from "../../sync/text";
 import { dbEvents } from "../events";
 import type { Db } from "../types";
@@ -79,6 +79,17 @@ export const territoryRepo = {
        WHERE key = ?`,
       [id, result.version, JSON.stringify(body), result.version, JSON.stringify(itemBody), body.micro_area?.id ?? row.micro_area_id,
         normalizeText(body.address?.street ?? ""), body.address?.number ?? "", body.location ? 1 : 0, key]);
+  },
+
+  // The same for an accepted registration item.
+  async acceptRegistration(db: Db, key: string, itemBody: Record<string, unknown>, result: { id: string | null; version: number }): Promise<void> {
+    const row = await db.get<{ body: string; id: string | null }>("SELECT body, id FROM registrations WHERE key = ?", [key]);
+    if (!row) return;
+    const { fields } = splitItemBody("individual_registration", itemBody);
+    const id = result.id ?? row.id;
+    const body: RegistrationBody = { ...applyRegistrationFields(JSON.parse(row.body) as RegistrationBody, fields), version: result.version, ...(id === null ? {} : { id }) };
+    await db.run("UPDATE registrations SET id = ?, version = ?, body = ?, base_version = ?, base_body = ? WHERE key = ?",
+      [id, result.version, JSON.stringify(body), result.version, JSON.stringify(itemBody), key]);
   },
 
   async putRegistration(db: Db, body: RegistrationBody): Promise<string> {
