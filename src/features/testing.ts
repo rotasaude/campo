@@ -5,6 +5,7 @@ import { example } from "../contract/fixtures";
 import { createTestDb } from "../db/testing/sqljsDb";
 import type { Db } from "../db/types";
 import fullDictionaries from "../rules/testing/registrationDictionaries.json";
+import { COLLECTIVE_DOMAINS } from "../rules/testing/visitFixtures";
 import { applyPage } from "../sync/download";
 import { referenceFixture } from "../sync/testing";
 
@@ -18,6 +19,9 @@ export async function loadedTablet(o: { session?: Partial<SessionResponse> } = {
   await db.run("INSERT INTO session (id, body, fetched_at) VALUES (1, ?, '2026-11-14T12:00:00.000Z')", [JSON.stringify(session)]);
   const reference = {
     ...referenceFixture(), registration_dictionaries: fullDictionaries.registration_dictionaries, string_domains: fullDictionaries.string_domains,
+    // With the rules of each activity type, in the shape the api serves them (CollectiveActivities::Json.domains) — the
+    // dashboard's own fixture.
+    collective_activity_domains: COLLECTIVE_DOMAINS,
   } as unknown as ReferenceResponse;
   await db.run("INSERT INTO reference (id, version, body) VALUES (1, ?, ?)", [reference.reference_version, JSON.stringify(reference)]);
   await db.run("INSERT INTO meta (key, value) VALUES ('city_offset_min', '-180') ON CONFLICT (key) DO UPDATE SET value = excluded.value");
