@@ -5,5 +5,6 @@ import { RegistrationForm } from "../../../src/features/registrations/Registrati
 export default function NewRegistrationRoute() {
   const router = useRouter();
   const { household, family } = useLocalSearchParams<{ household: string; family?: string }>();
-  return <RegistrationForm householdKey={household} familyId={family ? family : null} onSaved={() => router.back()} />;
+  return <RegistrationForm householdKey={household} familyId={family ? family : null} onSaved={() => router.back()}
+    onOpenExisting={(key) => router.push({ pathname: "/registrations/[key]/edit", params: { key } })} />;
 }

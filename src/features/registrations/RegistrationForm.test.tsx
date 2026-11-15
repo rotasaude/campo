@@ -21,11 +21,13 @@ const REG = "2a3b4c5d-6e7f-4a8b-8c9d-0e1f2a3b4c5d";
 async function mount(o: { db?: Db; registrationKey?: string; familyId?: string | null } = {}) {
   const db = o.db ?? (await loadedTablet());
   const onSaved = jest.fn();
+  const onOpenExisting = jest.fn();
   await renderWithServices(
-    <RegistrationForm registrationKey={o.registrationKey} householdKey={o.registrationKey ? undefined : HH} familyId={o.familyId ?? null} onSaved={onSaved} />,
+    <RegistrationForm registrationKey={o.registrationKey} householdKey={o.registrationKey ? undefined : HH} familyId={o.familyId ?? null} onSaved={onSaved}
+      onOpenExisting={onOpenExisting} />,
     fakeServices({ db, now: () => NOW }));
   await screen.findByRole("button", { name: "Salvar cadastro" });
-  return { db, onSaved };
+  return { db, onSaved, onOpenExisting };
 }
 const field = (key: string) => within(screen.getByTestId(`field-${key}`));
 const press = (name: string) => fireEvent.press(screen.getByRole("button", { name }));
@@ -118,7 +120,11 @@ test("somebody who looks like a person already on the tablet: the screen warns a
   await choose("refused", "Sim");
   await press("Salvar cadastro");
   expect(await screen.findByText(LOOKS_LIKE)).toBeTruthy();
-  expect(screen.getByText("Joana Conceição, nascimento 14/03/1961")).toBeTruthy();
+  // Q78: the warning names nobody and shows no document; who the look-alike is, is seen in that person's own screen.
+  expect(screen.queryByText(/Joana Conceição/)).toBeNull();
+  expect(screen.queryByText(/14\/03\/1961/)).toBeNull();
+  await press("Ver cadastro parecido");
+  expect(t.onOpenExisting).toHaveBeenCalledWith(REG);
   expect(await outboxRepo.all(t.db)).toEqual([]);
   await press("É outra pessoa: salvar");
   await waitFor(() => expect(t.onSaved).toHaveBeenCalled());

@@ -52,9 +52,11 @@ export interface RegistrationFormProps {
   // The family the new person enters; null when none (the head of a family yet to be registered, or nobody's).
   familyId: string | null;
   onSaved(key: string): void;
+  // Opens a registration that looks like the person being typed (the form stays as it is underneath).
+  onOpenExisting?(registrationKey: string): void;
 }
 
-export function RegistrationForm({ registrationKey, householdKey, familyId, onSaved }: RegistrationFormProps) {
+export function RegistrationForm({ registrationKey, householdKey, familyId, onSaved, onOpenExisting }: RegistrationFormProps) {
   const { colors } = useTheme();
   const { db, crypto, now } = useServices();
   const [loaded, setLoaded] = useState<Loaded | "read_only" | "not_ready" | "missing" | null>(null);
@@ -213,7 +215,11 @@ export function RegistrationForm({ registrationKey, householdKey, familyId, onSa
       {similar !== null && (
         <Notice tone="warn">{LOOKS_LIKE}</Notice>
       )}
-      {similar?.map((person) => <Body key={person.key}>{`${person.display_name}, nascimento ${fmtDay(person.birth_date)}`}</Body>)}
+      {/* The warning names nobody (Q78): who the look-alike is, is seen in that person's own screen. */}
+      {onOpenExisting && similar?.map((person, index) => (
+        <Button key={person.key} label={similar.length === 1 ? "Ver cadastro parecido" : `Ver cadastro parecido ${index + 1}`} variant="secondary"
+          onPress={() => onOpenExisting(person.key)} />
+      ))}
       {similar !== null && <Button label="É outra pessoa: salvar" variant="secondary" disabled={saving} onPress={() => { void save(true); }} />}
       {notice !== null && <Notice tone="warn">{notice}</Notice>}
       {general !== null && <Notice tone="down">{general}</Notice>}
