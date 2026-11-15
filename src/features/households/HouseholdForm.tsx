@@ -138,7 +138,8 @@ export function HouseholdForm({ householdKey, map, onSaved }: HouseholdFormProps
     if (found) { setProblem(found); return; }
     setSaving(true);
     try {
-      const saved = await saveHousehold(db, { key: householdKey, fields: body }, { newUuid: crypto.randomUUID, now });
+      // The base is the one the form opened with: a round may have downloaded a newer version since.
+      const saved = await saveHousehold(db, { key: householdKey, fields: body, editBase: loaded.view?.base ?? null }, { newUuid: crypto.randomUUID, now });
       // What was just saved is now what the household has.
       setLoaded({ ...loaded, current: shownLocation });
       setDraft({ ...draft, location: undefined });

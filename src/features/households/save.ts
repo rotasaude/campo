@@ -25,7 +25,11 @@ export interface SaveDeps { newUuid(): string; now(): number }
 
 type Body = Record<string, unknown>;
 
-export async function saveHousehold(db: Db, input: { key?: string; fields: HouseholdFields }, deps: SaveDeps): Promise<{ key: string; clientUuid: string }> {
+// `editBase`: the version and projection the form had when it opened (view.base). Without it the row's own, as it is now —
+// right only for a caller that reads and writes in one go.
+export async function saveHousehold(
+  db: Db, input: { key?: string; fields: HouseholdFields; editBase?: { version: number; body: Record<string, unknown> } | null }, deps: SaveDeps,
+): Promise<{ key: string; clientUuid: string }> {
   const fields = input.fields as unknown as Body;
   const saved = await db.tx(async (tx) => {
     if (input.key === undefined) {
@@ -57,7 +61,7 @@ export async function saveHousehold(db: Db, input: { key?: string; fields: House
     const item = await coalesceOrEnqueue(tx, {
       type: "household", targetId: input.key, deps: depends,
       body: row.id === null ? fields : { household_id: row.id, ...fields },
-      editBase: row.base_version !== null && row.base_body !== null ? { version: row.base_version, body: JSON.parse(row.base_body) as Body } : undefined,
+      editBase: input.editBase ?? (row.base_version !== null && row.base_body !== null ? { version: row.base_version, body: JSON.parse(row.base_body) as Body } : undefined),
     }, deps.newUuid);
     return { key: input.key, clientUuid: item.client_uuid };
   });

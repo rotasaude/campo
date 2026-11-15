@@ -7,7 +7,7 @@ import { saveHousehold } from "../households/save";
 import { readHousehold } from "../households/view";
 import { saveRegistration, type RegistrationFields } from "../registrations/save";
 import { readRegistration } from "../registrations/view";
-import { AREA, HH, loadedTablet } from "../testing";
+import { AREA, HH, loadedTablet, stationChanged } from "../testing";
 import { FAMILY_CONFLICT_PENDING, responsibleOptions, saveFamily } from "./save";
 
 const NOW = Date.parse("2026-11-14T15:00:00Z");
@@ -38,6 +38,20 @@ test("edit of a family: family_id, the household as target and the family as the
   const again = await saveFamily(db, { householdKey: HH, familyId: FAMILY, fields: { income_band: "5", members_count: 4, living_since: "2019-03", moved_out: false } }, deps);
   const items = await outboxRepo.all(db);
   expect([items.length, again.clientUuid, items[0].body.income_band]).toEqual([1, saved.clientUuid, "5"]);
+});
+
+test("the edit base of a family is what the form loaded, not what a download wrote meanwhile (Q41)", async () => {
+  const db = await loadedTablet();
+  const opened = (await readHousehold(db, HH))!;
+  const family = opened.server.families.find((f) => f.id === FAMILY)!;
+  await stationChanged(db, "household", HH, { families: [{ ...family, income_band: "6" }] });
+  await saveFamily(db, {
+    householdKey: HH, familyId: FAMILY, fields: { income_band: "3", members_count: 5, living_since: "2019-03", moved_out: false },
+    editBase: { version: opened.base!.version, body: { income_band: "3", members_count: 3, living_since: "2019-03", moved_out: false } },
+  }, deps);
+  const [item] = await outboxRepo.all(db);
+  expect(item.edit_base_version).toBe(3);
+  expect(item.edit_base_body).toEqual({ income_band: "3", members_count: 3, living_since: "2019-03", moved_out: false });
 });
 
 test("the responsible of a new family is chosen among the residents of the household: downloaded or registered on this tablet", async () => {

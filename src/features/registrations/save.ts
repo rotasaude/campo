@@ -27,7 +27,8 @@ export type RegistrationPerson =
 
 export type SaveRegistrationInput =
   | { key?: undefined; householdKey: string | null; familyId: string | null; person: RegistrationPerson; fields: RegistrationFields }
-  | { key: string; fields: RegistrationFields };
+  // `editBase`: what the form had when it opened (view.base); without it, the row's own as it is now.
+  | { key: string; fields: RegistrationFields; editBase?: { version: number; body: Values } | null };
 
 export const REGISTRATION_CONFLICT_PENDING = "Resolva o conflito deste cadastro antes de editar";
 export class RegistrationInConflictError extends Error {
@@ -53,7 +54,7 @@ export async function saveRegistration(db: Db, input: SaveRegistrationInput, dep
       const edit = await coalesceOrEnqueue(tx, {
         type: "individual_registration", targetId: key, deps: creation && !merges ? [{ client_uuid: creation.client_uuid, kind: "version" }] : [],
         body: merges ? { ...creation.body, ...fields } : row.id === null ? fields : { registration_id: row.id, ...fields },
-        editBase: row.base_version !== null && row.base_body !== null ? { version: row.base_version, body: JSON.parse(row.base_body) as Values } : undefined,
+        editBase: input.editBase ?? (row.base_version !== null && row.base_body !== null ? { version: row.base_version, body: JSON.parse(row.base_body) as Values } : undefined),
       }, deps.newUuid);
       return { key, clientUuid: edit.client_uuid };
     }

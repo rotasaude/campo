@@ -5,7 +5,7 @@ import type { Db } from "../../db/types";
 import { applyResults } from "../../sync/dispatch";
 import { accepted, newUuid } from "../../sync/testing";
 import { saveHousehold } from "../households/save";
-import { AREA, HH, loadedTablet } from "../testing";
+import { AREA, HH, loadedTablet, stationChanged } from "../testing";
 import { REGISTRATION_CONFLICT_PENDING, saveRegistration, type RegistrationFields } from "./save";
 import { readRegistration } from "./view";
 
@@ -110,6 +110,17 @@ test("editing a person born on the tablet before it was sent keeps it one creati
   items = await outboxRepo.all(db);
   expect("new_patient" in items[1].body).toBe(false);
   expect(items[1].depends_on).toEqual([{ client_uuid: born.clientUuid, kind: "version" }]);
+});
+
+test("the edit base is what the form loaded, not what a download wrote on the row meanwhile (Q41)", async () => {
+  const db = await loadedTablet();
+  const opened = (await readRegistration(db, REG))!;
+  expect(opened.base?.version).toBe((await row(db, REG))!.base_version);
+  await stationChanged(db, "registration", REG, { refused: true });
+  expect((await row(db, REG))!.base_version).toBe(opened.base!.version + 1);
+  await saveRegistration(db, { key: REG, fields: fields({ is_responsible: true }), editBase: opened.base }, deps);
+  const [item] = await outboxRepo.all(db);
+  expect([item.edit_base_version, item.edit_base_body]).toEqual([opened.base!.version, opened.base!.body]);
 });
 
 test("a registration with an edit in conflict is not edited again until the conflict is solved", async () => {

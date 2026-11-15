@@ -8,6 +8,7 @@ import { mapTapLocation } from "../../location/capture";
 import { applyResults } from "../../sync/dispatch";
 import { applyPage } from "../../sync/download";
 import { accepted, newUuid } from "../../sync/testing";
+import { stationChanged } from "../testing";
 import { CONFLICT_PENDING, saveHousehold, type HouseholdFields } from "./save";
 import { listHouseholds, readHousehold } from "./view";
 
@@ -141,6 +142,21 @@ test("accepted: the row takes the server's id and version, and shows what was ac
   const edited = (await readHousehold(db, HH))!;
   expect([edited.pending, edited.body.contact_phone, edited.body.version]).toEqual([false, "41977776666", 4]);
   expect((JSON.parse((await row(db, HH))!.body) as HouseholdBody).families.length).toBeGreaterThan(0); // the families were not touched
+});
+
+// Review C1: a round may download a newer version while the form is open (the PIN veil keeps forms mounted and unlocking
+// starts a round). The edit must still say what the PERSON saw, or the station's change is overwritten with no merge.
+test("the edit base is what the form loaded, not what a download wrote on the row meanwhile (Q41)", async () => {
+  const db = await territory();
+  const opened = (await readHousehold(db, HH))!;
+  expect(opened.base).toEqual({ version: 3, body: expect.objectContaining({ contact_phone: "41999990000" }) });
+  await stationChanged(db, "household", HH, { contact_phone: "4130000000" });
+  expect((await row(db, HH))!.base_version).toBe(4);
+
+  await saveHousehold(db, { key: HH, fields: fields({ refused: false }), editBase: opened.base }, deps);
+  const [item] = await outboxRepo.all(db);
+  expect(item.edit_base_version).toBe(3);
+  expect(item.edit_base_body).toEqual(opened.base!.body);
 });
 
 test("an unknown household is refused", async () => {

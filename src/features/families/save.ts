@@ -15,7 +15,8 @@ type Values = Record<string, unknown>;
 
 export interface FamilyFields { income_band: string | null; members_count: number | null; living_since: string | null; moved_out?: boolean }
 export type SaveFamilyInput =
-  | { householdKey: string; familyId: string; fields: FamilyFields }
+  // `editBase`: the household's version and the family as the form had them when it opened; without it, as the row is now.
+  | { householdKey: string; familyId: string; fields: FamilyFields; editBase?: { version: number; body: Values } | null }
   | { householdKey: string; responsibleKey: string; fields: FamilyFields };
 
 export const FAMILY_CONFLICT_PENDING = "Resolva o conflito deste domicílio antes de editar a família";
@@ -65,7 +66,7 @@ export async function saveFamily(db: Db, input: SaveFamilyInput, deps: SaveDeps)
       const base = familyEditable(JSON.parse(household.body) as HouseholdBody, input.familyId);
       const item = await enqueue(tx, {
         type: "family", targetId: input.householdKey, body,
-        editBase: household.base_version !== null && base !== null ? { version: household.base_version, body: base as unknown as Values } : undefined,
+        editBase: input.editBase ?? (household.base_version !== null && base !== null ? { version: household.base_version, body: base as unknown as Values } : undefined),
       }, deps.newUuid);
       return { clientUuid: item.client_uuid };
     }

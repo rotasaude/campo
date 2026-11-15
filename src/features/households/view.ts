@@ -14,18 +14,25 @@ export interface HouseholdView {
   // The local key (what routes and other items point to) and the server id; null while the household only exists on the tablet.
   key: string; id: string | null;
   body: HouseholdBody;
+  // What the server last said, untouched by the line, and the version and projection an edit begun NOW is based on.
+  // A form keeps `base` from the moment it opened and gives it back when it saves: a download in between must not
+  // become the base of what the person typed (Q41).
+  server: HouseholdBody;
+  base: EditBase | null;
   // Something of this household is still in the line; an edit of it waits for the person to choose (conflict).
   pending: boolean; conflict: boolean;
   bornHere: boolean;
 }
 
-interface Row { key: string; id: string | null; client_uuid: string | null; body: string }
+export interface EditBase { version: number; body: Record<string, unknown> }
+interface Row { key: string; id: string | null; client_uuid: string | null; body: string; base_version: number | null; base_body: string | null }
 
 export const HOUSEHOLD_TABLES = ["households", "outbox"];
 
 async function toView(db: Db, row: Row, queue: OutboxItem[]): Promise<HouseholdView> {
   const mine = queue.filter((item) => item.target_id === row.key && (item.type === "household" || item.type === "family"));
-  let body = JSON.parse(row.body) as HouseholdBody;
+  const server = JSON.parse(row.body) as HouseholdBody;
+  let body = server;
   for (const item of mine) {
     if (item.type === "family") {
       const responsible = (item.body.responsible ?? {}) as { patient_id?: string; patient_client_uuid?: string };
@@ -39,21 +46,22 @@ async function toView(db: Db, row: Row, queue: OutboxItem[]): Promise<HouseholdV
     body = applyHouseholdFields(body, fields, area);
   }
   return {
-    key: row.key, id: row.id, body, pending: mine.length > 0, conflict: mine.some((item) => item.state === "conflict"),
-    bornHere: row.client_uuid !== null,
+    key: row.key, id: row.id, body, server,
+    base: row.base_version !== null && row.base_body !== null ? { version: row.base_version, body: JSON.parse(row.base_body) as Record<string, unknown> } : null,
+    pending: mine.length > 0, conflict: mine.some((item) => item.state === "conflict"), bornHere: row.client_uuid !== null,
   };
 }
 
 export async function readHousehold(db: Db, key: string): Promise<HouseholdView | null> {
-  const row = await db.get<Row>("SELECT key, id, client_uuid, body FROM households WHERE key = ?", [key]);
+  const row = await db.get<Row>("SELECT key, id, client_uuid, body, base_version, base_body FROM households WHERE key = ?", [key]);
   return row ? toView(db, row, await outboxRepo.all(db)) : null;
 }
 
 // By street and number, as an agent walks them. `microAreaId`: only that micro-area's (by what the server last said).
 export async function listHouseholds(db: Db, microAreaId?: string): Promise<HouseholdView[]> {
   const rows = microAreaId === undefined
-    ? await db.all<Row>("SELECT key, id, client_uuid, body FROM households ORDER BY street_norm, number, key")
-    : await db.all<Row>("SELECT key, id, client_uuid, body FROM households WHERE micro_area_id = ? ORDER BY street_norm, number, key", [microAreaId]);
+    ? await db.all<Row>("SELECT key, id, client_uuid, body, base_version, base_body FROM households ORDER BY street_norm, number, key")
+    : await db.all<Row>("SELECT key, id, client_uuid, body, base_version, base_body FROM households WHERE micro_area_id = ? ORDER BY street_norm, number, key", [microAreaId]);
   const queue = await outboxRepo.all(db);
   const views: HouseholdView[] = [];
   for (const row of rows) views.push(await toView(db, row, queue));

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Text, View } from "react-native";
 import { useServices } from "../../app/services";
 import { createRegistryRules, type Problem } from "../../rules/registry";
+import { familyEditable } from "../../sync/editable";
 import { loadReference, type Reference } from "../../sync/reference";
 import { SIZES, useTheme } from "../../theme/theme";
 import { Choice, YesNo } from "../../ui/choices";
@@ -85,7 +86,12 @@ export function FamilyForm({ householdKey, familyId, onSaved }: { householdKey: 
     setSaving(true);
     try {
       if (isNew) await saveFamily(db, { householdKey, responsibleKey: draft.responsibleKey as string, fields: { ...fields, moved_out: undefined } }, { newUuid: crypto.randomUUID, now });
-      else await saveFamily(db, { householdKey, familyId, fields }, { newUuid: crypto.randomUUID, now });
+      else {
+        // The base is the family as the form opened with it, on the household's version of that moment.
+        const opened = familyEditable(loaded.view.server, familyId);
+        const editBase = loaded.view.base !== null && opened !== null ? { version: loaded.view.base.version, body: opened as unknown as Record<string, unknown> } : null;
+        await saveFamily(db, { householdKey, familyId, fields, editBase }, { newUuid: crypto.randomUUID, now });
+      }
       onSaved();
     } catch (err) {
       setNotice(err instanceof FamilyInConflictError || err instanceof Error ? err.message : "Não foi possível salvar. Tente de novo.");

@@ -144,7 +144,7 @@ export function RegistrationForm({ registrationKey, householdKey, familyId, onSa
         ? await saveRegistration(db, {
           householdKey: householdKey ?? null, familyId, person: { kind: "new", patient: person, duplicatesReviewed: reviewed }, fields: body,
         }, { newUuid: crypto.randomUUID, now })
-        : await saveRegistration(db, { key: registrationKey as string, fields: body }, { newUuid: crypto.randomUUID, now });
+        : await saveRegistration(db, { key: registrationKey as string, fields: body, editBase: loaded.view?.base ?? null }, { newUuid: crypto.randomUUID, now });
       setSimilar(null);
       onSaved(saved.key);
     } catch (err) {

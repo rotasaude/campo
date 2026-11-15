@@ -8,7 +8,7 @@ import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
 import type { LocationPort } from "../../location/capture";
 import type { MapCanvasProps } from "../../map/canvas";
-import { AREA, HH, NEIGHBORHOOD, loadedTablet } from "../testing";
+import { AREA, HH, NEIGHBORHOOD, loadedTablet, stationChanged } from "../testing";
 import { HouseholdForm, NO_FIX_MARK_ON_MAP, READ_ONLY } from "./HouseholdForm";
 
 // A drawing that lets the test touch the map.
@@ -158,6 +158,22 @@ test("editing: the form opens with what the household has; untouched, the point 
   await waitFor(() => expect(t.onSaved).toHaveBeenCalledTimes(2));
   [item] = await outboxRepo.all(db);
   expect(item.body.location).toBeNull();
+});
+
+test("a round that downloads a newer version while the form is open does not make the tablet overwrite it: the item says what the person saw", async () => {
+  const db = await loadedTablet();
+  const t = await mount({ db, householdKey: HH });
+  // The station changes the phone and a round brings version 4 while the agent is still typing.
+  await stationChanged(db, "household", HH, { contact_phone: "4130000000" });
+  await type("Buscar em Tipo de logradouro", "rua");
+  await choose("street_type", "RUA");
+  await type("Complemento", "fundos");
+  await press("Salvar");
+  await waitFor(() => expect(t.onSaved).toHaveBeenCalled());
+  const [item] = await outboxRepo.all(db);
+  // Sent on version 3: the server answers stale_version and the merge keeps the station's phone.
+  expect(item.edit_base_version).toBe(3);
+  expect((item.edit_base_body as { contact_phone: string }).contact_phone).toBe("41999990000");
 });
 
 test("who is not the community health agent, or a city with the registry off, only reads", async () => {

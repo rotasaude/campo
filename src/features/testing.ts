@@ -29,3 +29,13 @@ export async function loadedTablet(o: { session?: Partial<SessionResponse> } = {
   await applyPage(db, example<ChangesResponse>("changes-last-page.json"));
   return db;
 }
+
+// The station changed a record and a round downloaded it: the same page shape as the server's, with one item.
+export async function stationChanged(db: Db, type: "household" | "registration", id: string, change: Record<string, unknown>): Promise<void> {
+  const first = example<ChangesResponse>("changes-first-page.json");
+  const item = first.items.find((candidate) => candidate.type === type && candidate.id === id);
+  if (!item) throw new Error(`no ${type} ${id} in the example page`);
+  const version = (item.version ?? 0) + 1;
+  const body = { ...(item.body as Record<string, unknown>), ...change, version };
+  await applyPage(db, { ...first, items: [{ ...item, version, body }] } as unknown as ChangesResponse);
+}
