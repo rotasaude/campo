@@ -10,7 +10,7 @@ import * as LegacyFs from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as Network from "expo-network";
 import * as SecureStore from "expo-secure-store";
-import { AppState } from "react-native";
+import { AppState, BackHandler } from "react-native";
 import { forgetExpoDb, openExpoDb } from "../db/expoDb";
 import { Body, Button, Muted } from "../ui/components";
 import { MapLibreCanvas } from "./mapCanvas";
@@ -103,6 +103,7 @@ export const devicePlatform: Platform = {
       return { latitude: fix.coords.latitude, longitude: fix.coords.longitude, accuracy: fix.coords.accuracy };
     },
   },
+  back: { onPress: (handler) => BackHandler.addEventListener("hardwareBackPress", handler) },
   MapCanvas: MapLibreCanvas,
   Camera: QrCamera,
   build: {

@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StyleSheet, Text, TextInput } from "react-native";
 import { UNENCRYPTED_MESSAGE, openEncryptedDb } from "../db/open";
 import { LOCKED_MESSAGE } from "../features/lock/LockScreen";
@@ -12,11 +12,16 @@ import { enqueue } from "../sync/outbox";
 import { newUuid } from "../sync/testing";
 import { AppRoot, useApp } from "./AppRoot";
 import { SESSION, TEST_HOST, TEST_TOKEN, fakePlatform, type FakePlatform } from "./platformTesting";
+import { useSyncState } from "./sync";
 
 const GOOD_QR = QR_PREFIX + Buffer.from(JSON.stringify({ host: TEST_HOST, token: TEST_TOKEN }), "utf8").toString("base64url");
 
+let startRound: () => void = () => undefined;
 function Main() {
   const app = useApp();
+  const sync = useSyncState();
+  // What the timer would do: start a round with no touch at all (a covered screen takes none).
+  useEffect(() => { startRound = sync.run; }, [sync.run]);
   return (
     <>
       <Text>telas principais</Text>
@@ -146,6 +151,45 @@ test("on the way to the background the main screens are covered at once; a short
   expect(await screen.findByRole("header", { name: "Digite o PIN" })).toBeTruthy();
   expect(screen.queryByTestId("lock-cover")).toBeNull();
   expect(screen.getByTestId("lock-veil")).toBeTruthy();
+});
+
+// Review I4: the lock flag only flips when the app comes back; a round started meanwhile (the timer) must still find it locked.
+test("past five minutes in the background nothing is synced, even before the app comes back and asks for the PIN", async () => {
+  const { platform } = await paired();
+  await mount(platform);
+  await unlock();
+  await screen.findByText("telas principais");
+  await waitFor(() => expect(platform.server.requests.length).toBeGreaterThan(0));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+
+  await act(async () => { platform.appState.emit("background"); platform.clock.now += 4 * 60_000; });
+  const before = platform.server.requests.length;
+  await act(async () => { startRound(); });
+  await waitFor(() => expect(platform.server.requests.length).toBeGreaterThan(before)); // still within the five minutes
+
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); platform.clock.now += 2 * 60_000; });
+  const late = platform.server.requests.length;
+  await act(async () => { startRound(); await new Promise((resolve) => setTimeout(resolve, 50)); });
+  expect(platform.server.requests.length).toBe(late);
+});
+
+// Review (could not verify → fixed): Android's Back button is not a touch; under the PIN it would pop the hidden form.
+test("the Back button does nothing while the screens are covered or under the PIN, and is the screens' own again afterwards", async () => {
+  const { platform } = await paired();
+  await mount(platform);
+  await unlock();
+  await screen.findByText("telas principais");
+  expect(platform.pressBack()).toBe(false); // not ours: the navigator's
+
+  await act(async () => { platform.appState.emit("background"); });
+  expect(platform.pressBack()).toBe(true);
+  await act(async () => { platform.clock.now += 5 * 60_000; platform.appState.emit("active"); });
+  await screen.findByRole("header", { name: "Digite o PIN" });
+  expect(platform.pressBack()).toBe(true);
+
+  await unlock();
+  await waitFor(() => expect(screen.queryByTestId("lock-veil")).toBeNull());
+  expect(platform.pressBack()).toBe(false);
 });
 
 test("a cold start has nothing below the PIN", async () => {

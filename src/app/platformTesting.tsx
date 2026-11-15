@@ -34,6 +34,8 @@ export interface FakePlatform extends Platform {
   server: { fail: HttpFailure | null; session: SessionResponse; requests: string[] };
   appState: Platform["appState"] & { emit(status: string): void };
   scan(text: string): void;
+  // Presses Back: true when some handler of the app kept it.
+  pressBack(): boolean;
   deleted: string[];
   raw: () => Db | null;
 }
@@ -44,6 +46,7 @@ export function fakePlatform(o: { cipher?: string | null } = {}): FakePlatform {
   const server: FakePlatform["server"] = { fail: null, session: SESSION, requests: [] };
   const listeners = new Set<(status: string) => void>();
   let scanned: (text: string) => void = () => undefined;
+  const backHandlers = new Set<() => boolean>();
   let raw: Db | null = null;
   const deleted: string[] = [];
 
@@ -92,6 +95,8 @@ export function fakePlatform(o: { cipher?: string | null } = {}): FakePlatform {
     http,
     Camera: ({ onScanned }) => <Text onPress={() => { scanned = onScanned; }}>câmera</Text>,
     scan: (text) => scanned(text),
+    back: { onPress: (handler) => { backHandlers.add(handler); return { remove: () => { backHandlers.delete(handler); } }; } },
+    pressBack: () => [...backHandlers].some((handler) => handler()),
     build: { appVersion: "0.1.0", allowedHostSuffixes: [".rotasaude.example"] },
   };
 }

@@ -8,3 +8,9 @@ export function shouldLock(backgroundedAt: number | null, now: number): boolean 
   const away = now - backgroundedAt;
   return away < 0 || away >= LOCK_AFTER_MS;
 }
+
+// Whether a sync may run now. The PIN is asked when the app comes back, but a tablet left in the background past the
+// limit already owes it: from then on nothing is read from or sent to the server, even before anybody looks at it.
+export function syncLocked(unlocked: boolean, backgroundedAt: number | null, now: number): boolean {
+  return !unlocked || (backgroundedAt !== null && shouldLock(backgroundedAt, now));
+}

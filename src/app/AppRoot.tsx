@@ -21,7 +21,7 @@ import { PinCreateScreen } from "../features/setup/PinCreateScreen";
 import { ScanScreen } from "../features/setup/ScanScreen";
 import { SuspendedScreen } from "../features/suspended/SuspendedScreen";
 import { syncMapFile } from "../map/download";
-import { shouldLock } from "../security/lock";
+import { shouldLock, syncLocked } from "../security/lock";
 import { hasPin, setPin } from "../security/pin";
 import { SECURE_KEYS } from "../security/secureStore";
 import { wipeAll } from "../security/wipe";
@@ -80,6 +80,8 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
   const phaseNow = useRef<Phase>("starting");
   useEffect(() => { phaseNow.current = phase; }, [phase]);
 
+  // Nothing syncs without the PIN — nor once the tablet has been away long enough to owe it, even before it comes back.
+  const lockedNow = useCallback(() => syncLocked(unlocked.current, leftAt.current, platform.now()), [platform]);
   const changeDb = useCallback((next: Db | null) => { dbRef.current = next; setDb(next); }, []);
   const lock = useCallback(() => {
     unlocked.current = false;
@@ -108,7 +110,7 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
         host, getToken: () => platform.secure.get(SECURE_KEYS.token), fetch: platform.http, devOrigin: platform.build.devOrigin,
       });
       const outcome = await runRound({
-        db: current, client, now: platform.now, net: platform.net, isLocked: () => !unlocked.current, wipeAll: wipe,
+        db: current, client, now: platform.now, net: platform.net, isLocked: lockedNow, wipeAll: wipe,
         syncMap: (manifest) => syncMapFile({ db: current, client, fs: platform.fs, downloader: platform.downloader, sha256File: platform.sha256File, net: platform.net }, manifest),
       }, trigger);
       setLastOutcome(outcome);
@@ -125,7 +127,7 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
       busy.current = false;
       setRunning(false);
     }
-  }, [platform, wipe]);
+  }, [lockedNow, platform, wipe]);
 
   const enter = useCallback(async (trigger: RoundTrigger) => {
     const current = dbRef.current;
@@ -134,9 +136,9 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
     leftAt.current = null;
     setPhase(await gateOf(current));
     setVeiled(false);
-    stopScheduler.current ??= startScheduler({ run, appState: platform.appState, net: platform.net, isLocked: () => !unlocked.current });
+    stopScheduler.current ??= startScheduler({ run, appState: platform.appState, net: platform.net, isLocked: lockedNow });
     void run(trigger);
-  }, [platform, run]);
+  }, [lockedNow, platform, run]);
 
   // Start-up.
   useEffect(() => {
@@ -181,6 +183,14 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
     });
     return () => subscription.remove();
   }, [lock, platform]);
+
+  // Android's Back button is not a touch: while the screens are covered or under the PIN it must not reach them
+  // (it would pop the form the person left open).
+  useEffect(() => {
+    if (!veiled && !covered) return undefined;
+    const subscription = platform.back.onPress(() => true);
+    return () => subscription.remove();
+  }, [covered, platform, veiled]);
 
   const register = useCallback((qr: { host: string; token: string }) => registerDevice({
     secure: platform.secure,

@@ -32,6 +32,8 @@ export interface Platform {
   location: LocationPort;
   // What draws the map (MapLibre).
   MapCanvas: ComponentType<MapCanvasProps>;
+  // Android's Back button. A handler that answers true keeps the press from reaching the navigator.
+  back: { onPress(handler: () => boolean): { remove(): void } };
   // The camera that reads the pairing QR.
   Camera: ComponentType<{ onScanned(text: string): void }>;
   build: { appVersion: string; allowedHostSuffixes: string[]; devOrigin?: string };
