@@ -16,6 +16,8 @@ export interface HomeData {
   clockWarning: string | null;
   appUpdate: boolean;
   visitsOff: boolean;
+  // The collective activity is offered to every tablet of a city that has it on; the api decides who may register.
+  activitiesOn: boolean;
 }
 
 const DAY_MS = 86_400_000;
@@ -44,5 +46,6 @@ export async function loadHome(db: Db, now: number): Promise<HomeData> {
     clockWarning: needsClockWarning(skew) ? `O relógio do tablet está ${Math.round(Math.abs(skew) / 60_000)} min diferente do servidor` : null,
     appUpdate: await referenceNeedsAppUpdate(db),
     visitsOff: session !== null && session.features.home_visits === false,
+    activitiesOn: session !== null && session.features.collective_activities === true,
   };
 }

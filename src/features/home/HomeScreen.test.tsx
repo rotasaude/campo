@@ -26,7 +26,7 @@ async function seeded(session: SessionResponse = SESSION): Promise<Db> {
 }
 async function mount(db: Db, sync: Partial<SyncState> = {}) {
   const state: SyncState = { running: false, lastOutcome: null, run: jest.fn(), ...sync };
-  const nav = { onOpenWho: jest.fn(), onOpenToday: jest.fn(), onOpenHouseholds: jest.fn(), onOpenMap: jest.fn(), onOpenOutbox: jest.fn(), onOpenAbout: jest.fn() };
+  const nav = { onOpenWho: jest.fn(), onOpenToday: jest.fn(), onNewActivity: jest.fn(), onOpenHouseholds: jest.fn(), onOpenMap: jest.fn(), onOpenOutbox: jest.fn(), onOpenAbout: jest.fn() };
   await renderWithServices(<SyncContext.Provider value={state}><HomeScreen {...nav} /></SyncContext.Provider>, fakeServices({ db, now: () => NOW }));
   return { state, nav };
 }
@@ -60,6 +60,18 @@ test("home with home_visits off shows only queue and Sync", async () => {
   expect(screen.getByRole("button", { name: "Sincronizar" })).toBeTruthy();
   expect(screen.queryByText(/A visitar/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Quem visitar" })).toBeNull();
+});
+
+test("the collective activity is offered only where the city has it on", async () => {
+  const on = await mount(await seeded());
+  await fireEvent.press(await screen.findByRole("button", { name: "Nova atividade coletiva" }));
+  expect(on.nav.onNewActivity).toHaveBeenCalled();
+});
+
+test("with collective_activities off the home has no way into the activity", async () => {
+  await mount(await seeded({ ...SESSION, features: { ...SESSION.features, collective_activities: false } }));
+  await screen.findByRole("button", { name: "Sincronizar" });
+  expect(screen.queryByRole("button", { name: "Nova atividade coletiva" })).toBeNull();
 });
 
 test("home shows the app update notice while the reference is refused (Q71)", async () => {
