@@ -1,0 +1,12 @@
+# The offline map opens from the file the first load downloaded, with its attribution.
+appId: br.rotasaude.campo
+---
+- runFlow: common/pair.yaml
+- scrollUntilVisible:
+    element: "Mapa"
+- tapOn: "Mapa"
+- extendedWaitUntil:
+    visible: "© OpenStreetMap"
+    timeout: 30000
+- assertNotVisible: "Mapa ainda não baixado"
+- assertVisible: "Minha posição"
