@@ -34,6 +34,36 @@ export function fieldLabel(_type: ItemType, path: string): string {
   return FIELD_LABEL[path] ?? path;
 }
 
+const PART_LABEL: Record<string, string> = {
+  "address.zip": "CEP", "address.street_type": "Tipo de logradouro", "address.street": "Logradouro", "address.number": "Número",
+  "address.no_number": "Sem número", "address.complement": "Complemento", "address.neighborhood_id": "Bairro", "address.district": "Bairro",
+  "address.reference": "Ponto de referência",
+  full_name: "Nome completo", social_name: "Nome social", birth_date: "Data de nascimento", sex: "Sexo", mother_name: "Nome da mãe", cpf: "CPF",
+  no_cpf_reason: "Motivo de não ter CPF", cns: "CNS",
+  occurred_at: "Data e hora", outcome: "Desfecho", subject: "Quem foi visitado", patient_id: "Pessoa", note: "Observação", shared: "Visita compartilhada",
+  held_on: "Data da atividade", shift: "Turno", activity_type: "Tipo de atividade", place_health_unit_id: "Unidade do local", place_text: "Descrição do local",
+  participants_count: "Número de participantes", meeting_topics: "Temas para reunião", target_audience: "Público-alvo", health_topics: "Temas para saúde",
+  health_practices: "Práticas em saúde", procedure_code: "Procedimento (SIGTAP)", professionals: "Profissionais participantes", participants: "Participantes",
+  reasons: "Motivos da visita", measurements: "Medidas", reason: "Motivo da retirada", responsible: "Responsável",
+};
+
+// The field a refusal of the server points to (its `path`), in words: "participants[1].new_patient.cpf" → "Participante 2: CPF".
+export function pathLabel(type: ItemType, path: string): string {
+  const participant = /^participants\[(\d+)\](?:\.(.*))?$/.exec(path);
+  if (participant) {
+    const rest = participant[2] ? pathLabel(type, participant[2]) : "";
+    return `Participante ${Number(participant[1]) + 1}${rest === "" ? "" : `: ${rest}`}`;
+  }
+  const typed = /^(?:new_patient|patient)\.(.+)$/.exec(path);
+  if (typed) return PART_LABEL[typed[1]] ?? typed[1];
+  if (path === "new_patient") return "Pessoa";
+  if (PART_LABEL[path]) return PART_LABEL[path];
+  const head = path.split(/[.[]/)[0];
+  if (head === "location") return FIELD_LABEL.location;
+  if (head !== path && !isSection(head) && PART_LABEL[head]) return PART_LABEL[head];
+  return fieldLabel(type, path);
+}
+
 function specOf(dict: RegistrationDictionaries, section: SectionKey, key: string): FieldSpec | null {
   let fields = dict.sections[section];
   let spec: FieldSpec | null = null;

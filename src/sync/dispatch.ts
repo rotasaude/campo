@@ -135,12 +135,14 @@ export async function applyResults(db: Db, sent: OutboxItem[], results: UploadRe
     signal.deferred.push(item.client_uuid);
     return outboxRepo.update(db, item.seq, { state: "pending", attempts });
   };
-  const attention = (item: OutboxItem, result: Pick<UploadResult, "error" | "path" | "candidates" | "confirmable">) => {
+  const attention = (item: OutboxItem, result: Pick<UploadResult, "error" | "path" | "candidates" | "confirmable" | "id">) => {
     refused.add(item.client_uuid);
     signal.progressed = true;
     return outboxRepo.update(db, item.seq, {
       state: "needs_attention", error: result.error ?? "invalid_request", path: result.path ?? null,
-      candidates: result.candidates ?? null, confirmable: result.confirmable ?? null,
+      // already_registered may name the registration the person already has: kept where the screen can find it.
+      candidates: result.candidates ?? (result.error === "already_registered" && typeof result.id === "string" ? [{ registration_id: result.id }] : null),
+      confirmable: result.confirmable ?? null,
     });
   };
 
