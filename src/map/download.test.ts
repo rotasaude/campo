@@ -232,3 +232,21 @@ test("the token goes only in the request headers: never stored with the partial"
   await syncMapFile(t.deps, MANIFEST);
   expect(JSON.stringify(await t.db.all("SELECT * FROM map_file"))).not.toMatch(/rsf_/);
 });
+
+// Review I3: a round that ends while the previous round's download is still running must not start a second transfer
+// onto the same .part — the two would append to each other's bytes and the file would never check.
+test("two calls at the same time are one download: the second waits for the first and gets its answer", async () => {
+  const t = await setup();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const run = t.deps.downloader.run;
+  let transfers = 0;
+  t.deps.downloader.run = async (request) => { transfers += 1; await gate; return run(request); };
+  const first = syncMapFile(t.deps, MANIFEST);
+  const second = syncMapFile(t.deps, MANIFEST);
+  release();
+  expect(await Promise.all([first, second])).toEqual(["downloaded", "downloaded"]);
+  expect(transfers).toBe(1);
+  // Once it is over, a later call is a call of its own again.
+  expect(await syncMapFile(t.deps, MANIFEST)).toBe("current");
+});

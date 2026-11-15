@@ -72,7 +72,20 @@ async function setPartial(db: Db, partial: { path: string; sha256: string } | nu
     [partial?.path ?? null, partial?.sha256 ?? null]);
 }
 
-export async function syncMapFile(deps: MapDeps, manifest: MapManifest | null): Promise<MapSyncResult> {
+// One download at a time per database. A round may end while the download the previous round started is still running
+// (it runs behind the screen): a second transfer would read the size of the live partial and append to the same file.
+// The caller that arrives meanwhile waits for the one in flight and gets its answer.
+const inFlight = new WeakMap<Db, Promise<MapSyncResult>>();
+
+export function syncMapFile(deps: MapDeps, manifest: MapManifest | null): Promise<MapSyncResult> {
+  const running = inFlight.get(deps.db);
+  if (running) return running;
+  const mine = download(deps, manifest).finally(() => { if (inFlight.get(deps.db) === mine) inFlight.delete(deps.db); });
+  inFlight.set(deps.db, mine);
+  return mine;
+}
+
+async function download(deps: MapDeps, manifest: MapManifest | null): Promise<MapSyncResult> {
   const { db, fs } = deps;
   // The city has no map published: the one the tablet has, if any, stays.
   if (manifest === null) return "none";
