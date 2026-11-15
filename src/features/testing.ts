@@ -18,7 +18,9 @@ export async function loadedTablet(o: { session?: Partial<SessionResponse> } = {
   const session = { ...example<SessionResponse>("session-acs.json"), ...o.session };
   await db.run("INSERT INTO session (id, body, fetched_at) VALUES (1, ?, '2026-11-14T12:00:00.000Z')", [JSON.stringify(session)]);
   const reference = {
-    ...referenceFixture(), registration_dictionaries: fullDictionaries.registration_dictionaries, string_domains: fullDictionaries.string_domains,
+    ...referenceFixture(), string_domains: fullDictionaries.string_domains,
+    // The schema of the reference asks for the dictionaries' version (the LEDI release they come from).
+    registration_dictionaries: { version: fullDictionaries.ledi_version, ...fullDictionaries.registration_dictionaries },
     // With the rules of each activity type, in the shape the api serves them (CollectiveActivities::Json.domains) — the
     // dashboard's own fixture.
     collective_activity_domains: COLLECTIVE_DOMAINS,
