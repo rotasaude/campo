@@ -1,0 +1,19 @@
+# A revoked device: the next request is answered device_revoked, the tablet erases everything and
+# goes back to the pairing screen.
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runFlow: common/pair.yaml
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "next_status": 401, "error": "device_revoked" }'
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Leia o QR do dashboard"
+    timeout: 30000
+- assertNotVisible: "Início"
