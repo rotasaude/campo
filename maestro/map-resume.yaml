@@ -1,0 +1,26 @@
+# The map download is cut half-way during the first load; the next synchronization resumes it
+# from the bytes the tablet already has (Range + If-Range), and the map opens.
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "next_map": "cut:300000" }'
+- runFlow: common/pair.yaml
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Sincronizar"
+    timeout: 60000
+- runScript: scripts/expect-map-resumed.js
+- scrollUntilVisible:
+    element: "Mapa"
+- tapOn: "Mapa"
+- extendedWaitUntil:
+    visible: "© OpenStreetMap"
+    timeout: 30000
+- assertNotVisible: "Mapa ainda não baixado"
