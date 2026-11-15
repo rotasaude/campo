@@ -26,9 +26,9 @@ function OptionButton({ label, marked, role, onPress }: { label: string; marked:
   );
 }
 
-function useShown<T extends string | number>(label: string, options: Option<T>[], isMarked: (code: T) => boolean) {
+function useShown<T extends string | number>(label: string, options: Option<T>[], isMarked: (code: T) => boolean, showAll: boolean) {
   const [query, setQuery] = useState("");
-  const long = options.length > SEARCH_FROM;
+  const long = !showAll && options.length > SEARCH_FROM;
   if (!long) return { search: null, shown: options };
   const wanted = normalizeText(query);
   const found = wanted === "" ? [] : options.filter((option) => normalizeText(option.label).includes(wanted)).slice(0, SEARCH_SHOWN);
@@ -48,10 +48,11 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
 }
 
 // One of the list, or none: touching the chosen one again clears the answer.
-export function Choice<T extends string | number>({ label, options, value, onChange }: {
-  label: string; options: Option<T>[]; value: T | null; onChange(value: T | null): void;
+// `showAll`: never a search, however long the list (when the options are what the person came to read, like the reasons of a visit).
+export function Choice<T extends string | number>({ label, options, value, onChange, showAll = false }: {
+  label: string; options: Option<T>[]; value: T | null; onChange(value: T | null): void; showAll?: boolean;
 }) {
-  const { search, shown } = useShown(label, options, (code) => code === value);
+  const { search, shown } = useShown(label, options, (code) => code === value, showAll);
   return (
     <Group label={label}>
       {search}
@@ -66,10 +67,10 @@ export function Choice<T extends string | number>({ label, options, value, onCha
 }
 
 // Any number of the list, in the order they were marked.
-export function MultiChoice<T extends string | number>({ label, options, value, onChange }: {
-  label: string; options: Option<T>[]; value: T[]; onChange(value: T[]): void;
+export function MultiChoice<T extends string | number>({ label, options, value, onChange, showAll = false }: {
+  label: string; options: Option<T>[]; value: T[]; onChange(value: T[]): void; showAll?: boolean;
 }) {
-  const { search, shown } = useShown(label, options, (code) => value.includes(code));
+  const { search, shown } = useShown(label, options, (code) => value.includes(code), showAll);
   return (
     <Group label={label}>
       {search}
