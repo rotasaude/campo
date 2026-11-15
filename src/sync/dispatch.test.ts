@@ -282,6 +282,22 @@ describe("sendQueue", () => {
     expect(await outboxRepo.count(db)).toBe(0);
   });
 
+  // Review I2: what cites an item that was only put back for the next round did nothing wrong either.
+  test.each([["too_many_requests"], ["household_changed"], ["internal_error"]])(
+    "a dependent of an item deferred by %s in the same batch goes back to the line with it, not to attention", async (code) => {
+      const db = await createTestDb();
+      const patient = await enqueue(db, { type: "patient", body: { new_patient: { full_name: "Benedita Aparecida Rocha", birth_date: "1948-05-02", sex: "female", no_cpf_reason: "2" } } }, newUuid);
+      const visit = await enqueue(db, {
+        type: "home_visit", deps: [{ client_uuid: patient.client_uuid, kind: "cite" }],
+        body: { team_id: "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b", occurred_at: "2026-11-14T10:00:00-03:00", subject: "resident", patient_client_uuid: patient.client_uuid, outcome: 3, reasons: [], shared: false, property_type: "1", micro_area_id: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d" },
+      }, newUuid);
+      const sent = (await outboxRepo.all(db)).map((item) => ({ ...item, state: "sending" as const }));
+      const signal = await applyResults(db, sent, [rejected(patient, code), rejected(visit, "not_found", { path: "patient_client_uuid" })], noStale);
+      const after = await outboxRepo.all(db);
+      expect(after.map((item) => [item.type, item.state, item.error])).toEqual([["patient", "pending", null], ["home_visit", "pending", null]]);
+      expect(signal.deferred).toEqual(expect.arrayContaining([patient.client_uuid, visit.client_uuid]));
+    });
+
   test("too_many_requests puts the refused back to pending and stops the round", async () => {
     const db = await createTestDb();
     const a = await enqueue(db, { type: "home_visit", body: VISIT.body }, newUuid);

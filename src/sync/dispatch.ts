@@ -170,6 +170,10 @@ export async function applyResults(db: Db, sent: OutboxItem[], results: UploadRe
       if (item.attempts + 1 >= TRANSIENT_ATTEMPTS) await attention(item, result);
       else await back(item, item.attempts + 1);
     } else if (result.error === "not_found" && (result.path ?? "").endsWith("_client_uuid")
+      && item.depends_on.some((dep) => signal.deferred.includes(dep.client_uuid))) {
+      // The record it cites only went back to the line (rate limit, a transient refusal): this one goes back with it.
+      await back(item);
+    } else if (result.error === "not_found" && (result.path ?? "").endsWith("_client_uuid")
       && item.depends_on.some((dep) => refused.has(dep.client_uuid))) {
       // The record it cites was refused in this same batch: nothing wrong with this one.
       await outboxRepo.update(db, item.seq, { state: "blocked" });
