@@ -85,6 +85,8 @@ export function buildConfig(env: BuildEnv): ExpoConfig {
         "android.permission.READ_MEDIA_VIDEO",
         "android.permission.ACCESS_BACKGROUND_LOCATION",
         "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
       ],
     },
     plugins: [

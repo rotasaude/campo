@@ -57,8 +57,9 @@ test("production build refuses the test suffixes and a bare top-level domain (Q4
 
 test("the unlisted permissions the libraries bring are removed from the manifest", () => {
   const blocked = buildConfig(RELEASE).android?.blockedPermissions ?? [];
-  // expo-network asks for the Wi-Fi state and expo-file-system for the shared storage.
-  for (const name of ["ACCESS_WIFI_STATE", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE", "RECORD_AUDIO"]) {
+  // expo-network asks for the Wi-Fi state, expo-file-system for the shared storage and androidx.biometric
+  // (a dependency of expo-secure-store; the app never asks for biometrics) for the fingerprint reader.
+  for (const name of ["ACCESS_WIFI_STATE", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE", "RECORD_AUDIO", "USE_BIOMETRIC", "USE_FINGERPRINT"]) {
     expect(blocked).toContain(`android.permission.${name}`);
   }
 });
