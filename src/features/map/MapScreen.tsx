@@ -15,7 +15,7 @@ import type { HouseholdStatus } from "../../map/householdLayer";
 import { PMTILES_HEADER_BYTES, pmtilesBounds, type MapBounds } from "../../map/pmtilesHeader";
 import { MAP_ASSET_PATHS, buildStyle } from "../../map/style";
 import { SIZES, useTheme } from "../../theme/theme";
-import { Body, Button, Muted, Notice, Screen, Title } from "../../ui/components";
+import { Body, Button, Muted, Notice, Screen, Title, useScreenInsets } from "../../ui/components";
 import { MAP_TABLES, loadMapData } from "./mapData";
 
 export const NO_MAP = "Mapa ainda não baixado";
@@ -78,6 +78,7 @@ export function MapScreen({ Canvas, readHead, pick, onOpenHousehold }: MapScreen
     setFocus({ latitude: fix.latitude, longitude: fix.longitude, zoom: MY_POSITION_ZOOM });
   };
 
+  const insets = useScreenInsets();
   const title = pick ? PICK_TITLE : "Mapa";
   if (!data) return <Screen title={title}><Muted>Carregando…</Muted></Screen>;
   if (mapStyle === null) {
@@ -90,7 +91,8 @@ export function MapScreen({ Canvas, readHead, pick, onOpenHousehold }: MapScreen
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    // The map takes what is left of the window and does not scroll: the title and the buttons keep clear of the system bars here.
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }}>
       <View style={{ padding: SIZES.pad, gap: 8 }}>
         <Title>{title}</Title>
         {pick && <Body>{PICK_HINT}</Body>}

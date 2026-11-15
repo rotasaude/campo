@@ -1,5 +1,6 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react-native";
-import { Text } from "react-native";
+import { StyleSheet, Text } from "react-native";
+import { SafeAreaInsetsContext, type EdgeInsets } from "react-native-safe-area-context";
 import { fakeServices, renderWithServices } from "../../app/testing";
 import type { ChangesResponse } from "../../contract";
 import { example } from "../../contract/fixtures";
@@ -42,7 +43,7 @@ function gps(o: { accuracy?: number } = {}): LocationPort & { asked: number } {
   return port;
 }
 
-async function mount(o: { map?: boolean; location?: LocationPort; readHead?: (uri: string, bytes: number) => Promise<Uint8Array>; pick?: boolean } = {}) {
+async function mount(o: { map?: boolean; location?: LocationPort; readHead?: (uri: string, bytes: number) => Promise<Uint8Array>; pick?: boolean; insets?: EdgeInsets } = {}) {
   const db = await createTestDb();
   await applyTerritory(db);
   if (o.map !== false) {
@@ -53,8 +54,9 @@ async function mount(o: { map?: boolean; location?: LocationPort; readHead?: (ur
   const onPicked = jest.fn();
   const onOpenHousehold = jest.fn();
   const location = o.location ?? gps();
+  const ui = <MapScreen Canvas={Canvas} readHead={readHead} onOpenHousehold={onOpenHousehold} pick={o.pick ? { onPicked } : undefined} />;
   await renderWithServices(
-    <MapScreen Canvas={Canvas} readHead={readHead} onOpenHousehold={onOpenHousehold} pick={o.pick ? { onPicked } : undefined} />,
+    o.insets ? <SafeAreaInsetsContext.Provider value={o.insets}>{ui}</SafeAreaInsetsContext.Provider> : ui,
     fakeServices({ db, location }));
   return { db, reads, onPicked, onOpenHousehold, location };
 }
@@ -83,6 +85,15 @@ test("with the map: the style points to the local file, calls nobody, and the OS
   // The box comes from the head of the file itself: 127 bytes, read from its plain file URI.
   expect(t.reads).toEqual([["file:///data/user/0/br.rotasaude.campo/files/map/2026-11-01-abababababab.pmtiles", 127]]);
   expect(told().bounds).toEqual({ west: -49.4, south: -25.65, east: -49.18, north: -25.34 });
+});
+
+// The map does not scroll: under a bar, "Usar este ponto" could never be touched (on a tablet, the taskbar).
+test("with the map: the title and the last button stay clear of the system bars", async () => {
+  await mount({ pick: true, insets: { top: 48, bottom: 120, left: 0, right: 16 } });
+  await screen.findByTestId("canvas");
+  expect(screen.getByRole("button", { name: "Usar este ponto" })).toBeTruthy();
+  // The outermost view of the screen holds the title, the map and the buttons.
+  expect(StyleSheet.flatten(screen.root?.props.style)).toMatchObject({ flex: 1, paddingTop: 48, paddingBottom: 120, paddingLeft: 0, paddingRight: 16 });
 });
 
 test("a head that cannot be read still shows the map, with no box", async () => {

@@ -7,12 +7,17 @@ import { SIZES, useTheme } from "../theme/theme";
 
 const NO_INSETS = { top: 0, bottom: 0, left: 0, right: 0 };
 
+// The window's safe margins, for a screen that lays itself out instead of using `Screen` (the map, which does not scroll).
+export function useScreenInsets() {
+  return useContext(SafeAreaInsetsContext) ?? NO_INSETS;
+}
+
 // The app draws edge to edge: the content keeps clear of the status bar, the navigation bar (on a tablet, the
 // taskbar) and the cutouts, or the last button of a screen sits under a bar and the touch goes to the system.
 // The background still fills the whole window. The insets come from the provider expo-router mounts at the root.
 export function Screen({ children, title }: { children: ReactNode; title?: string }) {
   const { colors } = useTheme();
-  const insets = useContext(SafeAreaInsetsContext) ?? NO_INSETS;
+  const insets = useScreenInsets();
   const padding = {
     paddingTop: SIZES.pad + insets.top, paddingBottom: SIZES.pad + insets.bottom,
     paddingLeft: SIZES.pad + insets.left, paddingRight: SIZES.pad + insets.right,
