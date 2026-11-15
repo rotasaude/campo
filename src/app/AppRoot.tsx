@@ -44,6 +44,8 @@ export interface AppActions {
   appVersion: string; signOut(): void; scanNew(): void;
   // What the map route needs from the device.
   map: { Canvas: Platform["MapCanvas"]; readHead: Platform["readFileHead"] };
+  // Android's Back button, for a screen that swaps its own content inside one route.
+  back: Platform["back"];
 }
 const AppContext = createContext<AppActions | null>(null);
 export function useApp(): AppActions {
@@ -227,6 +229,7 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
     signOut: () => { void wipe().then(() => setPhase("pairing")); },
     scanNew: () => setPhase("pairing"),
     map: { Canvas: platform.MapCanvas, readHead: platform.readFileHead },
+    back: platform.back,
   }), [platform, wipe]);
 
   if (phase === "starting") return <Screen><Muted>Abrindo…</Muted></Screen>;

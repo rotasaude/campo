@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react-native";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 import { Text } from "react-native";
 import { fakeServices, renderWithServices } from "../../app/testing";
 import type { SessionResponse } from "../../contract";
@@ -21,13 +21,23 @@ const gps = (accuracy: number): LocationPort => ({
   current: async () => ({ latitude: -25.428471234, longitude: -49.273254112, accuracy }),
 });
 
+// Android's Back button: who is listening answers true to keep the press from the navigator.
+function backButton() {
+  const handlers = new Set<() => boolean>();
+  return {
+    onPress: (handler: () => boolean) => { handlers.add(handler); return { remove: () => { handlers.delete(handler); } }; },
+    press: () => [...handlers].some((handler) => handler()),
+  };
+}
+
 async function mount(o: { db?: Db; householdKey?: string; location?: LocationPort } = {}) {
   const db = o.db ?? (await loadedTablet());
   if (o.db === undefined) await db.run("INSERT INTO map_file (id, version, sha256, size_bytes, path) VALUES (1, '2026-11-01', ?, 1, 'map/x.pmtiles')", ["ab".repeat(32)]);
   const onSaved = jest.fn();
-  await renderWithServices(<HouseholdForm householdKey={o.householdKey} map={map} onSaved={onSaved} />, fakeServices({ db, ...(o.location ? { location: o.location } : {}) }));
+  const back = backButton();
+  await renderWithServices(<HouseholdForm householdKey={o.householdKey} map={map} back={back} onSaved={onSaved} />, fakeServices({ db, ...(o.location ? { location: o.location } : {}) }));
   await screen.findByRole("button", { name: "Salvar" });
-  return { db, onSaved };
+  return { db, onSaved, back };
 }
 const field = (key: string) => within(screen.getByTestId(`field-${key}`));
 const press = (name: string) => fireEvent.press(screen.getByRole("button", { name }));
@@ -131,6 +141,26 @@ test("no precise position: the screen says to mark on the map, and the map gives
   expect(JSON.stringify(item.body.location)).toMatch(/"accuracy_m":\d/);
 });
 
+test("Back with the map open closes the map only: the form is there with what was typed, and Back then belongs to the navigator", async () => {
+  const t = await mount();
+  await fillAddress();
+  // On the form nobody holds the press: the navigator leaves the screen, as everywhere else.
+  expect(t.back.press()).toBe(false);
+
+  await press("Marcar no mapa");
+  expect(await screen.findByRole("header", { name: "Marcar o ponto do imóvel" })).toBeTruthy();
+  await fireEvent.press(await screen.findByText("tocar no mapa"));
+  let held = false;
+  await act(async () => { held = t.back.press(); });
+  expect(held).toBe(true);
+
+  expect(await screen.findByRole("button", { name: "Salvar" })).toBeTruthy();
+  expect(screen.getByLabelText("Logradouro").props.value).toBe("das Flores");
+  // The point touched and not confirmed is not the household's.
+  expect(screen.queryByText("Ponto marcado no mapa")).toBeNull();
+  expect(t.back.press()).toBe(false);
+});
+
 test("editing: the form opens with what the household has; untouched, the point is not in the item; taken off, it goes as null", async () => {
   const db = await loadedTablet();
   // The example's street type is a label; the api's is the code.
@@ -180,7 +210,7 @@ test("who is not the community health agent, or a city with the registry off, on
   const session = example<SessionResponse>("session-acs.json");
   for (const over of [{ professional: { ...session.professional, cbo: "322255" } }, { features: { ...session.features, territory_registry: false } }]) {
     const db = await loadedTablet({ session: over });
-    const view = await renderWithServices(<HouseholdForm householdKey={HH} map={map} onSaved={jest.fn()} />, fakeServices({ db }));
+    const view = await renderWithServices(<HouseholdForm householdKey={HH} map={map} back={backButton()} onSaved={jest.fn()} />, fakeServices({ db }));
     expect(await screen.findByText(READ_ONLY)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Salvar" })).toBeNull();
     expect(screen.queryByLabelText("CEP")).toBeNull();

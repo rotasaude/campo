@@ -58,10 +58,12 @@ export interface HouseholdFormProps {
   householdKey?: string;
   // What draws the map, for "Marcar no mapa".
   map: { Canvas: ComponentType<MapCanvasProps>; readHead(uri: string, bytes: number): Promise<Uint8Array> };
+  // Android's Back button. A handler that answers true keeps the press from reaching the navigator.
+  back: { onPress(handler: () => boolean): { remove(): void } };
   onSaved(key: string): void;
 }
 
-export function HouseholdForm({ householdKey, map, onSaved }: HouseholdFormProps) {
+export function HouseholdForm({ householdKey, map, back, onSaved }: HouseholdFormProps) {
   const { colors } = useTheme();
   const { db, crypto, now, location: gps } = useServices();
   const [loaded, setLoaded] = useState<Loaded | "read_only" | "not_ready" | null>(null);
@@ -88,6 +90,14 @@ export function HouseholdForm({ householdKey, map, onSaved }: HouseholdFormProps
     })();
     return () => { alive = false; };
   }, [db, householdKey]);
+
+  // The map to mark the point takes the place of the form inside the same route: Back closes the map, not the form
+  // (the navigator would pop the route, and with it everything the person typed).
+  useEffect(() => {
+    if (!picking) return undefined;
+    const subscription = back.onPress(() => { setPicking(false); return true; });
+    return () => subscription.remove();
+  }, [back, picking]);
 
   const reference = loaded !== null && typeof loaded === "object" ? loaded.reference : null;
   const rules = useMemo(() => (reference === null ? null : createRegistryRules(reference.dictionaries)), [reference]);
