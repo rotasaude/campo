@@ -1,0 +1,32 @@
+# From the Home screen: with no network, registers an "Ausente" visit to the first person of the
+# list and comes back to the Home screen with one record waiting. The network is on again at the end.
+appId: br.rotasaude.campo
+---
+- setAirplaneMode: enabled
+- tapOn: "Quem visitar"
+- tapOn:
+    text: "Registrar visita"
+    index: 0
+- assertVisible: "Nova visita"
+- scrollUntilVisible:
+    element: "Ausente"
+    centerElement: true
+- tapOn: "Ausente"
+# To the end of the form: the last button sits behind the tablet's task bar until then.
+- scroll
+- scroll
+- tapOn: "Registrar visita"
+# Saved on the tablet: the day's list shows it waiting.
+- extendedWaitUntil:
+    visible: "Minhas visitas de hoje"
+    timeout: 30000
+- assertVisible: "Aguardando envio"
+- back
+- back
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 1"
+    timeout: 30000
+- setAirplaneMode: disabled
+- extendedWaitUntil:
+    visible: "Sincronizar"
+    timeout: 30000

@@ -2,6 +2,8 @@
 # QR_PAYLOAD comes from `node scripts/fake-field-server/qr.mjs <host>` (or from the dev dashboard).
 appId: br.rotasaude.campo
 ---
+# A flow that stopped half-way may have left the emulator without network.
+- setAirplaneMode: disabled
 - launchApp:
     clearState: true
 - extendedWaitUntil:

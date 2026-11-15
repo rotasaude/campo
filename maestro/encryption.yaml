@@ -1,0 +1,16 @@
+# The database on the tablet is encrypted: the cipher answers its version and a copy of the file
+# opened without the key is refused.
+appId: br.rotasaude.campo
+---
+- runFlow: common/pair.yaml
+# The last button of a screen sits behind the tablet's task bar until the screen is scrolled to its end.
+- scroll
+- tapOn: "Sobre"
+- assertVisible: "Cidade: curitiba.localhost"
+- scroll
+- tapOn: "Diagnóstico"
+- extendedWaitUntil:
+    visible: "sem chave: recusado"
+    timeout: 30000
+- assertVisible: "cifra: [0-9]+\\..*"
+- assertNotVisible: "sem chave: ABRIU"

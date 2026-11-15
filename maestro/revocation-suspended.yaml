@@ -1,0 +1,36 @@
+# A suspended device keeps what was not sent; a new QR of the same user gives the access back and
+# the waiting record goes out. QR_PAYLOAD_2 is a second QR of the same host (a new token).
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runFlow: common/pair.yaml
+- runFlow: common/absent-visit-offline.yaml
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "next_status": 401, "error": "device_suspended" }'
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Acesso suspenso"
+    timeout: 30000
+- assertVisible: "Há 1 registro guardado neste tablet. Ele será enviado quando o acesso voltar."
+- tapOn: "Ler QR novo"
+- extendedWaitUntil:
+    visible: "Leia o QR do dashboard"
+    timeout: 30000
+- tapOn:
+    text: "Colar código"
+    index: 1
+- inputText: ${QR_PAYLOAD_2}
+- hideKeyboard
+- tapOn: "Usar código"
+# Same host and same user: the tablet keeps its data, goes back to work and sends what was waiting.
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 0"
+    timeout: 60000
+- assertVisible: "Início"
+- assertNotVisible: "Acesso suspenso"
