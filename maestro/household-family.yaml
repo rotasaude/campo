@@ -10,11 +10,11 @@ appId: br.rotasaude.campo
 - tapOn: "Domicílios"
 - tapOn: "Novo domicílio"
 - assertVisible: "Novo domicílio"
-- tapOn:
-    text: "CEP"
-    index: 1
-- inputText: "80020000"
-- hideKeyboard
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "CEP"
+      VALUE: "80020000"
 - tapOn:
     text: "Buscar em Tipo de logradouro"
     index: 1
@@ -24,20 +24,20 @@ appId: br.rotasaude.campo
 - tapOn:
     text: "AVENIDA"
     index: 1
-- tapOn:
-    text: "Logradouro"
-    index: 1
-- inputText: "Sete de Setembro"
-- hideKeyboard
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Logradouro"
+      VALUE: "Sete de Setembro"
 # Fields near the end of the screen sit behind the tablet's task bar: bring each one to the middle first.
 - scrollUntilVisible:
     element: "Número"
     centerElement: true
-- tapOn:
-    text: "Número"
-    index: 1
-- inputText: "45"
-- hideKeyboard
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Número"
+      VALUE: "45"
 - scrollUntilVisible:
     element: "Vila Nova"
     centerElement: true
@@ -73,22 +73,22 @@ appId: br.rotasaude.campo
 
 # The resident: a family needs somebody registered to answer for it.
 - tapOn: "Novo morador"
-- tapOn:
-    text: "Nome completo"
-    index: 1
-- inputText: "Maria Teste Souza"
-- hideKeyboard
-- tapOn:
-    text: "Data de nascimento \\(dd/mm/aaaa\\)"
-    index: 1
-- inputText: "10/05/1980"
-- hideKeyboard
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Nome completo"
+      VALUE: "Maria Teste Souza"
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Data de nascimento \\(dd/mm/aaaa\\)"
+      VALUE: "10/05/1980"
 - tapOn: "Feminino"
-- tapOn:
-    text: "Nome da mãe"
-    index: 1
-- inputText: "Ana Teste Souza"
-- hideKeyboard
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Nome da mãe"
+      VALUE: "Ana Teste Souza"
 - scrollUntilVisible:
     element: "Pessoa indocumentada"
     centerElement: true
@@ -104,27 +104,27 @@ appId: br.rotasaude.campo
 - scrollUntilVisible:
     element: "Município de nascimento \\(código IBGE, 7 dígitos\\)"
     centerElement: true
-- tapOn:
-    text: "Município de nascimento \\(código IBGE, 7 dígitos\\)"
-    index: 1
-- inputText: "4106902"
-- hideKeyboard
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Município de nascimento \\(código IBGE, 7 dígitos\\)"
+      VALUE: "4106902"
 - scrollUntilVisible:
     element: "Celular \\(DDD \\+ número\\)"
     centerElement: true
-- tapOn:
-    text: "Celular \\(DDD \\+ número\\)"
-    index: 1
-- inputText: "41999887766"
-- hideKeyboard
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Celular \\(DDD \\+ número\\)"
+      VALUE: "41999887766"
 - scrollUntilVisible:
     element: "Nome do pai"
     centerElement: true
-- tapOn:
-    text: "Nome do pai"
-    index: 1
-- inputText: "Jose Teste Souza"
-- hideKeyboard
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Nome do pai"
+      VALUE: "Jose Teste Souza"
 - scrollUntilVisible:
     element: "Quer informar a orientação sexual\\?"
     centerElement: true
@@ -163,11 +163,11 @@ appId: br.rotasaude.campo
 - tapOn: "Nova família"
 - tapOn: "Maria Teste Souza"
 - tapOn: "Um salário mínimo"
-- tapOn:
-    text: "Número de membros"
-    index: 1
-- inputText: "1"
-- hideKeyboard
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Número de membros"
+      VALUE: "1"
 - tapOn: "Salvar família"
 - extendedWaitUntil:
     visible: "Responsável: Maria Teste Souza"
