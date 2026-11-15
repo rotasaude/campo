@@ -52,9 +52,11 @@ export async function saveVisit(db: Db, draft: VisitDraft, ctx: SaveVisitContext
     if (typeof patientRef === "string") {
       // Somebody registered on this tablet and not yet known to the server is the registration item itself (Q26).
       const born = await tx.get<{ client_uuid: string }>("SELECT client_uuid FROM registrations WHERE key = ? AND client_uuid IS NOT NULL AND patient_id IS NULL", [patientRef]);
-      if (born && queued(born.client_uuid)) {
+      // By the client_uuid of that registration for as long as the tablet does not know the patient's own id — also after
+      // the registration was accepted and before the download brings it. It waits only while the registration is in the line.
+      if (born) {
         body.patient_client_uuid = born.client_uuid;
-        depends.push({ client_uuid: born.client_uuid, kind: "cite" });
+        if (queued(born.client_uuid)) depends.push({ client_uuid: born.client_uuid, kind: "cite" });
       } else body.patient_id = patientRef;
     }
     if (typed !== undefined) {

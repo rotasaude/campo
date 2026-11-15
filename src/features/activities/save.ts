@@ -26,9 +26,12 @@ export async function saveActivity(db: Db, draft: ActivityDraft, ctx: SaveActivi
       const { patient_id: ref, ...rest } = participant;
       if (typeof ref !== "string") { participants.push(participant); continue; }
       const born = await tx.get<{ client_uuid: string }>("SELECT client_uuid FROM registrations WHERE key = ? AND client_uuid IS NOT NULL AND patient_id IS NULL", [ref]);
-      if (born && queue.some((item) => item.client_uuid === born.client_uuid)) {
+      // By client_uuid for as long as the tablet does not know the patient's own id (also after the registration was
+      // accepted and before the download brings it); the activity waits only while that registration is in the line.
+      if (born) {
         participants.push({ patient_client_uuid: born.client_uuid, ...rest });
-        if (!depends.some((dep) => dep.client_uuid === born.client_uuid)) depends.push({ client_uuid: born.client_uuid, kind: "cite" });
+        const waits = queue.some((item) => item.client_uuid === born.client_uuid) && !depends.some((dep) => dep.client_uuid === born.client_uuid);
+        if (waits) depends.push({ client_uuid: born.client_uuid, kind: "cite" });
       } else participants.push(participant);
     }
     const item = await enqueue(tx, { type: "collective_activity", body: { ...body, participants }, deps: depends }, ctx.newUuid);

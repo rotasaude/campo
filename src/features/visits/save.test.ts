@@ -77,6 +77,21 @@ test("household, person and family born on the tablet are cited by client_uuid, 
   expect(JSON.parse((await local(db))[0].summary).household).toBe(household.key);
 });
 
+// Review I1: once the registration was accepted the tablet knows the registration's id, not the patient's — until the
+// next download. The person is still named by the client_uuid of the registration, which the server resolves.
+test("a person registered here whose registration was accepted but not downloaded yet is still cited by client_uuid, with nothing to wait for", async () => {
+  const db = await loadedTablet();
+  const benedita = await saveRegistration(db, { householdKey: HH, familyId: null, person: { kind: "new", patient: BENEDITA }, fields: person }, { newUuid, now: () => NOW });
+  const [registration] = await outboxRepo.all(db);
+  await applyResults(db, [registration], [accepted(registration, { id: "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b", version: 1 })], { onStale: async () => undefined });
+  await saveVisit(db, draft({ person: { kind: "patient", patientId: benedita.clientUuid, sex: "female" } }), ctx());
+  const [visit] = await outboxRepo.all(db);
+  expect(visit.body.patient_client_uuid).toBe(benedita.clientUuid);
+  expect("patient_id" in visit.body).toBe(false);
+  expect(visit.depends_on).toEqual([]);
+  expectValid("upload-request", wire([visit]));
+});
+
 test("a person typed in the visit itself is a patient item, and the visit cites it", async () => {
   const db = await loadedTablet();
   const uuid = await saveVisit(db, draft({ person: { kind: "new", patient: BENEDITA, duplicatesReviewed: true } }), ctx());

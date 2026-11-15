@@ -56,6 +56,17 @@ test("a participant registered on this tablet is cited by the client_uuid of tha
   expectValid("upload-request", wire(items));
 });
 
+test("a participant registered here whose registration was accepted but not downloaded yet is still cited by client_uuid (review I1)", async () => {
+  const { db, ctx } = await setup();
+  const benedita = await saveRegistration(db, { householdKey: HH, familyId: null, person: { kind: "new", patient: BENEDITA }, fields: person }, { newUuid, now: () => NOW });
+  const [registration] = await outboxRepo.all(db);
+  await applyResults(db, [registration], [accepted(registration, { id: "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b", version: 1 })], { onStale: async () => undefined });
+  await saveActivity(db, draft({ participants: [participant({ patientId: benedita.clientUuid })] }), ctx);
+  const [activity] = await outboxRepo.all(db);
+  expect(activity.body.participants).toEqual([{ patient_client_uuid: benedita.clientUuid }]);
+  expect(activity.depends_on).toEqual([]);
+});
+
 test("a person typed in the activity travels inside the participant, with duplicates_reviewed only when the look-alikes were seen", async () => {
   const { db, ctx } = await setup();
   await saveActivity(db, draft({
