@@ -124,6 +124,48 @@ describe("session, reference and changes", () => {
     expect((await call("GET", "/field/v1/session")).json().reference_version).toBe(reference.reference_version);
   });
 
+  // The contract's example carries only an excerpt: with it the forms open with no options and the activity form breaks.
+  test("reference carries what the forms need: the whole registration dictionaries and the visit and activity domains", async () => {
+    const reference = (await call("GET", "/field/v1/reference")).json();
+    const domains = JSON.parse(readFileSync(join(CONTRACT, "domains-v1.json"), "utf8"));
+
+    const dictionaries = reference.registration_dictionaries;
+    expect(dictionaries.version).toBe("8.7.0");
+    expect(Object.keys(dictionaries.domains).length).toBeGreaterThanOrEqual(39);
+    expect(Object.keys(dictionaries.sections).sort()).toEqual(["health_conditions", "identification", "living_conditions", "sociodemographic", "street_situation"]);
+    for (const [section, fields] of Object.entries<unknown[]>(dictionaries.sections)) expect([section, fields.length > 0]).toEqual([section, true]);
+    expect(reference.string_domains.uf).toHaveLength(27);
+    expect(reference.string_domains.tipo_logradouro.length).toBeGreaterThan(100);
+
+    const visit = reference.home_visit_domains;
+    const reasons = domains.home_visit.motivo_visita.flatMap((group: Json) => group.items);
+    expect(visit.motivo_visita.map((row: Json) => row.code)).toEqual(reasons.map((row: Json) => row.code));
+    expect(visit.motivo_visita[0]).toEqual({ code: 1, label: "Cadastramento / Atualização", group: "TIPO_VISITA", group_label: "Tipo de visita" });
+    expect(visit.desfecho).toEqual(domains.home_visit.desfecho);
+    expect(visit.tipo_de_imovel).toEqual(domains.home_visit.tipo_de_imovel);
+    expect(visit.reasons_max).toBe(domains.home_visit.rules.reasons_max);
+    expect(visit.measurement_ranges.weight_kg).toEqual({ min: 0.5, max: 500, decimals: 3 });
+    expect(Object.keys(visit.measurement_ranges).sort()).toEqual(["diastolic", "glucose_mg_dl", "height_cm", "systolic", "temperature_c", "weight_kg"]);
+
+    const activity = reference.collective_activity_domains;
+    expect(activity.activity_types).toEqual(domains.collective_activity.tipo_atividade_coletiva);
+    expect(activity.health_topics).toEqual(domains.collective_activity.temas_para_saude);
+    expect(activity.procedures).toEqual(domains.collective_activity.outro_procedimento_coletivo);
+    // The rules in the shape the api serves them (CollectiveActivities::Json.domains), not the contract's prose.
+    expect(Object.keys(activity.rules).sort()).toEqual([
+      "by_type", "health_topics_with_meeting_topic", "list_max", "participant_measurements", "practices_only_in_type", "procedure_practices", "smoking_practices",
+    ]);
+    expect(Object.keys(activity.rules.by_type)).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
+    expect(activity.rules.by_type["1"]).toEqual({ meeting_topics: "required", target_audience: "forbidden", health_topics: "forbidden", health_practices: "forbidden", participants: "optional" });
+    expect(activity.rules.by_type["6"]).toEqual({ meeting_topics: "forbidden", target_audience: "required", health_topics: "optional", health_practices: "required", participants: "required" });
+    expect(activity.rules.health_topics_with_meeting_topic).toEqual([6]);
+    expect(activity.rules.practices_only_in_type).toEqual([{ type: 6, practices: [2, 9, 33] }]);
+    expect(activity.rules.procedure_practices).toEqual([30]);
+    expect(activity.rules.smoking_practices).toEqual([25, 26, 27, 28]);
+    expect(activity.rules.list_max).toEqual(domains.collective_activity.rules.list_max);
+    expect(activity.rules.participant_measurements).toEqual({ weight_kg: { min: 0.5, max: 500, decimals: 3 }, height_cm: { min: 20, max: 250, decimals: 1 } });
+  });
+
   test("changes serves the first page, then the last one with who-to-visit, then nothing new", async () => {
     const first = (await call("GET", "/field/v1/changes?limit=200")).json();
     expectValid("changes-response", first);

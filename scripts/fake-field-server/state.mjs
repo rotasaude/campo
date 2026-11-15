@@ -5,7 +5,8 @@
 import { Buffer } from "node:buffer";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 
 const SCHEMAS = ["session-response", "upload-request", "upload-response", "changes-response", "reference-response"];
@@ -23,6 +24,59 @@ const NAMESPACE = Buffer.from("5f1e1d5c0de04a7e9c0dfa4ef1e1d5c0", "hex");
 const DEVICE_ERRORS = ["device_revoked", "device_suspended"];
 
 export class ScriptError extends Error {}
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+const range = ({ min, max, decimals }) => ({ min, max, decimals });
+
+// The offline reference a real city serves. The contract's example carries only an excerpt (two
+// registration domains, empty visit and activity domains), and with it the forms open with no
+// options. The visit and activity blocks are written from the contract's domains-v1.json the way
+// the api builds them (HomeVisits::Json.domains, CollectiveActivities::Json.domains); the
+// registration dictionaries are a copy of the api's config/ledi/registration_dictionaries.yml.
+function fullReference(example, domains, dictionaries) {
+  const visit = domains.home_visit;
+  const activity = domains.collective_activity;
+  const byType = Object.entries(activity.rules.by_activity_type);
+  // "with_meeting_topic_6" is the contract's wording for: forbidden, unless that meeting topic is marked.
+  const withTopic = /^with_meeting_topic_(\d+)$/;
+  const topics = new Set(byType.flatMap(([, fields]) => Object.values(fields)).flatMap((rule) => (withTopic.test(rule) ? [Number(withTopic.exec(rule)[1])] : [])));
+  return {
+    ...example,
+    registration_dictionaries: { version: dictionaries.ledi_version, ...dictionaries.registration_dictionaries },
+    string_domains: dictionaries.string_domains,
+    home_visit_domains: {
+      motivo_visita: visit.motivo_visita.flatMap((group) => group.items.map((item) => ({ ...item, group: group.group, group_label: group.label }))),
+      desfecho: visit.desfecho,
+      turno: visit.turno,
+      tipo_glicemia: visit.tipo_glicemia,
+      tipo_de_imovel: visit.tipo_de_imovel,
+      non_residential_property_types: visit.rules.non_residential_property_types,
+      non_residential_reasons: visit.rules.non_residential_reasons,
+      male_forbidden_reasons: visit.rules.male_forbidden_reasons,
+      without_person_allowed_reasons: visit.rules.without_person_allowed_reasons,
+      responsible_document_reasons: visit.rules.responsible_document_reasons,
+      reasons_max: visit.rules.reasons_max,
+      measurement_ranges: Object.fromEntries(Object.entries(visit.rules.measurements).filter(([, row]) => "min" in row).map(([key, row]) => [key, range(row)])),
+    },
+    collective_activity_domains: {
+      activity_types: activity.tipo_atividade_coletiva,
+      meeting_topics: activity.temas_para_reuniao,
+      target_audience: activity.publico_alvo,
+      health_topics: activity.temas_para_saude,
+      health_practices: activity.praticas_em_saude,
+      procedures: activity.outro_procedimento_coletivo,
+      rules: {
+        list_max: activity.rules.list_max,
+        by_type: Object.fromEntries(byType.map(([type, fields]) => [type, Object.fromEntries(Object.entries(fields).map(([field, rule]) => [field, withTopic.test(rule) ? "forbidden" : rule]))])),
+        health_topics_with_meeting_topic: [...topics].sort((a, b) => a - b),
+        practices_only_in_type: Object.entries(activity.rules.practices_only_in_activity_type).map(([type, practices]) => ({ type: Number(type), practices })),
+        procedure_practices: [activity.rules.procedure_code_with_practice],
+        smoking_practices: activity.rules.smoking_with_practices,
+        participant_measurements: Object.fromEntries(Object.entries(activity.rules.participant_measurements).map(([key, row]) => [key, range(row)])),
+      },
+    },
+  };
+}
 
 // UUID v5 of the client_uuid: the same item always gets the same id.
 function uuidV5(name) {
@@ -74,7 +128,8 @@ export function createState({ contractDir, mapFile }) {
 
   const map = readFileSync(mapFile);
   const mapSha = createHash("sha256").update(map).digest("hex");
-  const reference = read("examples/reference.json");
+  const reference = fullReference(read("examples/reference.json"), read("domains-v1.json"), JSON.parse(readFileSync(join(FIXTURES, "registration-dictionaries.json"), "utf8")));
+  if (!validators["reference-response"](reference)) throw new Error(`referência do servidor falso fora do esquema: ${ajv.errorsText(validators["reference-response"].errors)}`);
   const sessionExample = read("examples/session-acs.json");
   const firstPage = read("examples/changes-first-page.json");
   const lastPage = read("examples/changes-last-page.json");

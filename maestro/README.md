@@ -47,6 +47,8 @@ A senha da chave descartável aparece na linha de comando de propósito: ela só
 
 `scripts/fake-field-server/server.mjs` responde as cinco rotas do `field-sync` v1.2.0 a partir dos exemplos do contrato (`contracts/field-sync`), valida cada resposta contra o esquema antes de enviar e escuta só em `127.0.0.1` (que o emulador alcança por `10.0.2.2`). Aceita qualquer token com a forma `rsf_…`; `qr.mjs <host>` gera um QR com token novo.
 
+O `/reference` não é o exemplo do contrato cru (que traz só um recorte e deixaria os formulários sem opções): os domínios da visita e da atividade coletiva são montados do `contracts/field-sync/domains-v1.json` na forma em que o api os serve, e os dicionários do cadastro vêm de `fixtures/registration-dictionaries.json`, cópia do YAML do api (LEDI 8.7.0). Se o api mudar um dicionário, a cópia precisa ser refeita.
+
 Os fluxos mudam o comportamento por `POST /__script` (uma vez só cada):
 
 | Corpo | Efeito |
