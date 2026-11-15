@@ -1,7 +1,7 @@
 // The few building blocks every screen uses. Colours only from the theme;
 // every touch target at least 48 dp; text at least 18 sp.
 import { useContext, type ReactNode } from "react";
-import { Pressable, ScrollView, Text, TextInput, View, type TextInputProps } from "react-native";
+import { KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View, type TextInputProps } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import { SIZES, useTheme } from "../theme/theme";
 
@@ -23,10 +23,15 @@ export function Screen({ children, title }: { children: ReactNode; title?: strin
     paddingLeft: SIZES.pad + insets.left, paddingRight: SIZES.pad + insets.right,
   };
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ ...padding, gap: SIZES.gap }} keyboardShouldPersistTaps="handled">
-      {title !== undefined && <Title>{title}</Title>}
-      {children}
-    </ScrollView>
+    // Edge to edge, Android does not resize the window for the keyboard either: the scroll area ends where the
+    // keyboard begins, and the native scroll brings the field in focus into what is left. Without this, on a
+    // tablet (the keyboard takes half the screen) the person types in a field that is behind the keyboard.
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.bg }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ ...padding, gap: SIZES.gap }} keyboardShouldPersistTaps="handled">
+        {title !== undefined && <Title>{title}</Title>}
+        {children}
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
