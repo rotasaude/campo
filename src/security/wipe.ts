@@ -1,6 +1,6 @@
 // Two erasures. wipeTerritory drops the copy of the server (30 days without a
 // full download, or a scope reset) and never touches what the tablet still
-// owes the server. wipeAll is the end of this installation: manual revocation
+// owes the server — the queue, and what the queue points to on the tablet. wipeAll is the end of this installation: manual revocation
 // (device_revoked) or a confirmed "Sair".
 import { DB_NAME } from "../db/open";
 import type { Db } from "../db/types";
@@ -11,12 +11,21 @@ export interface FsPort {
   deleteAsync(uri: string, options: { idempotent: true }): Promise<void>;
 }
 
-const TERRITORY = ["micro_areas", "households", "families", "registrations", "who_to_visit", "local_visits", "local_activities"];
+// What the line still points to. A record born on this tablet whose item has not been accepted exists nowhere else: the
+// queue is kept, so the row the queue edits is kept too (its form, its place in the lists). The same for a visit or an
+// activity still to be sent.
+const QUEUED_ROW = "client_uuid IS NOT NULL AND key IN (SELECT target_id FROM outbox WHERE target_id IS NOT NULL)";
 
-// Keeps outbox, client_ids, reference, map_file and session.
+// Keeps outbox, client_ids, reference, map_file and session — and the rows the outbox still needs (see QUEUED_ROW).
 export async function wipeTerritory(db: Db): Promise<void> {
   await db.tx(async (tx) => {
-    for (const table of TERRITORY) await tx.exec(`DELETE FROM ${table}`);
+    await tx.exec("DELETE FROM micro_areas");
+    await tx.exec("DELETE FROM who_to_visit");
+    await tx.exec(`DELETE FROM households WHERE NOT (${QUEUED_ROW})`);
+    await tx.exec("DELETE FROM families WHERE household_key NOT IN (SELECT key FROM households)");
+    await tx.exec(`DELETE FROM registrations WHERE NOT (${QUEUED_ROW})`);
+    await tx.exec("DELETE FROM local_visits WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
+    await tx.exec("DELETE FROM local_activities WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
     await tx.run("DELETE FROM meta WHERE key IN (?, ?)", ["cursor", "last_download_ok_at"]);
   });
 }

@@ -200,6 +200,14 @@ async function targetRow(db: Db, item: OutboxItem): Promise<{ id: string | null;
 // The key that names an existing record in the body. The schema ties it to `version`: one never travels without the other.
 const ID_KEY: Record<string, string> = { household: "household_id", individual_registration: "registration_id" };
 
+// An item that names an existing record and carries no base of its own reads the version from the row at send time: a
+// family (its version is the household's) or an edit written without an edit base.
+function needsRowVersion(item: OutboxItem): boolean {
+  if (!VERSIONED.has(item.type) || item.target_id === null || item.edit_base_version !== null) return false;
+  if (item.type === "family") return true;
+  return typeof item.body[ID_KEY[item.type]] === "string";
+}
+
 // The body as it travels: the version is filled here and nowhere else.
 function wireBody(item: OutboxItem, version: number | null, rowId: string | null): Record<string, unknown> {
   if (version === null) return item.body;
@@ -224,6 +232,9 @@ export async function sendQueue(deps: SendDeps): Promise<{ stop: "rate_limited" 
     await db.tx(async (tx) => {
       for (const item of batch) {
         const row = VERSIONED.has(item.type) ? await targetRow(tx, item) : null;
+        // The copy of the territory may have been erased with this item still in the line. One that takes its version
+        // from the row waits for the download to bring the row back: without it the item would go out malformed.
+        if (needsRowVersion(item) && row === null) { deferred.add(item.client_uuid); continue; }
         const body = wireBody(item, VERSIONED.has(item.type) ? resolveVersion(item, row?.base_version ?? null) : null, row?.id ?? null);
         const version = typeof body.version === "number" ? body.version : null;
         await outboxRepo.update(tx, item.seq, { state: "sending", sent_version: version });
@@ -232,6 +243,7 @@ export async function sendQueue(deps: SendDeps): Promise<{ stop: "rate_limited" 
       }
     });
 
+    if (sent.length === 0) continue; // every item of this batch waits for the download
     let results: UploadResult[];
     try {
       results = (await deps.client.uploads(wire)).results;
