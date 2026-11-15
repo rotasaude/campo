@@ -32,7 +32,8 @@ function signOutWarning(pending: number): string {
     : `Há ${pending} registros não enviados. Sair apaga tudo deste tablet, inclusive eles.`;
 }
 
-export function AboutScreen({ appVersion, onSignOut }: { appVersion: string; onSignOut(): void }) {
+// `onOpenDiagnostics`: given only in the e2e build.
+export function AboutScreen({ appVersion, onSignOut, onOpenDiagnostics }: { appVersion: string; onSignOut(): void; onOpenDiagnostics?(): void }) {
   const { db, secure } = useServices();
   const about = useLive(TABLES, readAbout);
   const [host, setHost] = useState<string | null>(null);
@@ -63,6 +64,7 @@ export function AboutScreen({ appVersion, onSignOut }: { appVersion: string; onS
         <View style={{ flex: 1 }}><Body>{MOBILE_DATA_LABEL}</Body></View>
       </View>
 
+      {onOpenDiagnostics && <Button label="Diagnóstico" variant="secondary" onPress={onOpenDiagnostics} />}
       {step === 0 && <Button label="Sair" variant="danger" onPress={() => setStep(1)} />}
       {step > 0 && (
         <View style={{ gap: 8 }}>
