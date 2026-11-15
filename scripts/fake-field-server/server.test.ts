@@ -59,6 +59,8 @@ function call(method: string, path: string, options: { token?: string | null; he
         const body = Buffer.concat(chunks);
         resolve({ status: res.statusCode ?? 0, headers: res.headers, body, json: () => JSON.parse(body.toString("utf8")) as Json });
       });
+      // A reply the server cut half-way never ends: say how much arrived.
+      res.on("close", () => { if (!res.complete) reject(new Error(`truncated:${Buffer.concat(chunks).length}`)); });
     });
     req.on("error", reject);
     if (payload !== undefined) req.write(payload);
@@ -363,6 +365,36 @@ describe("map", () => {
 
   test("If-None-Match of the same SHA answers 304", async () => {
     expect((await call("GET", "/field/v1/map", { headers: { "If-None-Match": etag } })).status).toBe(304);
+  });
+});
+
+describe("a map download cut half-way (the resume of Q34 on a real device)", () => {
+  const etag = `"${MAP_SHA}"`;
+
+  test("the scripted cut drops the connection once, a Range resumes it, and the state counts each answer", async () => {
+    await call("POST", "/__reset", { token: null });
+    expect((await script({ next_map: "cut:300000" })).status).toBe(204);
+
+    const cut = await call("GET", "/field/v1/map").then(() => "whole", (error: Error) => error.message);
+    expect(cut).toMatch(/^truncated:\d+$/);
+    const arrived = Number(cut.split(":")[1]);
+    expect(arrived).toBeGreaterThan(0);
+    expect(arrived).toBeLessThanOrEqual(300000);
+
+    const rest = await call("GET", "/field/v1/map", { headers: { Range: `bytes=${arrived}-`, "If-Range": etag } });
+    expect(rest.status).toBe(206);
+    expect(rest.body.equals(MAP.subarray(arrived))).toBe(true);
+
+    // One shot: the next whole download is complete.
+    expect((await call("GET", "/field/v1/map")).body.equals(MAP)).toBe(true);
+    expect((await call("GET", "/__state", { token: null })).json().map).toEqual({ whole: 1, partial: 1, cut: 1 });
+  });
+
+  test("the cut point has to fall inside the file", async () => {
+    for (const next_map of ["cut:0", "cut:abc", `cut:${MAP.length}`, "slow"]) {
+      const reply = await script({ next_map });
+      expect([next_map, reply.status, reply.json().error]).toEqual([next_map, 422, "invalid_script"]);
+    }
   });
 });
 

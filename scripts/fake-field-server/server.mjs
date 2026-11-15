@@ -9,6 +9,7 @@
 // Control, only here:
 //   POST /__script  { "next_upload": "stale_version" | "rejected:<code>", "current_patch": {…} }
 //                   { "next_status": 401, "error": "device_revoked" | "device_suspended" }
+//                   { "next_map": "cut:<bytes>" }   the next whole map download drops after that many bytes
 //   POST /__reset   GET /__state
 // Every 200 of the contract is validated against its schema before it leaves.
 // The emulator reaches the host's loopback at 10.0.2.2, so the default bind is 127.0.0.1.
@@ -96,7 +97,18 @@ function sendMap(req, res) {
   const ifRange = req.headers["if-range"];
   const single = range === undefined ? null : /^bytes=(\d*)-(\d*)$/.exec(range);
   // Another unit or several ranges, or an If-Range of another file: the whole file (Q34).
-  if (!single || (ifRange !== undefined && ifRange !== etag)) return send(res, 200, map, headers);
+  if (!single || (ifRange !== undefined && ifRange !== etag)) {
+    const cut = state.mapCut();
+    if (cut === null) {
+      state.countMap("whole");
+      return send(res, 200, map, headers);
+    }
+    // The scripted cut: the whole file is announced, the connection drops after `cut` bytes.
+    state.countMap("cut");
+    res.writeHead(200, { ...headers, "Content-Length": map.length });
+    res.write(map.subarray(0, cut), () => res.destroy());
+    return;
+  }
 
   const [, from, to] = single;
   const start = from === "" ? map.length - Number(to) : Number(from);
@@ -104,6 +116,7 @@ function sendMap(req, res) {
   if ((from === "" && to === "") || start < 0 || start >= map.length || end < start) {
     return send(res, 416, { error: "range_not_satisfiable" }, { "Content-Range": `bytes */${map.length}`, "Cache-Control": "no-store" });
   }
+  state.countMap("partial");
   send(res, 206, map.subarray(start, end + 1), { ...headers, "Content-Range": `bytes ${start}-${end}/${map.length}` });
 }
 

@@ -142,11 +142,13 @@ export function createState({ contractDir, mapFile }) {
   let versions;
   let script;
   let deadTokens;
+  let mapAnswers;
 
   function reset() {
     receipts = new Map();
     versions = new Map();
-    script = { nextUpload: null, currentPatch: null, nextStatus: null };
+    script = { nextUpload: null, currentPatch: null, nextStatus: null, nextMapCut: null };
+    mapAnswers = { whole: 0, partial: 0, cut: 0 };
     deadTokens = new Map();
     for (const item of fixtures.values()) {
       if (Number.isInteger(item.body?.version)) versions.set(item.id, item.body.version);
@@ -162,7 +164,7 @@ export function createState({ contractDir, mapFile }) {
 
   function setScript(body) {
     if (body === null || typeof body !== "object" || Array.isArray(body)) throw new ScriptError("script precisa ser um objeto");
-    const { next_upload: nextUpload = null, current_patch: currentPatch = null, next_status: nextStatus = null, error = null, ...rest } = body;
+    const { next_upload: nextUpload = null, current_patch: currentPatch = null, next_status: nextStatus = null, error = null, next_map: nextMap = null, ...rest } = body;
     if (Object.keys(rest).length) throw new ScriptError(`chave desconhecida: ${Object.keys(rest).join(", ")}`);
     if (nextUpload !== null && nextUpload !== "stale_version" && !/^rejected:[a-z_]+$/.test(nextUpload)) {
       throw new ScriptError('next_upload aceita "stale_version" ou "rejected:<code>"');
@@ -174,6 +176,9 @@ export function createState({ contractDir, mapFile }) {
       throw new ScriptError("next_status aceita 401 com error device_revoked ou device_suspended");
     }
     if (nextStatus === null && error !== null) throw new ScriptError("error só vale com next_status");
+    const cut = nextMap === null ? null : Number(/^cut:(\d+)$/.exec(nextMap)?.[1]);
+    if (cut !== null && !(cut >= 1 && cut < map.length)) throw new ScriptError('next_map aceita "cut:<bytes>", com o corte dentro do arquivo');
+    if (cut !== null) script.nextMapCut = cut;
     if (nextUpload !== null) Object.assign(script, { nextUpload, currentPatch });
     if (nextStatus !== null) script.nextStatus = error;
   }
@@ -295,13 +300,24 @@ export function createState({ contractDir, mapFile }) {
     return { status: 200, body: { results: body.items.map(processItem) } };
   }
 
+  // Where to cut the next whole download of the map, or null. One shot.
+  function mapCut() {
+    const cut = script.nextMapCut;
+    script.nextMapCut = null;
+    return cut;
+  }
+
+  function countMap(kind) {
+    mapAnswers[kind] += 1;
+  }
+
   function snapshot() {
     const accepted = {};
     for (const receipt of receipts.values()) accepted[receipt.type] = (accepted[receipt.type] ?? 0) + 1;
-    return { accepted, script: { next_upload: script.nextUpload, next_status: script.nextStatus }, dead_tokens: deadTokens.size };
+    return { accepted, script: { next_upload: script.nextUpload, next_status: script.nextStatus }, dead_tokens: deadTokens.size, map: { ...mapAnswers } };
   }
 
-  return { map, mapSha, reference, problems, reset, setScript, deviceError, session, changes, upload, snapshot };
+  return { map, mapSha, reference, problems, reset, setScript, deviceError, session, changes, upload, snapshot, mapCut, countMap };
 }
 
 export function newToken() {
