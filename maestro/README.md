@@ -36,8 +36,13 @@ node scripts/check-apk.mjs android/app/build/outputs/apk/release/app-release.apk
 node scripts/fake-field-server/server.mjs --port 8787 &
 adb install -r android/app/build/outputs/apk/release/app-release.apk
 QR=$(node scripts/fake-field-server/qr.mjs curitiba.localhost)
-MAESTRO_CLI_NO_ANALYTICS=1 maestro test -e QR_PAYLOAD="$QR" maestro/
+QR2=$(node scripts/fake-field-server/qr.mjs curitiba.localhost)
+for flow in maestro/*.yaml; do
+  MAESTRO_CLI_NO_ANALYTICS=1 maestro test -e QR_PAYLOAD="$QR" -e QR_PAYLOAD_2="$QR2" "$flow" || break
+done
 ```
+
+Um fluxo por vez: cada um começa de uma instalação limpa e zera o servidor falso. `QR_PAYLOAD_2` é um segundo QR do mesmo host (token novo), usado só pelo `revocation-suspended`. O emulador precisa estar com rede (`adb shell cmd connectivity airplane-mode disable`).
 
 As variáveis `EXPO_PUBLIC_E2E` e `EXPO_PUBLIC_DEV_ORIGIN` entram no JS quando o Gradle empacota: precisam estar no ambiente do `./gradlew` também (o bloco acima as passa só ao `prebuild`; exporte-as antes ou repita-as na linha do Gradle).
 
@@ -57,24 +62,33 @@ Os fluxos mudam o comportamento por `POST /__script` (uma vez só cada):
 | `{ "next_upload": "rejected:<código>" }` | o próximo item volta `rejected` com o código |
 | `{ "next_status": 401, "error": "device_revoked" }` | a próxima requisição recebe 401 e aquele token segue recusado; um QR novo funciona |
 | `{ "next_status": 401, "error": "device_suspended" }` | idem, com a fila preservada no app (Q17) |
+| `{ "next_map": "cut:<bytes>" }` | o próximo download inteiro do mapa anuncia o arquivo todo e derruba a conexão depois desses bytes; a continuação com `Range` responde 206 |
 
-`POST /__reset` zera o estado; `GET /__state` conta os itens aceitos por tipo.
+`POST /__reset` zera o estado; `GET /__state` conta os itens aceitos por tipo e as respostas do mapa (`whole`, `partial`, `cut`). Os fluxos falam com essas rotas por `maestro/scripts/*.js`, do lado da máquina que roda o Maestro (`http://127.0.0.1:8787`, ou a variável `SERVER`).
+
+Os exemplos do contrato escrevem o tipo de logradouro pelo nome (`"RUA"`); o api guarda o código do dicionário (`"081"`) e o app recusa salvar outra coisa. O servidor falso serve o código.
 
 ## Fluxos
 
-Cada fluxo começa com `appId: br.rotasaude.campo`, `clearState`, o payload em "Colar código" (`${QR_PAYLOAD}`) e o PIN `123456` duas vezes. Entram quando as telas das Tasks 16–22 existirem:
+Cada fluxo começa pelo `common/pair.yaml`: instalação limpa, o payload em "Colar código" (`${QR_PAYLOAD}`), o PIN duas vezes e a primeira carga.
 
 | Arquivo | O que prova |
 |---|---|
 | `pairing.yaml` | cadastra o aparelho, cria o PIN, chega ao Início |
-| `initial-load.yaml` | carga com progresso; "A visitar" maior que zero |
+| `initial-load.yaml` | a carga traz o território: "A visitar" maior que zero |
 | `offline-visit.yaml` | modo avião, visita, "Pendentes de envio: 1"; volta a rede, sincroniza, zero |
-| `household-family.yaml` | domicílio novo com ponto no mapa, morador novo, família nova; tudo aceito |
-| `conflict-merge.yaml` | `stale_version` sem campo cruzado: volta sozinho e é aceito |
-| `conflict-choice.yaml` | `stale_version` com campo cruzado: "Conflitos: 1", escolhe "No tablet", aceito |
-| `revocation-manual.yaml` | `device_revoked`: volta ao cadastro, fila vazia |
-| `revocation-suspended.yaml` | `device_suspended`: "Acesso suspenso"; novo QR do mesmo usuário envia a fila |
-| `map.yaml` | mapa offline com "© OpenStreetMap" e o ponto do domicílio |
+| `household-family.yaml` | domicílio novo com ponto marcado no mapa, morador novo, família nova; os três aceitos |
+| `conflict-merge.yaml` | `stale_version` com outro campo alterado no posto: a mescla resolve sozinha e é aceita |
+| `conflict-choice.yaml` | `stale_version` com o mesmo campo alterado: "Conflitos: 1", escolhe "No tablet", aceito |
+| `revocation-manual.yaml` | `device_revoked`: volta ao cadastro, tudo apagado |
+| `revocation-suspended.yaml` | `device_suspended`: "Acesso suspenso" com o registro guardado; novo QR do mesmo usuário envia a fila |
+| `map.yaml` | mapa offline aberto do arquivo baixado, com "© OpenStreetMap" |
+| `map-resume.yaml` | download do mapa cortado no meio: a sincronização seguinte continua de onde parou (um 206) |
 | `encryption.yaml` | Diagnóstico mostra a versão da cifra e "sem chave: recusado" |
+
+Duas coisas que valem para qualquer fluxo novo, aprendidas no tablet:
+
+- A barra de tarefas do Android cobre a faixa de baixo da tela, e o Maestro dá por "visível" o que está atrás dela. Antes de tocar no último botão de uma tela, role até o fim (`- scroll`); antes de tocar num campo perto do rodapé, traga-o para o meio (`scrollUntilVisible` com `centerElement: true`).
+- O texto digitado numa busca também casa com o seletor: a opção é a segunda ocorrência (`index: 1`).
 
 Com `FLAG_SECURE` ligada as capturas de tela saem pretas; o Maestro lê a árvore de acessibilidade e não depende delas.
