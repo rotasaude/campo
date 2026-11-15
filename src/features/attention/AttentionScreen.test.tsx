@@ -15,7 +15,7 @@ import { saveHousehold } from "../households/save";
 import { phraseFor } from "../messages/errorPhrases";
 import { saveRegistration, type RegistrationFields } from "../registrations/save";
 import { AREA, HH, loadedTablet } from "../testing";
-import { AttentionScreen, NOT_WAITING_FOR_YOU, NO_FORM_FOR_THIS } from "./AttentionScreen";
+import { AttentionScreen, EXISTING_NOT_HERE, NOT_WAITING_FOR_YOU, NO_FORM_FOR_THIS } from "./AttentionScreen";
 
 const NOW = Date.parse("2026-11-14T15:00:00Z");
 const TEAM = "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b";
@@ -91,7 +91,7 @@ test("'É outra pessoa' sends the same record again, saying the candidates were 
   expect([after.state, after.body.duplicates_reviewed, after.body.new_patient]).toEqual(["pending", true, BENEDITA]);
 });
 
-test("the person already has a registration: the item is dropped and the existing one is opened, when the tablet has it", async () => {
+test("the person already has a registration on this tablet: it is opened, and the duplicate leaves the line", async () => {
   const db = await loadedTablet();
   await saveRegistration(db, { householdKey: HH, familyId: null, person: { kind: "new", patient: BENEDITA }, fields }, deps);
   const [item] = await outboxRepo.all(db);
@@ -99,6 +99,22 @@ test("the person already has a registration: the item is dropped and the existin
   const nav = await mount(db, item.seq);
   await fireEvent.press(await screen.findByRole("button", { name: "Abrir o cadastro existente" }));
   await waitFor(() => expect(nav.onOpenRegistration).toHaveBeenCalledWith(REG));
+  expect(await outboxRepo.all(db)).toEqual([]);
+});
+
+test("the existing registration is not on this tablet: the screen says so and nothing is thrown away by itself", async () => {
+  const db = await loadedTablet();
+  await saveRegistration(db, { householdKey: HH, familyId: null, person: { kind: "new", patient: BENEDITA }, fields }, deps);
+  const [item] = await outboxRepo.all(db);
+  await applyResults(db, [item], [rejected(item, "already_registered")], noStale);
+  const nav = await mount(db, item.seq);
+  expect(await screen.findByText(EXISTING_NOT_HERE)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Abrir o cadastro existente" })).toBeNull();
+  expect(await outboxRepo.all(db)).toHaveLength(1);
+  // The way out is the ordinary discard, which says what goes with it.
+  await press("Descartar");
+  await press("Confirmar descarte");
+  await waitFor(() => expect(nav.onDone).toHaveBeenCalled());
   expect(await outboxRepo.all(db)).toEqual([]);
 });
 

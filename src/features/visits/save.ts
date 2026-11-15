@@ -125,6 +125,12 @@ export async function withdrawVisit(db: Db, clientUuid: string, reason: string, 
     dbEvents.emit("local_visits");
     return "erased";
   }
+  // Not in the line and never accepted: the server does not have it, so there is nothing to withdraw — only the line of the sheet goes.
+  if (visit.state !== "accepted") {
+    await db.run("DELETE FROM local_visits WHERE client_uuid = ?", [clientUuid]);
+    dbEvents.emit("local_visits");
+    return "erased";
+  }
   const queued = (await outboxRepo.all(db)).some((other) => other.type === "home_visit_withdrawal" && other.body.visit_client_uuid === clientUuid);
   if (queued) return "queued";
   const refusal = textProblem(reason, { ...WITHDRAW_REASON, path: "reason" });

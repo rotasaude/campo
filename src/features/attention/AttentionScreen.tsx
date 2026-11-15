@@ -10,20 +10,21 @@ import { useServices } from "../../app/services";
 import type { Candidate, ItemType } from "../../contract";
 import { useLive } from "../../db/events";
 import { outboxRepo, type OutboxItem } from "../../db/repos/outboxRepo";
+import { territoryRepo } from "../../db/repos/territoryRepo";
 import type { Db } from "../../db/types";
 import { fmtDay } from "../../rules/homeVisit";
-import { removeUnsent, resend } from "../../sync/outbox";
+import { discardImpact, removeUnsent, resend } from "../../sync/outbox";
 import { SIZES, useTheme } from "../../theme/theme";
 import { Body, Button, Muted, Notice, Screen } from "../../ui/components";
 import { pathLabel } from "../conflicts/fieldText";
 import { phraseFor } from "../messages/errorPhrases";
-import { DISCARD_WARNING, ITEM_TYPE_LABEL } from "../outbox/OutboxScreen";
+import { DISCARD_WARNING, ITEM_TYPE_LABEL, dependentsWarning } from "../outbox/OutboxScreen";
 import { confirmOtherPerson, confirmSamePerson, discardForExisting } from "../registrations/duplicates";
 import { confirmOtherParticipant } from "./participants";
 
 export const NOT_WAITING_FOR_YOU = "Este registro não está aguardando você.";
 export const NO_FORM_FOR_THIS = "Este registro não pode ser corrigido aqui. Descarte e registre de novo.";
-export const EXISTING_NOT_HERE = "O cadastro existente não está neste tablet. O registro foi descartado.";
+export const EXISTING_NOT_HERE = "O cadastro que esta pessoa já tem não está neste tablet. Descarte este registro, ou peça ao enfermeiro da equipe para conferir.";
 
 // What "Corrigir" opens: the form of the record the item edits.
 export interface FixTarget { type: ItemType; targetId: string; familyId: string | null }
@@ -36,7 +37,14 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
 }) {
   const { colors } = useTheme();
   const { db } = useServices();
-  const read = useCallback((from: Db) => outboxRepo.bySeq(from, seq).then((item): { item: OutboxItem | null } => ({ item })), [seq]);
+  const read = useCallback(async (from: Db): Promise<{ item: OutboxItem | null; others: number; existingKey: string | null }> => {
+    const item = await outboxRepo.bySeq(from, seq);
+    const existingId = item?.error === "already_registered" ? ((item.candidates?.[0] as { registration_id?: string } | undefined)?.registration_id ?? null) : null;
+    return {
+      item, others: item ? await discardImpact(from, item.client_uuid) : 0,
+      existingKey: existingId === null ? null : await territoryRepo.registrationKey(from, existingId),
+    };
+  }, [seq]);
   const data = useLive(TABLES, read);
   const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -56,8 +64,7 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
 
   const openExisting = async () => {
     const key = await discardForExisting(db, seq, existingId);
-    if (key === null) setNotice(EXISTING_NOT_HERE);
-    else onOpenRegistration(key);
+    if (key !== null) onOpenRegistration(key);
   };
 
   return (
@@ -77,7 +84,10 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
         </View>
       ))}
       {suspected && <Button label="É outra pessoa" variant="secondary" onPress={() => run(() => confirmOtherPerson(db, seq))} />}
-      {registered && <Button label="Abrir o cadastro existente" onPress={() => { void openExisting().catch(() => setNotice("Não foi possível concluir. Volte e tente de novo.")); }} />}
+      {registered && data.existingKey !== null && (
+        <Button label="Abrir o cadastro existente" onPress={() => { void openExisting().catch(() => setNotice("Não foi possível concluir. Volte e tente de novo.")); }} />
+      )}
+      {registered && data.existingKey === null && <Notice>{EXISTING_NOT_HERE}</Notice>}
       {item.error === "duplicate_participant" && item.confirmable === true && (
         <Button label="É outra pessoa" variant="secondary" onPress={() => run(() => confirmOtherParticipant(db, seq))} />
       )}
@@ -93,6 +103,7 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
       {confirming ? (
         <>
           <Notice tone="down">{DISCARD_WARNING}</Notice>
+          {dependentsWarning(data.others) !== null && <Notice tone="down">{dependentsWarning(data.others)}</Notice>}
           <Button label="Confirmar descarte" variant="danger" onPress={() => run(() => removeUnsent(db, item.client_uuid))} />
           <Button label="Cancelar" variant="secondary" onPress={() => setConfirming(false)} />
         </>

@@ -13,7 +13,6 @@ import { outboxRepo, type OutboxItem } from "../../db/repos/outboxRepo";
 import { territoryRepo } from "../../db/repos/territoryRepo";
 import type { Db } from "../../db/types";
 import { refreshBlocked } from "../../sync/dispatch";
-import { removeUnsent } from "../../sync/outbox";
 
 export const NOT_WAITING = "este registro não está aguardando resposta";
 
@@ -78,16 +77,31 @@ export async function confirmOtherPerson(db: Db, seq: number): Promise<void> {
   });
 }
 
-// already_registered: the person has a registration already. The item — and what cited it — is discarded, with the row
-// born here; the answer is the key of the existing registration, when the tablet has it, for the screen to open.
+// already_registered: the person typed already has a registration. When the tablet has that registration, the typed
+// person is given up for its patient exactly as in "É esta pessoa" — what cited her now names the patient, and nothing
+// is lost; only the duplicate registration and the row born here go. The answer is the key of the existing registration.
+// When the tablet does not have it (out of this device's scope, or no id came), NOTHING is discarded here: null, and
+// the person decides with the ordinary discard, which says what goes with it.
 export async function discardForExisting(db: Db, seq: number, existingId: string | null): Promise<string | null> {
-  const item = await outboxRepo.bySeq(db, seq);
-  if (item) {
-    await removeUnsent(db, item.client_uuid);
-    if (item.type === "individual_registration" && item.target_id !== null) {
-      await db.run("DELETE FROM registrations WHERE key = ? AND id IS NULL AND client_uuid IS NOT NULL", [item.target_id]);
-      dbEvents.emit("registrations");
+  const key = existingId === null ? null : await territoryRepo.registrationKey(db, existingId);
+  if (key === null) return null;
+  const done = await db.tx(async (tx) => {
+    const item = await outboxRepo.bySeq(tx, seq);
+    const existing = await tx.get<{ patient_id: string | null }>("SELECT patient_id FROM registrations WHERE key = ?", [key]);
+    if (!item || item.type !== "individual_registration" || !existing || existing.patient_id === null) return false;
+    for (const other of await outboxRepo.all(tx)) {
+      if (other.seq === seq || !other.depends_on.some((dep) => dep.client_uuid === item.client_uuid)) continue;
+      await outboxRepo.update(tx, other.seq, {
+        body: rewire(other.body, item.client_uuid, existing.patient_id) as Values,
+        depends_on: other.depends_on.filter((dep) => dep.client_uuid !== item.client_uuid),
+      });
     }
-  }
-  return existingId === null ? null : territoryRepo.registrationKey(db, existingId);
+    await outboxRepo.remove(tx, seq);
+    if (item.target_id !== null) await tx.run("DELETE FROM registrations WHERE key = ? AND id IS NULL AND client_uuid IS NOT NULL", [item.target_id]);
+    await refreshBlocked(tx);
+    return true;
+  });
+  if (!done) return null;
+  dbEvents.emit("registrations");
+  return key;
 }

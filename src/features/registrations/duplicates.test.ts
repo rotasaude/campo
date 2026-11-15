@@ -12,6 +12,7 @@ const NOW = Date.parse("2026-11-14T15:00:00Z");
 const deps = { newUuid, now: () => NOW };
 const EXISTING = "1f2a3b4c-5d6e-4f7a-9b8c-9d0e1f2a3b4c";
 const REG = "2a3b4c5d-6e7f-4a8b-8c9d-0e1f2a3b4c5d";
+const JOANA = "0e1f2a3b-4c5d-4e6f-8a7b-8c9d0e1f2a3b"; // the patient of that registration
 const BENEDITA = { full_name: "Benedita Aparecida Rocha", birth_date: "1948-05-02", sex: "female" as const, mother_name: "Maria José Rocha", no_cpf_reason: "2" };
 const fields: RegistrationFields = { is_responsible: true, refused: true, patient_demographics: { race_color: null, ethnicity: null }, identification: {}, sociodemographic: {}, health_conditions: {} };
 const wire = (items: { client_uuid: string; type: string; body: Record<string, unknown> }[], versions: Record<string, number> = {}) =>
@@ -78,17 +79,27 @@ test("the quick registration of a visit (a patient item): 'É esta pessoa' drops
   expectValid("upload-request", wire(items));
 });
 
-test("already registered: the item is discarded and the screen is told which registration to open, when the tablet has it", async () => {
+test("already registered, and the tablet has that registration: what cited the typed person now names the patient — nothing is lost", async () => {
   const t = await suspected();
   await outboxRepo.update(t.db, t.seq, { state: "needs_attention", error: "already_registered", path: null, candidates: null });
   expect(await discardForExisting(t.db, t.seq, REG)).toBe(REG);
-  // The person's item and everything that cited it are gone, and so is the row born here.
-  expect(await outboxRepo.all(t.db)).toEqual([]);
+  const items = await outboxRepo.all(t.db);
+  // The duplicate registration is gone, with the row born here; the family and the visit stay, naming the patient the server knows.
+  expect(items.map((i) => i.type).sort()).toEqual(["family", "home_visit"]);
+  expect(items.find((i) => i.type === "home_visit")!.body).toMatchObject({ patient_id: JOANA });
+  expect(items.find((i) => i.type === "family")!.body.responsible).toEqual({ patient_id: JOANA });
+  expect(items.every((i) => i.depends_on.length === 0)).toBe(true);
   expect(await readRegistration(t.db, t.person.key)).toBeNull();
-  // An id the tablet does not have: discarded all the same, nothing to open.
-  const again = await suspected();
-  expect(await discardForExisting(again.db, again.seq, "00000000-0000-4000-8000-00000000dead")).toBeNull();
-  expect(await discardForExisting(again.db, again.seq, null)).toBeNull();
+});
+
+test("already registered, but that registration is not on this tablet: nothing is discarded here — the person decides", async () => {
+  const t = await suspected();
+  await outboxRepo.update(t.db, t.seq, { state: "needs_attention", error: "already_registered", path: null, candidates: null });
+  const before = await outboxRepo.all(t.db);
+  expect(await discardForExisting(t.db, t.seq, "00000000-0000-4000-8000-00000000dead")).toBeNull();
+  expect(await discardForExisting(t.db, t.seq, null)).toBeNull();
+  expect((await outboxRepo.all(t.db)).map((i) => i.seq)).toEqual(before.map((i) => i.seq));
+  expect(await readRegistration(t.db, t.person.key)).not.toBeNull();
 });
 
 test("only an item that is waiting for the person can be answered", async () => {

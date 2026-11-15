@@ -22,8 +22,8 @@ function statusOf(visit: TodayVisit): string {
   if (visit.withdrawalQueued) return "Retirada aguardando envio";
   if (visit.sending === "needs_attention" || visit.sending === "conflict") return "Precisa de atenção";
   if (visit.sending === "blocked") return "Aguardando outro registro";
-  if (visit.sending !== null) return "Aguardando envio";
-  return "Enviada";
+  // "Sent" is what the server accepted — never the mere absence of the item in the line.
+  return visit.state === "accepted" ? "Enviada" : "Aguardando envio";
 }
 
 const TABLES = [...TODAY_TABLES, "households", "reference"];
@@ -74,7 +74,7 @@ export function TodayScreen({ onNewVisit }: { onNewVisit(): void }) {
           {visit.canWithdraw && open !== visit.clientUuid && (
             <Button label="Retirar" variant="secondary" onPress={() => { setOpen(visit.clientUuid); setReason(""); setError(null); }} />
           )}
-          {open === visit.clientUuid && (visit.sending !== null ? (
+          {open === visit.clientUuid && (visit.state !== "accepted" ? (
             <>
               <Notice tone="warn">{NOT_SENT_WILL_BE_ERASED}</Notice>
               <Button label="Apagar visita" variant="danger" onPress={() => { void withdraw(visit); }} />

@@ -79,3 +79,17 @@ test("withdrawing a visit the server has asks for the reason; a short one is ref
   expect(visit(uuid).queryByRole("button", { name: "Retirar" })).toBeNull();
   expect((await outboxRepo.all(db)).map((i) => i.type)).toEqual(["home_visit_withdrawal"]);
 });
+
+// Review C2: "sent" is what the server accepted — never the mere absence of the item in the line.
+test("a visit whose item is gone from the line without having been accepted is not called sent, and taking it back only erases it", async () => {
+  const db = await loadedTablet();
+  const uuid = await saveVisit(db, draft(), ctx);
+  await db.run("DELETE FROM outbox WHERE client_uuid = ?", [uuid]);
+  await mount(db);
+  expect(await visit(uuid).findByText("Aguardando envio")).toBeTruthy();
+  expect(visit(uuid).queryByText("Enviada")).toBeNull();
+  await fireEvent.press(visit(uuid).getByRole("button", { name: "Retirar" }));
+  await fireEvent.press(visit(uuid).getByRole("button", { name: "Apagar visita" }));
+  expect(await screen.findByText(NO_VISITS_TODAY)).toBeTruthy();
+  expect(await outboxRepo.all(db)).toEqual([]); // no withdrawal of a visit the server never had
+});

@@ -6,7 +6,7 @@ import type { Db } from "../../db/types";
 import { phraseFor } from "../messages/errorPhrases";
 import { enqueue } from "../../sync/outbox";
 import { newUuid } from "../../sync/testing";
-import { DISCARD_WARNING, OutboxScreen } from "./OutboxScreen";
+import { DISCARD_WARNING, dependentsWarning, OutboxScreen } from "./OutboxScreen";
 
 async function seeded() {
   const db = await createTestDb();
@@ -71,6 +71,10 @@ test("discard asks for confirmation and removes dependents", async () => {
   await fireEvent.press(patient.getByRole("button", { name: "Descartar" }));
   expect(DISCARD_WARNING).toBe("Este registro nunca chegou ao Rota Saúde e será apagado");
   expect(patient.getByText(DISCARD_WARNING)).toBeTruthy();
+  // The visit that cites this person goes too: the person is told before confirming (review C2).
+  expect(await patient.findByText("Outro registro que depende dele também será apagado.")).toBeTruthy();
+  expect(dependentsWarning(3)).toBe("Outros 3 registros que dependem dele também serão apagados.");
+  expect(dependentsWarning(0)).toBeNull();
   expect(await outboxRepo.count(t.db)).toBe(4); // nothing happens before the confirmation
 
   await fireEvent.press(patient.getByRole("button", { name: "Cancelar" }));

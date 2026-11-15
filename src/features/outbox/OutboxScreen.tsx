@@ -9,12 +9,17 @@ import type { ItemType } from "../../contract";
 import { useLive } from "../../db/events";
 import { outboxRepo, type OutboxItem, type OutboxState } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
-import { removeUnsent, resend } from "../../sync/outbox";
+import { discardImpact, removeUnsent, resend } from "../../sync/outbox";
 import { SIZES, useTheme } from "../../theme/theme";
 import { Body, Button, Muted, Notice, Screen } from "../../ui/components";
 import { phraseFor } from "../messages/errorPhrases";
 
 export const DISCARD_WARNING = "Este registro nunca chegou ao Rota Saúde e será apagado";
+// Said with the discard warning when other records go with the one being discarded (what cites it, what waits for it).
+export function dependentsWarning(others: number): string | null {
+  if (others <= 0) return null;
+  return others === 1 ? "Outro registro que depende dele também será apagado." : `Outros ${others} registros que dependem dele também serão apagados.`;
+}
 export const EMPTY_OUTBOX = "Nada para enviar: tudo o que você registrou já está no Rota Saúde.";
 
 export const ITEM_TYPE_LABEL: Record<ItemType, string> = {
@@ -32,25 +37,28 @@ const readAll = (db: Db) => outboxRepo.all(db);
 export function OutboxScreen({ onFix, onResolve }: { onFix(seq: number): void; onResolve(seq: number): void }) {
   const { db } = useServices();
   const items = useLive(TABLES, readAll);
+  // The item whose discard is being confirmed, and how many other records would go with it.
   const [confirming, setConfirming] = useState<number | null>(null);
+  const [others, setOthers] = useState(0);
 
   if (!items) return <Screen title="Envio"><Muted>Carregando…</Muted></Screen>;
   return (
     <Screen title="Envio">
       {items.length === 0 && <Body>{EMPTY_OUTBOX}</Body>}
       {items.map((item) => (
-        <Item key={item.seq} item={item} confirming={confirming === item.seq}
+        <Item key={item.seq} item={item} confirming={confirming === item.seq} others={confirming === item.seq ? others : 0}
           onFix={() => onFix(item.seq)} onResolve={() => onResolve(item.seq)}
           onResend={() => void resend(db, item.seq)}
-          onAskDiscard={() => setConfirming(item.seq)} onCancelDiscard={() => setConfirming(null)}
+          onAskDiscard={() => { void discardImpact(db, item.client_uuid).then((count) => { setOthers(count); setConfirming(item.seq); }); }}
+          onCancelDiscard={() => setConfirming(null)}
           onDiscard={() => { setConfirming(null); void removeUnsent(db, item.client_uuid); }} />
       ))}
     </Screen>
   );
 }
 
-function Item({ item, confirming, onFix, onResolve, onResend, onAskDiscard, onCancelDiscard, onDiscard }: {
-  item: OutboxItem; confirming: boolean; onFix(): void; onResolve(): void; onResend(): void; onAskDiscard(): void; onCancelDiscard(): void; onDiscard(): void;
+function Item({ item, confirming, others, onFix, onResolve, onResend, onAskDiscard, onCancelDiscard, onDiscard }: {
+  item: OutboxItem; confirming: boolean; others: number; onFix(): void; onResolve(): void; onResend(): void; onAskDiscard(): void; onCancelDiscard(): void; onDiscard(): void;
 }) {
   const { colors } = useTheme();
   const attention = item.state === "needs_attention";
@@ -64,6 +72,7 @@ function Item({ item, confirming, onFix, onResolve, onResend, onAskDiscard, onCa
       {confirming ? (
         <View style={{ gap: 8 }}>
           <Notice tone="down">{DISCARD_WARNING}</Notice>
+          {dependentsWarning(others) !== null && <Notice tone="down">{dependentsWarning(others)}</Notice>}
           <Button label="Confirmar descarte" variant="danger" onPress={onDiscard} />
           <Button label="Cancelar" variant="secondary" onPress={onCancelDiscard} />
         </View>
