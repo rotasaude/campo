@@ -125,6 +125,15 @@ test("who is not the community health agent reads the household and can still re
   expect(within(screen.getByTestId(`resident-${JOANA}`)).getByRole("button", { name: "Registrar visita" })).toBeTruthy();
 });
 
+test("the visits made there today, by this tablet, are on the household's screen: the hours only", async () => {
+  const db = await loadedTablet();
+  await db.run(
+    "INSERT INTO local_visits (client_uuid, city_day, occurred_at, summary, state) VALUES ('11111111-1111-4111-8111-111111111111', '2026-11-14', '2026-11-14T09:00:00-03:00', ?, 'accepted'), ('22222222-2222-4222-8222-222222222222', '2026-11-14', '2026-11-14T11:15:00-03:00', ?, 'pending'), ('33333333-3333-4333-8333-333333333333', '2026-11-13', '2026-11-13T10:00:00-03:00', ?, 'accepted')",
+    [JSON.stringify({ household: HH, subject: "none", outcome: 3 }), JSON.stringify({ household: HH, subject: "none", outcome: 1 }), JSON.stringify({ household: HH, subject: "none", outcome: 1 })]);
+  await detail(db);
+  expect(await screen.findByText("Visitas de hoje: 09:00, 11:15")).toBeTruthy();
+});
+
 test("an unknown household says so", async () => {
   const db = await loadedTablet();
   await detail(db, "00000000-0000-4000-8000-00000000dead");

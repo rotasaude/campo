@@ -3,6 +3,7 @@
 // still in the line is shown as it was typed, and marked.
 import { useCallback } from "react";
 import { View } from "react-native";
+import { useServices } from "../../app/services";
 import type { RegistrationBody } from "../../contract";
 import { useLive } from "../../db/events";
 import type { Db } from "../../db/types";
@@ -12,6 +13,7 @@ import { loadReference } from "../../sync/reference";
 import { SIZES, useTheme } from "../../theme/theme";
 import { Body, Button, Muted, Notice, Screen, Title } from "../../ui/components";
 import { canEditRegistry, loadSession } from "../session";
+import { todayVisits } from "../visits/save";
 import type { VisitStart } from "../who/WhoScreen";
 import { READ_ONLY } from "./HouseholdForm";
 import { WAITING } from "./HouseholdList";
@@ -26,12 +28,14 @@ interface Resident { patientId: string; registrationKey: string; name: string; f
 interface Loaded {
   view: HouseholdView; line: string; type: string; residents: Resident[];
   canEdit: boolean; visitsOn: boolean; takesFamilies: boolean;
+  // The hours of the visits made there today on this tablet (withdrawn ones left out).
+  visitsToday: string[];
 }
 
-const TABLES = [...HOUSEHOLD_TABLES, "registrations", "reference", "session"];
+const TABLES = [...HOUSEHOLD_TABLES, "registrations", "reference", "session", "local_visits", "meta"];
 const people = (n: number) => (n === 1 ? "1 pessoa" : `${n} pessoas`);
 
-async function read(db: Db, key: string): Promise<Loaded | "missing"> {
+async function read(db: Db, key: string, now: number): Promise<Loaded | "missing"> {
   const view = await readHousehold(db, key);
   if (!view) return "missing";
   const reference = await loadReference(db).catch(() => null);
@@ -46,6 +50,7 @@ async function read(db: Db, key: string): Promise<Loaded | "missing"> {
     view, line: addressLine(view.body, dict), type: dict ? dictLabel(dict, "tipo_de_imovel", view.body.property_type) : view.body.property_type, residents,
     canEdit: canEditRegistry(session), visitsOn: session?.features.home_visits === true,
     takesFamilies: dict !== null && createRegistryRules(dict).allowsFamilies(view.body.property_type) && !view.body.refused,
+    visitsToday: (await todayVisits(db, now)).filter((visit) => visit.householdKey === key && visit.state !== "withdrawn").map((visit) => visit.time),
   };
 }
 
@@ -55,7 +60,8 @@ export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamil
   onNewResident(familyId: string | null): void; onStartVisit(start: VisitStart): void; onOpenResident(registrationKey: string): void;
 }) {
   const { colors } = useTheme();
-  const load = useCallback((db: Db) => read(db, householdKey), [householdKey]);
+  const { now } = useServices();
+  const load = useCallback((db: Db) => read(db, householdKey, now()), [householdKey, now]);
   const data = useLive(TABLES, load);
 
   if (!data) return <Screen title="Domicílio"><Muted>Carregando…</Muted></Screen>;
@@ -74,6 +80,7 @@ export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamil
       {!data.canEdit && <Notice>{READ_ONLY}</Notice>}
       <Body>{pointText(body.location ?? null)}</Body>
       {body.contact_phone !== null && body.contact_phone !== "" && <Body>{`Telefone: ${body.contact_phone}`}</Body>}
+      {data.visitsToday.length > 0 && <Body>{`Visitas de hoje: ${data.visitsToday.join(", ")}`}</Body>}
       {data.canEdit && !view.conflict && <Button label="Editar domicílio" variant="secondary" onPress={onEdit} />}
 
       <Title>Famílias</Title>

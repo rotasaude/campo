@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { useServices } from "../../app/services";
 import type { RegistrationBody, SessionResponse } from "../../contract";
+import { territoryRepo } from "../../db/repos/territoryRepo";
 import type { Db } from "../../db/types";
 import { captureGps } from "../../location/capture";
 import {
@@ -96,7 +97,8 @@ export function VisitForm({ start, onSaved }: { start?: VisitStartKeys; onSaved(
       const first: VisitDraft = { ...emptyVisitDraft(), day: nowIso.slice(0, 10), time: nowIso.slice(11, 16) };
       let detail: Awaited<ReturnType<typeof householdForRules>> | null = null;
       if (start?.householdKey !== undefined) {
-        const view = await readHousehold(db, start.householdKey);
+        // The household may come named by its server id (the list of who to visit) or by its local key.
+        const view = await readHousehold(db, (await territoryRepo.householdKey(db, start.householdKey)) ?? start.householdKey);
         if (view !== null) {
           detail = await householdForRules(db, view, reference);
           first.place = { kind: "household", householdId: view.key, propertyType: view.body.property_type, microAreaId: view.body.micro_area.id };
