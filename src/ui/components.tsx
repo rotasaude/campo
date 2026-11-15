@@ -1,13 +1,24 @@
 // The few building blocks every screen uses. Colours only from the theme;
 // every touch target at least 48 dp; text at least 18 sp.
-import type { ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
 import { Pressable, ScrollView, Text, TextInput, View, type TextInputProps } from "react-native";
+import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import { SIZES, useTheme } from "../theme/theme";
 
+const NO_INSETS = { top: 0, bottom: 0, left: 0, right: 0 };
+
+// The app draws edge to edge: the content keeps clear of the status bar, the navigation bar (on a tablet, the
+// taskbar) and the cutouts, or the last button of a screen sits under a bar and the touch goes to the system.
+// The background still fills the whole window. The insets come from the provider expo-router mounts at the root.
 export function Screen({ children, title }: { children: ReactNode; title?: string }) {
   const { colors } = useTheme();
+  const insets = useContext(SafeAreaInsetsContext) ?? NO_INSETS;
+  const padding = {
+    paddingTop: SIZES.pad + insets.top, paddingBottom: SIZES.pad + insets.bottom,
+    paddingLeft: SIZES.pad + insets.left, paddingRight: SIZES.pad + insets.right,
+  };
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: SIZES.pad, gap: SIZES.gap }} keyboardShouldPersistTaps="handled">
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ ...padding, gap: SIZES.gap }} keyboardShouldPersistTaps="handled">
       {title !== undefined && <Title>{title}</Title>}
       {children}
     </ScrollView>
