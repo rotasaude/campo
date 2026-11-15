@@ -147,7 +147,9 @@ export function createState({ contractDir, mapFile }) {
   // Opaque cursors of the fake: after the first page, and after the last one.
   const CURSOR_FIRST = Buffer.from(JSON.stringify({ v: 1, fake: "after-first-page" })).toString("base64url");
   const CURSOR_END = Buffer.from(JSON.stringify({ v: 1, fake: "end" })).toString("base64url");
-  const fixtures = new Map([...firstPage.items, ...lastPage.items].map((item) => [item.id, item]));
+  // The rows of the examples, by id; a scripted conflict rewrites one, so reset() builds them again.
+  const pristineRows = () => new Map([...firstPage.items, ...lastPage.items].map((item) => [item.id, item]));
+  let fixtures = pristineRows();
 
   let receipts;
   let versions;
@@ -161,6 +163,7 @@ export function createState({ contractDir, mapFile }) {
     script = { nextUpload: null, currentPatch: null, nextStatus: null, nextMapCut: null };
     mapAnswers = { whole: 0, partial: 0, cut: 0 };
     deadTokens = new Map();
+    fixtures = pristineRows();
     for (const item of fixtures.values()) {
       if (Number.isInteger(item.body?.version)) versions.set(item.id, item.body.version);
     }

@@ -379,6 +379,28 @@ describe("map", () => {
   });
 });
 
+describe("reset", () => {
+  // A scripted conflict rewrites the row the server holds; the next flow must not inherit it.
+  test("forgets what a scripted stale_version changed in a row", async () => {
+    const [household] = example("upload-household-update.json").items as Json[];
+    const street = example("changes-first-page.json").items.find((item: Json) => item.id === household.body.household_id).body.address.street;
+    const stale = async (clientUuid: string, patch: Json) => {
+      await script({ next_upload: "stale_version", current_patch: patch });
+      return (await upload([{ ...household, client_uuid: clientUuid }])).json().results[0];
+    };
+
+    await call("POST", "/__reset", { token: null });
+    const first = await stale("7f3c1a52-9b1e-4c6d-8a2f-0d4e5f6a7b01", { address: { street: "das Palmeiras" } });
+    expect([first.status, first.current.address.street]).toEqual(["stale_version", "das Palmeiras"]);
+
+    await call("POST", "/__reset", { token: null });
+    const second = await stale("7f3c1a52-9b1e-4c6d-8a2f-0d4e5f6a7b02", { contact_phone: "41933334444" });
+    expect([second.status, second.current.contact_phone]).toEqual(["stale_version", "41933334444"]);
+    expect(second.current.address.street).toBe(street);
+    expect(second.current_version).toBe(first.current_version);
+  });
+});
+
 describe("a map download cut half-way (the resume of Q34 on a real device)", () => {
   const etag = `"${MAP_SHA}"`;
 
