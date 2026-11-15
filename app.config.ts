@@ -88,7 +88,8 @@ export function buildConfig(env: BuildEnv): ExpoConfig {
       ],
     },
     plugins: [
-      "expo-router",
+      // Expo takes src/app as the routes when it exists; ours is the app shell, so the root is said out loud.
+      ["expo-router", { root: "app" }],
       ["expo-sqlite", { useSQLCipher: true }],
       ["expo-secure-store", { configureAndroidBackup: false }],
       "expo-asset",

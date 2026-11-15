@@ -108,3 +108,8 @@ test("development build reaches Metro in cleartext and nothing else", () => {
     allowScreenCapture: false,
   });
 });
+
+// Expo prefers src/app when it exists, and src/app is the app's shell (with its tests), not the routes.
+test("the routes come from app/, never from src/app", () => {
+  for (const env of [RELEASE, E2E, { APP_VARIANT: "development" }]) expect(pluginOptions(env, "expo-router")).toEqual({ root: "app" });
+});
