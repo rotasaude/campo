@@ -168,6 +168,17 @@ describe("session, reference and changes", () => {
     expect(activity.rules.participant_measurements).toEqual({ weight_kg: { min: 0.5, max: 500, decimals: 3 }, height_cm: { min: 20, max: 250, decimals: 1 } });
   });
 
+  // The api stores the street type as the dictionary's code ("081"); the contract's examples carry its label ("RUA"),
+  // and a household served that way cannot be saved again on the tablet.
+  test("households come with the street type as a code of the reference, the way the api stores it", async () => {
+    const codes = (await call("GET", "/field/v1/reference")).json().string_domains.tipo_logradouro.map((row: Json) => row.code);
+    const first = (await call("GET", "/field/v1/changes?limit=200")).json();
+    const households = first.items.filter((item: Json) => item.type === "household");
+    expect(households.length).toBeGreaterThan(0);
+    for (const household of households) expect(codes).toContain(household.body.address.street_type);
+    expectValid("changes-response", first);
+  });
+
   test("changes serves the first page, then the last one with who-to-visit, then nothing new", async () => {
     const first = (await call("GET", "/field/v1/changes?limit=200")).json();
     expectValid("changes-response", first);

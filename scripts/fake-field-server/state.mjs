@@ -131,8 +131,19 @@ export function createState({ contractDir, mapFile }) {
   const reference = fullReference(read("examples/reference.json"), read("domains-v1.json"), JSON.parse(readFileSync(join(FIXTURES, "registration-dictionaries.json"), "utf8")));
   if (!validators["reference-response"](reference)) throw new Error(`referência do servidor falso fora do esquema: ${ajv.errorsText(validators["reference-response"].errors)}`);
   const sessionExample = read("examples/session-acs.json");
-  const firstPage = read("examples/changes-first-page.json");
-  const lastPage = read("examples/changes-last-page.json");
+  // The contract's examples write the street type by its label ("RUA"); the api stores the code of the
+  // dictionary ("081"), and the tablet refuses to save a household with anything else.
+  const streetTypes = new Map(reference.string_domains.tipo_logradouro.map((row) => [row.label, row.code]));
+  const asServed = (page) => ({
+    ...page,
+    items: page.items.map((item) => {
+      const type = item.type === "household" ? item.body?.address?.street_type : undefined;
+      if (!streetTypes.has(type)) return item;
+      return { ...item, body: { ...item.body, address: { ...item.body.address, street_type: streetTypes.get(type) } } };
+    }),
+  });
+  const firstPage = asServed(read("examples/changes-first-page.json"));
+  const lastPage = asServed(read("examples/changes-last-page.json"));
   // Opaque cursors of the fake: after the first page, and after the last one.
   const CURSOR_FIRST = Buffer.from(JSON.stringify({ v: 1, fake: "after-first-page" })).toString("base64url");
   const CURSOR_END = Buffer.from(JSON.stringify({ v: 1, fake: "end" })).toString("base64url");
