@@ -7,16 +7,20 @@
 // queue stay — this is what "Substituir" and "Cadastrar novo" of the dashboard
 // rely on (Q16, Q17). For another user, a tablet that still owes records to
 // the server refuses; an idle one is wiped and starts over.
+//
+// A server that speaks another contract is not paired with (Q83): its session
+// is not this app's to read, so nothing is written, swapped or erased.
 import type { SessionResponse } from "../contract";
 import type { Db } from "../db/types";
 import { isLocked } from "../security/pin";
 import { SECURE_KEYS, type SecureStorePort } from "../security/secureStore";
-import { FieldHttpError, type FieldClient, type HttpFailure } from "../sync/http";
+import { FieldHttpError, speaksOurContract, type FieldClient, type HttpFailure } from "../sync/http";
 
 export type RegisterOutcome =
   | { kind: "registered" }
   | { kind: "token_replaced"; needsNewPin: boolean }
   | { kind: "refused_pending" }
+  | { kind: "refused_contract" }
   | { kind: "failed"; failure: HttpFailure };
 
 export interface RegisterDeps {
@@ -52,6 +56,8 @@ export async function registerDevice(deps: RegisterDeps, qr: { host: string; tok
     if (err instanceof FieldHttpError) return { kind: "failed", failure: err.failure };
     throw err;
   }
+
+  if (!speaksOurContract(session)) return { kind: "refused_contract" };
 
   const storedHost = await deps.secure.get(SECURE_KEYS.host);
   const storedUser = await deps.secure.get(SECURE_KEYS.userId);

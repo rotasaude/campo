@@ -4,6 +4,11 @@
 // the round (Task 13) decides by kind, not by status code.
 import type { ChangesResponse, ReferenceResponse, SessionResponse, UploadItem, UploadResponse } from "../contract";
 
+// The contract this version of the app speaks. The session says which one the server speaks: with another one the
+// app neither pairs nor syncs until it is updated (Q82, Q83).
+export const FIELD_CONTRACT = "field-sync-v1";
+export const speaksOurContract = (session: { contract: string }): boolean => session.contract === FIELD_CONTRACT;
+
 export type HttpFailure =
   | { kind: "revoked" } // 401 device_revoked: manual revocation, the tablet is wiped
   | { kind: "suspended" } // 401 device_suspended or invalid_token: access suspended, the queue is kept

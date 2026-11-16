@@ -137,6 +137,31 @@ test("other user without pending: wipes everything then registers", async () => 
   expect(await count(t.fresh()!, "households")).toBe(0);
 });
 
+// Q83(2): a server that speaks another contract is not paired with — on a new tablet or on one already in use.
+test("a session of another contract: refused, and nothing is written, swapped or erased", async () => {
+  const other = { ...SESSION, contract: "field-sync-v2" } as unknown as SessionResponse;
+
+  const first = await setup({ session: other });
+  expect(await registerDevice(first.deps, { host: HOST, token: NEW_TOKEN })).toEqual({ kind: "refused_contract" });
+  expect(first.secure.data.size).toBe(0);
+  expect(first.order).toEqual(["session"]);
+
+  // The same person's new QR: the token that works with what the tablet has is not swapped.
+  const same = await setup({ registered: true, pending: true, session: other });
+  const before = Object.fromEntries(same.secure.data);
+  expect(await registerDevice(same.deps, { host: HOST, token: NEW_TOKEN })).toEqual({ kind: "refused_contract" });
+  expect(Object.fromEntries(same.secure.data)).toEqual(before);
+  expect(same.order).toEqual(["session"]);
+  expect(await count(same.db!, "outbox")).toBe(1);
+  expect(await count(same.db!, "session")).toBe(0);
+
+  // Another person's QR on an idle tablet: it is not wiped for a server the app cannot talk to.
+  const idle = await setup({ registered: true, session: { ...other, user: { ...other.user, id: OTHER_USER } } });
+  expect(await registerDevice(idle.deps, { host: HOST, token: NEW_TOKEN })).toEqual({ kind: "refused_contract" });
+  expect(idle.order).toEqual(["session"]);
+  expect(await idle.secure.get(SECURE_KEYS.token)).toBe(OLD_TOKEN);
+});
+
 test("session failure leaves the previous token in place", async () => {
   const t = await setup({ registered: true, pending: true, session: new FieldHttpError({ kind: "suspended" }) });
   const before = Object.fromEntries(t.secure.data);

@@ -83,3 +83,11 @@ test("the paste field exists only in the e2e build", async () => {
   await mount();
   expect(screen.queryByLabelText("Colar código")).toBeNull();
 });
+
+// Q83(2): a server of another contract is not paired with.
+test("a server of another contract: the screen says to update the app, and the tablet is not registered", async () => {
+  const t = await mount({ kind: "refused_contract" });
+  await t.scan(GOOD);
+  expect(await screen.findByText("Atualize o app antes de cadastrar este tablet.")).toBeTruthy();
+  expect(t.onRegistered).not.toHaveBeenCalled();
+});

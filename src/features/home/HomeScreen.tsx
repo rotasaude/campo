@@ -10,6 +10,7 @@ import { outcomeText, useSyncState } from "../../app/sync";
 import { useLive } from "../../db/events";
 import type { Db } from "../../db/types";
 import { APP_UPDATE_NOTICE } from "../../sync/reference";
+import { CONTRACT_UPDATE_NOTICE } from "../../sync/round";
 import { Body, Button, Muted, Notice, Screen } from "../../ui/components";
 import { loadHome } from "./homeData";
 
@@ -28,12 +29,11 @@ export function HomeScreen({ onOpenWho, onOpenToday, onNewActivity, onOpenHouseh
   if (!home) return <Screen title="Início"><Muted>Carregando…</Muted></Screen>;
   return (
     <Screen title="Início">
-      {/* Said once: the round may be saying the same (a server of another contract). */}
-      {home.appUpdate && problem !== APP_UPDATE_NOTICE && <Notice tone="warn">{APP_UPDATE_NOTICE}</Notice>}
+      {home.appUpdate && <Notice tone="warn">{APP_UPDATE_NOTICE}</Notice>}
       {home.clockWarning && <Notice tone="warn">{home.clockWarning}</Notice>}
       {home.territoryWarning && <Notice tone="warn">{home.territoryWarning}</Notice>}
       {home.visitsOff && <Notice tone="info">{VISITS_OFF}</Notice>}
-      {problem && <Notice tone={problem === APP_UPDATE_NOTICE ? "warn" : "info"}>{problem}</Notice>}
+      {problem && <Notice tone={problem === CONTRACT_UPDATE_NOTICE ? "warn" : "info"}>{problem}</Notice>}
 
       {!home.visitsOff && (
         <View style={{ gap: 8 }}>

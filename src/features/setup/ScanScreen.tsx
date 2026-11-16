@@ -14,6 +14,7 @@ const QR_REFUSALS = {
   malformed: "QR ilegível — gere outro no dashboard",
   host_not_allowed: "Este QR aponta para um endereço que o app não reconhece",
 } as const;
+export const REFUSED_CONTRACT = "Atualize o app antes de cadastrar este tablet.";
 export const REFUSED_PENDING = "Há registros deste tablet ainda não enviados. Sincronize com o usuário atual antes de cadastrar outro.";
 
 function failureText(failure: HttpFailure): string {
@@ -44,6 +45,7 @@ export function ScanScreen({ allowedHostSuffixes, Camera, register, onRegistered
     try {
       const outcome = await register({ host: qr.host, token: qr.token });
       if (outcome.kind === "registered" || outcome.kind === "token_replaced") onRegistered(outcome);
+      else if (outcome.kind === "refused_contract") setMessage(REFUSED_CONTRACT);
       else setMessage(outcome.kind === "refused_pending" ? REFUSED_PENDING : failureText(outcome.failure));
     } catch {
       setMessage("Não foi possível cadastrar o aparelho. Leia o QR de novo.");

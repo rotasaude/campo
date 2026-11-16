@@ -17,7 +17,7 @@ import { wipeTerritory } from "../security/wipe";
 import { cityOffsetMinutes, cityToday, measureSkew } from "./clock";
 import { sendQueue } from "./dispatch";
 import { downloadAll } from "./download";
-import { FieldHttpError, type FieldClient, type HttpFailure } from "./http";
+import { FieldHttpError, speaksOurContract, type FieldClient, type HttpFailure } from "./http";
 import { recoverSending } from "./outbox";
 import { refreshReference } from "./reference";
 import { enforceTerritoryAge, purgeAccepted } from "./retention";
@@ -42,8 +42,8 @@ export interface RoundDeps {
   syncMap?: (manifest: SessionResponse["map"]) => Promise<unknown>;
 }
 
-// The contract this version of the app speaks (the session says which one the server speaks).
-export const FIELD_CONTRACT = "field-sync-v1";
+// Said while the server speaks another contract (Q83): not the notice of the reference — here nothing syncs.
+export const CONTRACT_UPDATE_NOTICE = "Atualize o app: esta versão não conversa mais com o servidor da secretaria. O que você registrar fica guardado no tablet até a atualização.";
 
 const running = new WeakSet<Db>();
 
@@ -92,7 +92,7 @@ async function round(deps: RoundDeps): Promise<RoundOutcome> {
   try {
     const session = await client.session();
     // Another contract: its answers are not this app's to read. Nothing is kept from it, sent to it or downloaded.
-    if ((session as { contract: string }).contract !== FIELD_CONTRACT) return { kind: "stopped", reason: "app_outdated" };
+    if (!speaksOurContract(session)) return { kind: "stopped", reason: "app_outdated" };
     const skew = measureSkew(session.server_time, deps.now());
     const offset = cityOffsetMinutes(session.server_time);
     await db.tx(async (tx) => {

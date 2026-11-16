@@ -95,11 +95,11 @@ test("home shows the app update notice while the reference is refused (Q71)", as
   expect(await screen.findByText(APP_UPDATE_NOTICE)).toBeTruthy();
 });
 
-test("a server of another contract: the home says to update the app, once (Q82)", async () => {
-  const db = await seeded();
-  await db.run("INSERT INTO meta (key, value) VALUES ('reference_refused_version', 'x')");
-  await mount(db, { lastOutcome: { kind: "stopped", reason: "app_outdated" } });
-  expect(await screen.findAllByText(APP_UPDATE_NOTICE)).toHaveLength(1);
+// Q83(2): not the notice of the reference (Q71) — with another contract the app does not go on syncing.
+test("a server of another contract: the home says the app no longer talks to the server and that the records are kept", async () => {
+  await mount(await seeded(), { lastOutcome: { kind: "stopped", reason: "app_outdated" } });
+  expect(await screen.findByText("Atualize o app: esta versão não conversa mais com o servidor da secretaria. O que você registrar fica guardado no tablet até a atualização.")).toBeTruthy();
+  expect(screen.queryByText(APP_UPDATE_NOTICE)).toBeNull();
   expect(screen.queryByText(/não respondeu como esperado/)).toBeNull();
 });
 
