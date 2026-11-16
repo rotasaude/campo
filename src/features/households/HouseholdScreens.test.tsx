@@ -125,6 +125,17 @@ test("who is not the community health agent reads the household and can still re
   expect(within(screen.getByTestId(`resident-${JOANA}`)).getByRole("button", { name: "Registrar visita" })).toBeTruthy();
 });
 
+// Q83(4): a visit that would never be sent must not be born — with the visit off there is no way into it from here.
+test("with the visit turned off by the city no resident of the household offers a visit; the registry stays", async () => {
+  const session = example<SessionResponse>("session-acs.json");
+  const db = await loadedTablet({ session: { features: { ...session.features, home_visits: false } } });
+  await detail(db);
+  const joana = within(await screen.findByTestId(`resident-${JOANA}`));
+  expect(joana.getByRole("button", { name: "Abrir cadastro" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Registrar visita" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Editar domicílio" })).toBeTruthy();
+});
+
 test("the visits made there today, by this tablet, are on the household's screen: the hours only", async () => {
   const db = await loadedTablet();
   await db.run(
