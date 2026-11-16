@@ -42,7 +42,7 @@ for flow in maestro/*.yaml; do
 done
 ```
 
-Um fluxo por vez: cada um começa de uma instalação limpa e zera o servidor falso. `QR_PAYLOAD_2` é um segundo QR do mesmo host (token novo), usado só pelo `revocation-suspended`. O emulador precisa estar com rede (`adb shell cmd connectivity airplane-mode disable`).
+Um fluxo por vez: cada um começa de uma instalação limpa e zera o servidor falso. `QR_PAYLOAD_2` é um segundo QR do mesmo host (token novo), usado só pelo `revocation-suspended`. O emulador precisa estar com rede (`adb shell cmd connectivity airplane-mode disable`). A rodada inteira leva uns vinte minutos: mantenha a máquina acordada (no macOS, rode o laço sob `caffeinate -i`), porque o repouso congela o emulador e os fluxos estouram o tempo.
 
 As variáveis `EXPO_PUBLIC_E2E` e `EXPO_PUBLIC_DEV_ORIGIN` entram no JS quando o Gradle empacota: precisam estar no ambiente do `./gradlew` também (o bloco acima as passa só ao `prebuild`; exporte-as antes ou repita-as na linha do Gradle).
 
