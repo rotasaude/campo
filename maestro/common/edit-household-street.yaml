@@ -1,0 +1,30 @@
+# From the Home screen: opens the household of the first load and changes its street name to
+# "das Flores Novas". Comes back to the Home screen with the edit waiting to be sent.
+appId: br.rotasaude.campo
+---
+- tapOn: "Domicílios"
+- tapOn: "Abrir RUA das Flores, 120"
+- tapOn: "Editar domicílio"
+- assertVisible: "Editar domicílio"
+- tapOn:
+    text: "Logradouro"
+    index: 1
+- eraseText
+- inputText: "das Flores Novas"
+- hideKeyboard
+- scrollUntilVisible:
+    element: "Salvar"
+    timeout: 60000
+# To the end of the form: the last button sits behind the tablet's task bar until then.
+- scroll
+- tapOn: "Salvar"
+# Saved on the tablet: the household shows the new street, waiting to be sent.
+- extendedWaitUntil:
+    visible: "RUA das Flores Novas, 120"
+    timeout: 30000
+- assertVisible: "Aguardando envio"
+- back
+- back
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 1"
+    timeout: 30000

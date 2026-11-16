@@ -1,0 +1,40 @@
+# Fresh install → paired, PIN created, first load done, the Home screen up.
+# QR_PAYLOAD comes from `node scripts/fake-field-server/qr.mjs <host>` (or from the dev dashboard).
+appId: br.rotasaude.campo
+---
+# A flow that stopped half-way may have left the emulator without network.
+- setAirplaneMode: disabled
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Leia o QR do dashboard"
+    timeout: 30000
+- tapOn:
+    text: "Colar código"
+    index: 1
+- inputText: ${QR_PAYLOAD}
+- hideKeyboard
+- tapOn: "Usar código"
+- extendedWaitUntil:
+    visible: "Crie um PIN de 6 números"
+    timeout: 30000
+- tapOn:
+    text: "PIN"
+    index: 1
+- inputText: "481516"
+- hideKeyboard
+- tapOn: "Continuar"
+- assertVisible: "Repita o PIN"
+- tapOn:
+    text: "PIN"
+    index: 1
+- inputText: "481516"
+- hideKeyboard
+- tapOn: "Criar PIN"
+- extendedWaitUntil:
+    visible: "Carga concluída.*"
+    timeout: 120000
+- tapOn: "Continuar"
+- extendedWaitUntil:
+    visible: "Início"
+    timeout: 30000

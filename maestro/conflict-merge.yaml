@@ -1,0 +1,21 @@
+# The health unit changed the same household while the tablet edited it, in another field: the
+# server answers stale_version, the tablet merges the two by itself and the edit is accepted.
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runFlow: common/pair.yaml
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "next_upload": "stale_version", "current_patch": { "contact_phone": "41988887777" } }'
+- runFlow: common/edit-household-street.yaml
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 0"
+    timeout: 60000
+- assertVisible: "Conflitos: 0"
+- assertVisible: "Precisam de atenção: 0"

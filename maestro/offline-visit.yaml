@@ -1,0 +1,15 @@
+# A visit registered with no network waits on the tablet; when the network comes back, one
+# synchronization sends it.
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runFlow: common/pair.yaml
+- runFlow: common/absent-visit-offline.yaml
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 0"
+    timeout: 60000
+- assertVisible: "Precisam de atenção: 0"

@@ -1,0 +1,21 @@
+# Types VALUE in the field whose label is LABEL (a regex) and checks that the field kept it; types
+# it again if not. The check comes after the keyboard is gone: an open keyboard covers the field.
+appId: br.rotasaude.campo
+---
+- tapOn:
+    text: ${LABEL}
+    index: 1
+- inputText: ${VALUE}
+- hideKeyboard
+- repeat:
+    while:
+      notVisible: ${VALUE}
+    times: 2
+    commands:
+      - tapOn:
+          text: ${LABEL}
+          index: 1
+      - eraseText
+      - inputText: ${VALUE}
+      - hideKeyboard
+- assertVisible: ${VALUE}

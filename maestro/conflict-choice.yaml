@@ -1,0 +1,38 @@
+# The health unit changed the same field the tablet edited: the edit stops in conflict, the person
+# chooses which value stays ("No tablet") and the record is accepted.
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runFlow: common/pair.yaml
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "next_upload": "stale_version", "current_patch": { "address": { "street": "das Palmeiras" } } }'
+- runFlow: common/edit-household-street.yaml
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Conflitos: 1"
+    timeout: 60000
+- tapOn: "Ver envios"
+- tapOn: "Resolver"
+- assertVisible: "Resolver conflito"
+- assertVisible: "No posto: RUA das Palmeiras, 120.*"
+- tapOn: "No tablet: RUA das Flores Novas, 120.*"
+- tapOn: "Enviar"
+# The choice is made: the record goes back to the line and the next synchronization sends it.
+- extendedWaitUntil:
+    visible: "aguardando envio"
+    timeout: 30000
+- back
+- extendedWaitUntil:
+    visible: "Conflitos: 0"
+    timeout: 30000
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 0"
+    timeout: 60000
+- assertVisible: "Precisam de atenção: 0"

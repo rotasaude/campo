@@ -1,0 +1,7 @@
+# Pairs the device with the pasted QR, creates the PIN and reaches the Home screen.
+appId: br.rotasaude.campo
+---
+- runFlow: common/pair.yaml
+- assertVisible: "Início"
+- assertVisible: "Sincronizar"
+- assertVisible: "Pendentes de envio: 0"

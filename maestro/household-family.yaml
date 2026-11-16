@@ -1,0 +1,190 @@
+# A new household with its point marked on the offline map, a new family in it and a new resident:
+# everything is registered on the tablet and accepted by one synchronization.
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runFlow: common/pair.yaml
+- tapOn: "Domicílios"
+- tapOn: "Novo domicílio"
+- assertVisible: "Novo domicílio"
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "CEP"
+      VALUE: "80020000"
+- tapOn:
+    text: "Buscar em Tipo de logradouro"
+    index: 1
+- inputText: "AVENIDA"
+- hideKeyboard
+# The typed text is in the search box too: the option is the second match.
+- tapOn:
+    text: "AVENIDA"
+    index: 1
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Logradouro"
+      VALUE: "Sete de Setembro"
+# Fields near the end of the screen sit behind the tablet's task bar: bring each one to the middle first.
+- scrollUntilVisible:
+    element: "Número"
+    centerElement: true
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Número"
+      VALUE: "45"
+- scrollUntilVisible:
+    element: "Vila Nova"
+    centerElement: true
+- tapOn: "Vila Nova"
+- scrollUntilVisible:
+    element: "Domicílio"
+    centerElement: true
+- tapOn: "Domicílio"
+# A home has the living conditions to answer too: the point of the property is at the very end of a long form.
+- scrollUntilVisible:
+    element: "Marcar no mapa"
+    timeout: 120000
+    speed: 80
+- scroll
+- tapOn: "Marcar no mapa"
+- extendedWaitUntil:
+    visible: "Marcar o ponto do imóvel"
+    timeout: 30000
+- tapOn:
+    point: "35%,45%"
+- tapOn: "Usar este ponto"
+# The form comes back at its top; the point and "Salvar" are at the far end.
+- scrollUntilVisible:
+    element: "Ponto marcado no mapa"
+    timeout: 120000
+    speed: 80
+- scroll
+- tapOn: "Salvar"
+- extendedWaitUntil:
+    visible: "AVENIDA Sete de Setembro, 45"
+    timeout: 30000
+- assertVisible: "Nenhum morador cadastrado"
+
+# The resident: a family needs somebody registered to answer for it.
+- tapOn: "Novo morador"
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Nome completo"
+      VALUE: "Maria Teste Souza"
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Data de nascimento \\(dd/mm/aaaa\\)"
+      VALUE: "10/05/1980"
+- tapOn: "Feminino"
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Nome da mãe"
+      VALUE: "Ana Teste Souza"
+- scrollUntilVisible:
+    element: "Pessoa indocumentada"
+    centerElement: true
+- tapOn: "Pessoa indocumentada"
+- scrollUntilVisible:
+    element: "Parda"
+    centerElement: true
+- tapOn: "Parda"
+- scrollUntilVisible:
+    element: "Brasileira"
+    centerElement: true
+- tapOn: "Brasileira"
+- scrollUntilVisible:
+    element: "Município de nascimento \\(código IBGE, 7 dígitos\\)"
+    centerElement: true
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Município de nascimento \\(código IBGE, 7 dígitos\\)"
+      VALUE: "4106902"
+- scrollUntilVisible:
+    element: "Celular \\(DDD \\+ número\\)"
+    centerElement: true
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Celular \\(DDD \\+ número\\)"
+      VALUE: "41999887766"
+- scrollUntilVisible:
+    element: "Nome do pai"
+    centerElement: true
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Nome do pai"
+      VALUE: "Jose Teste Souza"
+- scrollUntilVisible:
+    element: "Quer informar a orientação sexual\\?"
+    centerElement: true
+    timeout: 60000
+- tapOn:
+    text: "Não"
+    below: "Quer informar a orientação sexual\\?"
+- scrollUntilVisible:
+    element: "Quer informar a identidade de gênero\\?"
+    centerElement: true
+    timeout: 60000
+- tapOn:
+    text: "Não"
+    below: "Quer informar a identidade de gênero\\?"
+- scrollUntilVisible:
+    element: "Está em situação de rua\\?"
+    centerElement: true
+    timeout: 120000
+    speed: 80
+- tapOn:
+    text: "Não"
+    below: "Está em situação de rua\\?"
+- scrollUntilVisible:
+    element: "Salvar cadastro"
+    timeout: 120000
+    speed: 80
+- scroll
+- scroll
+- tapOn: "Salvar cadastro"
+- extendedWaitUntil:
+    visible: "Abrir cadastro"
+    timeout: 30000
+- assertVisible: "Maria Teste Souza"
+
+# The family, with the new resident answering for it.
+- tapOn: "Nova família"
+- tapOn: "Maria Teste Souza"
+- tapOn: "Um salário mínimo"
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Número de membros"
+      VALUE: "1"
+- tapOn: "Salvar família"
+- extendedWaitUntil:
+    visible: "Responsável: Maria Teste Souza"
+    timeout: 30000
+
+- back
+- back
+- extendedWaitUntil:
+    visible: "Sincronizar"
+    timeout: 30000
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 0"
+    timeout: 60000
+- assertVisible: "Precisam de atenção: 0"
+- assertVisible: "Conflitos: 0"
+- runScript:
+    file: scripts/expect-accepted.js
+    env:
+      EXPECT: '{ "household": 1, "individual_registration": 1, "family": 1 }'
