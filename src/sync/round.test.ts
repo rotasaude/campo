@@ -171,6 +171,51 @@ test("reference refreshed only when the version changes", async () => {
   expect(t.calls.filter((c) => c === "reference")).toHaveLength(1);
 });
 
+// Q82(3a): the reference is what the forms read; what the tablet owes the server does not wait for it.
+test("a reference the server cannot deliver keeps the previous one and the round goes on to send", async () => {
+  for (const failure of [{ kind: "server", status: 500, code: null }, { kind: "invalid", status: 422, code: "invalid_request" }, { kind: "not_found", code: "unknown_city" }] as HttpFailure[]) {
+    const t = await setup({ fail: { reference: failure } });
+    await t.db.run("INSERT INTO reference (id, version, body) VALUES (1, 'previous', ?)", [JSON.stringify(REFERENCE)]);
+    await pendingVisit(t.db);
+    expect(await runRound(t.deps, "button")).toEqual({ kind: "ok", downloaded: true });
+    expect(t.calls).toEqual(["session", "reference", "uploads", "changes", "changes"]);
+    expect(await outboxRepo.count(t.db)).toBe(0);
+    expect((await t.db.get<{ version: string }>("SELECT version FROM reference WHERE id = 1"))?.version).toBe("previous");
+    // Not given up: the next round asks for it again.
+    await runRound(t.deps, "timer");
+    expect(t.calls.filter((c) => c === "reference")).toHaveLength(2);
+  }
+});
+
+test("without a network, with the rate limit or without access, a failing reference still ends the round", async () => {
+  const stopped = await setup({ fail: { reference: { kind: "network" } } });
+  await pendingVisit(stopped.db);
+  expect(await runRound(stopped.deps, "button")).toEqual({ kind: "stopped", reason: "network" });
+  expect(stopped.calls).toEqual(["session", "reference"]);
+  expect(await outboxRepo.count(stopped.db)).toBe(1);
+
+  const limited = await setup({ fail: { reference: { kind: "rate_limited" } } });
+  expect(await runRound(limited.deps, "button")).toEqual({ kind: "stopped", reason: "rate_limited" });
+  expect(limited.calls).toEqual(["session", "reference"]);
+
+  const revoked = await setup({ fail: { reference: { kind: "revoked" } } });
+  expect(await runRound(revoked.deps, "button")).toEqual({ kind: "revoked" });
+  expect(revoked.wipeAll).toHaveBeenCalledTimes(1);
+});
+
+// Q82(3d): a server that speaks another contract is not talked to — nothing is sent, nothing is downloaded, nothing is
+// kept from its answer — until the app is updated.
+test("a session of another contract: no round, and the outcome says the app must be updated", async () => {
+  const t = await setup({ session: { ...SESSION, contract: "field-sync-v2" } as unknown as SessionResponse });
+  await pendingVisit(t.db);
+  expect(await runRound(t.deps, "button")).toEqual({ kind: "stopped", reason: "app_outdated" });
+  expect(t.calls).toEqual(["session"]);
+  expect(await outboxRepo.count(t.db)).toBe(1);
+  expect(await count(t.db, "session")).toBe(0);
+  expect(await count(t.db, "households")).toBe(0);
+  expect(t.syncMap).not.toHaveBeenCalled();
+});
+
 test("the round measures the clock against server_time and keeps the city's offset", async () => {
   const t = await setup({ session: { ...SESSION, server_time: "2026-11-12T09:07:00-03:00" } }); // the tablet says 12:00Z = 09:00 in the city
   await runRound(t.deps, "open");

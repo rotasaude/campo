@@ -7,7 +7,8 @@
 //   suspended         access suspended (automatic revocation, replaced device or an unknown token): the territory
 //                     is erased, the queue stays until a new QR of the same host and user
 //   feature_disabled  the city turned the visit off: nothing is sent, nothing is lost
-//   stopped           rate limit, server or network: try again later, nothing is lost
+//   stopped           rate limit, server or network: try again later, nothing is lost; app_outdated: the server speaks
+//                     another contract, and nothing is exchanged with it until the app is updated
 import type { SessionResponse } from "../contract";
 import { territoryRepo } from "../db/repos/territoryRepo";
 import type { Db } from "../db/types";
@@ -26,7 +27,7 @@ export type RoundTrigger = "open" | "foreground" | "timer" | "button" | "after_p
 export type RoundOutcome =
   | { kind: "ok"; downloaded: boolean }
   | { kind: "skipped"; reason: "running" | "offline" | "locked" | "needs_wifi" }
-  | { kind: "stopped"; reason: "rate_limited" | "server" | "network" }
+  | { kind: "stopped"; reason: "rate_limited" | "server" | "network" | "app_outdated" }
   | { kind: "revoked" } | { kind: "suspended" } | { kind: "feature_disabled" };
 
 export interface RoundDeps {
@@ -41,7 +42,23 @@ export interface RoundDeps {
   syncMap?: (manifest: SessionResponse["map"]) => Promise<unknown>;
 }
 
+// The contract this version of the app speaks (the session says which one the server speaks).
+export const FIELD_CONTRACT = "field-sync-v1";
+
 const running = new WeakSet<Db>();
+
+// The reference is what the forms read, not what the tablet owes: when the server answers and cannot deliver it, the
+// previous one stays (as with a reference the app cannot read, Q71) and the round goes on to send. Without a network,
+// with the rate limit or without access there is no round to go on with.
+async function refreshReferenceOrKeep(deps: RoundDeps, version: string): Promise<void> {
+  try {
+    await refreshReference(deps.db, deps.client, version);
+  } catch (err) {
+    if (!(err instanceof FieldHttpError)) throw err;
+    const kind = err.failure.kind;
+    if (kind !== "server" && kind !== "invalid" && kind !== "not_found" && kind !== "range") throw err;
+  }
+}
 
 async function failed(deps: RoundDeps, failure: HttpFailure): Promise<RoundOutcome> {
   switch (failure.kind) {
@@ -74,6 +91,8 @@ async function round(deps: RoundDeps): Promise<RoundOutcome> {
 
   try {
     const session = await client.session();
+    // Another contract: its answers are not this app's to read. Nothing is kept from it, sent to it or downloaded.
+    if ((session as { contract: string }).contract !== FIELD_CONTRACT) return { kind: "stopped", reason: "app_outdated" };
     const skew = measureSkew(session.server_time, deps.now());
     const offset = cityOffsetMinutes(session.server_time);
     await db.tx(async (tx) => {
@@ -85,7 +104,7 @@ async function round(deps: RoundDeps): Promise<RoundOutcome> {
       // The token works: whatever suspended this tablet before is over.
       await tx.run("DELETE FROM meta WHERE key = ?", ["suspended"]);
     });
-    await refreshReference(db, client, session.reference_version);
+    await refreshReferenceOrKeep(deps, session.reference_version);
 
     const visitsOn = session.features.home_visits;
     if (visitsOn) {

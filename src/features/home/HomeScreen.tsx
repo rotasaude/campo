@@ -28,11 +28,12 @@ export function HomeScreen({ onOpenWho, onOpenToday, onNewActivity, onOpenHouseh
   if (!home) return <Screen title="Início"><Muted>Carregando…</Muted></Screen>;
   return (
     <Screen title="Início">
-      {home.appUpdate && <Notice tone="warn">{APP_UPDATE_NOTICE}</Notice>}
+      {/* Said once: the round may be saying the same (a server of another contract). */}
+      {home.appUpdate && problem !== APP_UPDATE_NOTICE && <Notice tone="warn">{APP_UPDATE_NOTICE}</Notice>}
       {home.clockWarning && <Notice tone="warn">{home.clockWarning}</Notice>}
       {home.territoryWarning && <Notice tone="warn">{home.territoryWarning}</Notice>}
       {home.visitsOff && <Notice tone="info">{VISITS_OFF}</Notice>}
-      {problem && <Notice tone="info">{problem}</Notice>}
+      {problem && <Notice tone={problem === APP_UPDATE_NOTICE ? "warn" : "info"}>{problem}</Notice>}
 
       {!home.visitsOff && (
         <View style={{ gap: 8 }}>

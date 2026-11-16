@@ -95,6 +95,14 @@ test("home shows the app update notice while the reference is refused (Q71)", as
   expect(await screen.findByText(APP_UPDATE_NOTICE)).toBeTruthy();
 });
 
+test("a server of another contract: the home says to update the app, once (Q82)", async () => {
+  const db = await seeded();
+  await db.run("INSERT INTO meta (key, value) VALUES ('reference_refused_version', 'x')");
+  await mount(db, { lastOutcome: { kind: "stopped", reason: "app_outdated" } });
+  expect(await screen.findAllByText(APP_UPDATE_NOTICE)).toHaveLength(1);
+  expect(screen.queryByText(/não respondeu como esperado/)).toBeNull();
+});
+
 test("the last round's outcome is said in words when it did not finish", async () => {
   await mount(await seeded(), { lastOutcome: { kind: "stopped", reason: "network" } });
   expect(await screen.findByText("Sem conexão: nada foi perdido. O tablet tenta de novo sozinho.")).toBeTruthy();

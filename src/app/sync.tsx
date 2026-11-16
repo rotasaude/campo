@@ -2,6 +2,7 @@
 // running, how the last one ended and a way to start one. The provider lives
 // in the app shell (AppProvider); screens only read.
 import { createContext, useContext } from "react";
+import { APP_UPDATE_NOTICE } from "../sync/reference";
 import type { RoundOutcome } from "../sync/round";
 
 export interface SyncState { running: boolean; lastOutcome: RoundOutcome | null; run(): void }
@@ -15,6 +16,7 @@ export function outcomeText(outcome: RoundOutcome | null): string | null {
   if (outcome.kind === "stopped") {
     if (outcome.reason === "network") return "Sem conexão: nada foi perdido. O tablet tenta de novo sozinho.";
     if (outcome.reason === "rate_limited") return "Muitos envios em pouco tempo. O tablet tenta de novo em alguns minutos.";
+    if (outcome.reason === "app_outdated") return APP_UPDATE_NOTICE;
     return "O Rota Saúde não respondeu como esperado: nada foi perdido. O tablet tenta de novo sozinho.";
   }
   if (outcome.kind === "skipped") {
