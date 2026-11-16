@@ -10,7 +10,7 @@ import { sha256 } from "../security/testing";
 import { QR_PREFIX } from "../setup/qr";
 import { enqueue } from "../sync/outbox";
 import { newUuid } from "../sync/testing";
-import { AppRoot, useApp } from "./AppRoot";
+import { AppRoot, WIPE_FAILED, useApp } from "./AppRoot";
 import { SESSION, TEST_HOST, TEST_TOKEN, fakePlatform, type FakePlatform } from "./platformTesting";
 import { useSyncState } from "./sync";
 
@@ -263,5 +263,54 @@ test("sign out erases the installation and goes back to pairing", async () => {
   await fireEvent.press(await screen.findByText("sair"));
   expect(await screen.findByRole("header", { name: "Leia o QR do dashboard" })).toBeTruthy();
   expect(platform.secure.data.size).toBe(0);
+  expect(screen.queryByText("telas principais")).toBeNull();
+});
+
+// Q82(3b): an erasure that does not go to the end is never taken for done.
+const brokenDisk = (platform: FakePlatform) => {
+  const working = platform.fs.deleteAsync;
+  platform.fs.deleteAsync = async () => { throw new Error("EBUSY"); };
+  return () => { platform.fs.deleteAsync = working; };
+};
+
+test("a sign out that cannot erase everything stops at the fatal screen; the next start-up erases before anything else", async () => {
+  const { platform } = await paired();
+  const repair = brokenDisk(platform);
+  const first = await mount(platform);
+  await unlock();
+  await fireEvent.press(await screen.findByText("sair"));
+  expect(await screen.findByText(WIPE_FAILED)).toBeTruthy();
+  expect(WIPE_FAILED).toBe("Não foi possível apagar os dados deste tablet. Feche o app e abra de novo.");
+  // Not the QR (a pairing over a half-erased tablet), and nothing of the data.
+  expect(screen.queryByRole("header", { name: "Leia o QR do dashboard" })).toBeNull();
+  expect(screen.queryByText("telas principais")).toBeNull();
+  expect(screen.queryByLabelText("PIN")).toBeNull();
+  await first.unmount();
+
+  // Opened again with the disk still refusing: fatal again, and still nothing asked of anybody.
+  platform.server.requests.length = 0;
+  const second = await mount(platform);
+  expect(await screen.findByText(WIPE_FAILED)).toBeTruthy();
+  expect(screen.queryByRole("header", { name: "Leia o QR do dashboard" })).toBeNull();
+  expect(platform.server.requests).toEqual([]);
+  await second.unmount();
+
+  // Opened again with the disk working: the erasure goes to the end and the tablet pairs from nothing.
+  repair();
+  platform.deleted.length = 0;
+  await mount(platform);
+  expect(await screen.findByRole("header", { name: "Leia o QR do dashboard" })).toBeTruthy();
+  expect(platform.deleted.some((uri) => uri.endsWith("SQLite/campo.db"))).toBe(true);
+  expect(platform.secure.data.size).toBe(0);
+});
+
+test("a revocation that cannot erase everything stops at the fatal screen instead of pairing", async () => {
+  const { platform } = await paired();
+  platform.server.fail = { kind: "revoked" };
+  brokenDisk(platform);
+  await mount(platform);
+  await unlock();
+  expect(await screen.findByText(WIPE_FAILED)).toBeTruthy();
+  expect(screen.queryByRole("header", { name: "Leia o QR do dashboard" })).toBeNull();
   expect(screen.queryByText("telas principais")).toBeNull();
 });

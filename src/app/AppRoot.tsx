@@ -24,7 +24,7 @@ import { syncMapFile } from "../map/download";
 import { shouldLock, syncLocked } from "../security/lock";
 import { hasPin, setPin } from "../security/pin";
 import { SECURE_KEYS } from "../security/secureStore";
-import { wipeAll } from "../security/wipe";
+import { wipeAll, wipeOwed } from "../security/wipe";
 import { registerDevice, type RegisterOutcome } from "../setup/register";
 import { createFieldClient } from "../sync/http";
 import { recoverSending } from "../sync/outbox";
@@ -37,6 +37,7 @@ import { ServicesProvider, type AppServices } from "./services";
 import { SyncContext, type SyncState } from "./sync";
 
 export const OPEN_FAILED = "Não foi possível abrir os dados do app. Feche o app e abra de novo.";
+export const WIPE_FAILED = "Não foi possível apagar os dados deste tablet. Feche o app e abra de novo.";
 
 type Phase = "starting" | "fatal" | "pairing" | "pin_create" | "locked" | "suspended" | "initial_load" | "ready";
 
@@ -91,14 +92,23 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
     stopScheduler.current = null;
   }, []);
 
-  // Erases this installation and goes back to pairing: manual revocation, or a confirmed "Sair".
+  // Erases this installation: manual revocation, a confirmed "Sair", or a QR of another person on an idle tablet.
+  // An erasure that does not go to the end is never taken for done: the app stops at the fatal screen, with no data
+  // open and no pairing over what is left, and the next start-up tries again before anything else. It rejects, so that
+  // whoever asked does not go on as if the tablet were clean.
   const wipe = useCallback(async () => {
     lock();
     const current = dbRef.current;
-    await wipeAll({ db: current as Db, secure: platform.secure, fs: platform.fs, closeDb: async () => { await current?.close(); } }).catch(() => undefined);
+    let whole = true;
+    await wipeAll({ secure: platform.secure, fs: platform.fs, closeDb: async () => { await current?.close(); } }).catch(() => { whole = false; });
     platform.forgetDb();
     changeDb(null);
     setLastOutcome(null);
+    if (!whole) {
+      setFatal(WIPE_FAILED);
+      setPhase("fatal");
+      throw new Error("apagamento incompleto");
+    }
   }, [lock, platform, changeDb]);
 
   const run = useCallback(async (trigger: RoundTrigger) => {
@@ -146,6 +156,15 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
   useEffect(() => {
     let alive = true;
     void (async () => {
+      // An erasure that failed is finished first: nothing is opened, read or paired over what it left.
+      if (await wipeOwed(platform.secure)) {
+        try {
+          await wipeAll({ secure: platform.secure, fs: platform.fs, closeDb: async () => undefined });
+        } catch {
+          if (alive) { setFatal(WIPE_FAILED); setPhase("fatal"); }
+          return;
+        }
+      }
       if ((await platform.secure.get(SECURE_KEYS.token)) === null) { if (alive) setPhase("pairing"); return; }
       try {
         const opened = await openEncryptedDb({ secure: platform.secure, random: platform.random, openRaw: platform.openRaw });
@@ -226,7 +245,7 @@ export function AppRoot({ platform, children }: { platform: Platform; children: 
   const sync = useMemo<SyncState>(() => ({ running, lastOutcome, run: () => { void run("button"); } }), [lastOutcome, run, running]);
   const actions = useMemo<AppActions>(() => ({
     appVersion: platform.build.appVersion,
-    signOut: () => { void wipe().then(() => setPhase("pairing")); },
+    signOut: () => { void wipe().then(() => setPhase("pairing"), () => undefined); },
     scanNew: () => setPhase("pairing"),
     map: { Canvas: platform.MapCanvas, readHead: platform.readFileHead },
     back: platform.back,

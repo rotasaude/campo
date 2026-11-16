@@ -35,11 +35,19 @@ export const dbFiles = (documentDirectory: string): string[] =>
   ["", "-wal", "-shm", "-journal"].map((suffix) => `${documentDirectory}SQLite/${DB_NAME}${suffix}`);
 export const mapDir = (documentDirectory: string): string => `${documentDirectory}map/`;
 
+// The debt of an erasure that did not go to the end. It lives in the store (the database is what is being erased) and
+// is not one of SECURE_KEYS: it is the one key the erasure must not take until everything else is gone.
+const WIPE_OWED = "campo.wipe_owed";
+export const wipeOwed = async (secure: SecureStorePort): Promise<boolean> => (await secure.get(WIPE_OWED)) !== null;
+
 // Every step runs even if an earlier one fails: half an erasure is worse than a reported error at the end.
-export async function wipeAll(deps: { db: Db; secure: SecureStorePort; fs: FsPort; closeDb: () => Promise<void> }): Promise<void> {
+// An erasure that fails stays owed: the app shows nothing but the failure, and the next start-up tries again first.
+export async function wipeAll(deps: { secure: SecureStorePort; fs: FsPort; closeDb: () => Promise<void> }): Promise<void> {
   const failures: unknown[] = [];
   const attempt = async (step: () => Promise<void>) => { try { await step(); } catch (err) { failures.push(err); } };
 
+  // Owed from before the first step. A store that cannot even write this does not, by itself, make the erasure fail.
+  await deps.secure.set(WIPE_OWED, "1").catch(() => undefined);
   await attempt(() => deps.closeDb());
   for (const file of dbFiles(deps.fs.documentDirectory)) await attempt(() => deps.fs.deleteAsync(file, { idempotent: true }));
   await attempt(() => deps.fs.deleteAsync(mapDir(deps.fs.documentDirectory), { idempotent: true }));
@@ -47,4 +55,5 @@ export async function wipeAll(deps: { db: Db; secure: SecureStorePort; fs: FsPor
   for (const key of Object.values(SECURE_KEYS)) await attempt(() => deps.secure.delete(key));
 
   if (failures.length > 0) throw new Error(`apagar o aparelho: ${failures.length} passo(s) falharam`);
+  await deps.secure.delete(WIPE_OWED);
 }

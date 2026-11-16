@@ -2,7 +2,7 @@ import { createTestDb } from "../db/testing/sqljsDb";
 import type { Db } from "../db/types";
 import { SECURE_KEYS } from "./secureStore";
 import { memorySecure } from "./testing";
-import { wipeAll, wipeTerritory } from "./wipe";
+import { wipeAll, wipeOwed, wipeTerritory } from "./wipe";
 
 const KEPT = ["outbox", "client_ids", "reference", "map_file", "session"];
 const WIPED = ["micro_areas", "households", "families", "registrations", "who_to_visit", "local_visits", "local_activities"];
@@ -37,7 +37,6 @@ test("wipeTerritory keeps outbox, reference and map", async () => {
 });
 
 test("wipeAll deletes the db file, map dir and every secure key", async () => {
-  const db = await createTestDb();
   const secure = memorySecure(Object.fromEntries(Object.values(SECURE_KEYS).map((key) => [key, "x"])));
   const deleted: string[] = [];
   const order: string[] = [];
@@ -45,7 +44,7 @@ test("wipeAll deletes the db file, map dir and every secure key", async () => {
     documentDirectory: "file:///data/user/0/br.rotasaude.campo/files/",
     deleteAsync: async (uri: string, options: { idempotent: true }) => { expect(options).toEqual({ idempotent: true }); order.push("fs"); deleted.push(uri); },
   };
-  await wipeAll({ db, secure, fs, closeDb: async () => { order.push("close"); } });
+  await wipeAll({ secure, fs, closeDb: async () => { order.push("close"); } });
   expect(order[0]).toBe("close"); // the file is closed before it is deleted
   expect(deleted).toEqual([
     "file:///data/user/0/br.rotasaude.campo/files/SQLite/campo.db",
@@ -58,10 +57,25 @@ test("wipeAll deletes the db file, map dir and every secure key", async () => {
 });
 
 test("wipeAll goes to the end even when a step fails, and then says so", async () => {
-  const db = await createTestDb();
   const secure = memorySecure({ [SECURE_KEYS.token]: "rsf_x", [SECURE_KEYS.dbKey]: "k" });
   const fs = { documentDirectory: "file:///d/", deleteAsync: jest.fn(async () => { throw new Error("EBUSY"); }) };
-  await expect(wipeAll({ db, secure, fs, closeDb: async () => { throw new Error("closed twice"); } })).rejects.toThrow(/passo\(s\) falharam/);
+  await expect(wipeAll({ secure, fs, closeDb: async () => { throw new Error("closed twice"); } })).rejects.toThrow(/passo\(s\) falharam/);
   expect(fs.deleteAsync).toHaveBeenCalledTimes(5);
+  // Everything of the installation is gone from the store; what stays is only the debt of the erasure itself.
+  for (const key of Object.values(SECURE_KEYS)) expect(await secure.get(key)).toBeNull();
+});
+
+// Q82(3b): an erasure that did not finish is never taken for done. It stays owed, where the next start-up finds it
+// before anything else — the store, since the database is what is being erased.
+test("an erasure that fails stays owed until one goes to the end", async () => {
+  const secure = memorySecure({ [SECURE_KEYS.token]: "rsf_x", [SECURE_KEYS.dbKey]: "k" });
+  expect(await wipeOwed(secure)).toBe(false);
+  const broken = { documentDirectory: "file:///d/", deleteAsync: async () => { throw new Error("EBUSY"); } };
+  await expect(wipeAll({ secure, fs: broken, closeDb: async () => undefined })).rejects.toThrow(/passo\(s\) falharam/);
+  expect(await wipeOwed(secure)).toBe(true);
+
+  const working = { documentDirectory: "file:///d/", deleteAsync: async () => undefined };
+  await wipeAll({ secure, fs: working, closeDb: async () => undefined });
+  expect(await wipeOwed(secure)).toBe(false);
   expect(secure.data.size).toBe(0);
 });
