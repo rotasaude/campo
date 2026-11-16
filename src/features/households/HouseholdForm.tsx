@@ -4,16 +4,15 @@
 // with the sentence under the field. Saving never needs the network: the
 // record goes to the outbox and is on the screens at once.
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
-import { Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { useServices } from "../../app/services";
 import type { Location } from "../../contract";
 import { captureGps, mapTapLocation } from "../../location/capture";
 import type { MapCanvasProps } from "../../map/canvas";
 import { createRegistryRules, type HouseholdInput, type Problem } from "../../rules/registry";
 import { loadReference, type Reference } from "../../sync/reference";
-import { SIZES, useTheme } from "../../theme/theme";
 import { Choice, YesNo } from "../../ui/choices";
-import { Body, Button, Field, Muted, Notice, Screen, Title } from "../../ui/components";
+import { Body, Button, Field, FieldRefusal, Muted, Notice, Screen, Title } from "../../ui/components";
 import { SectionFields } from "../forms/SectionFields";
 import { MapScreen } from "../map/MapScreen";
 import { canEditRegistry, loadSession, myMicroAreas, type MyMicroArea } from "../session";
@@ -64,7 +63,6 @@ export interface HouseholdFormProps {
 }
 
 export function HouseholdForm({ householdKey, map, back, onSaved }: HouseholdFormProps) {
-  const { colors } = useTheme();
   const { db, crypto, now, location: gps } = useServices();
   const [loaded, setLoaded] = useState<Loaded | "read_only" | "not_ready" | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -111,13 +109,6 @@ export function HouseholdForm({ householdKey, map, back, onSaved }: HouseholdFor
   const type = draft.propertyType ?? "";
   const livingAsked = !draft.refused && rules.allowsLivingConditions(type);
   const shownLocation = draft.location === undefined ? loaded.current : draft.location;
-
-  if (picking) {
-    return (
-      <MapScreen Canvas={map.Canvas} readHead={map.readHead}
-        pick={{ onPicked: (at) => { set({ location: mapTapLocation(at.latitude, at.longitude, at.zoom) }); setNotice(null); setPicking(false); } }} />
-    );
-  }
 
   // The item's fields, as the contract wants them: empty text is null, and what does not apply does not go.
   const fields = (): HouseholdFields => {
@@ -173,7 +164,7 @@ export function HouseholdForm({ householdKey, map, back, onSaved }: HouseholdFor
   const at = (key: string, path: string, children: ReactNode) => (
     <View testID={`field-${key}`} style={{ gap: 6 }}>
       {children}
-      {problem?.path === path && <Text accessibilityRole="alert" style={{ fontSize: SIZES.small, color: colors.down }}>{problem.message}</Text>}
+      {problem?.path === path && <FieldRefusal problem={problem} />}
     </View>
   );
   const fieldPaths = new Set([
@@ -184,7 +175,13 @@ export function HouseholdForm({ householdKey, map, back, onSaved }: HouseholdFor
   const streetTypes = reference.dictionaries.stringDomains.tipo_logradouro;
   const propertyTypes = (reference.dictionaries.domains.tipo_de_imovel ?? []).map((entry) => ({ code: String(entry.code), label: entry.label }));
 
+  // The map to mark the point is opened from the end of the form. It is drawn over the form, which stays where it was —
+  // out of sight, out of the screen reader and out of reach of a touch — instead of taking its place: a form taken off
+  // the screen comes back at its top, with the point just marked and the button several screens below.
   return (
+    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1 }} pointerEvents={picking ? "none" : "auto"}
+      importantForAccessibility={picking ? "no-hide-descendants" : "auto"} accessibilityElementsHidden={picking}>
     <Screen title={householdKey === undefined ? "Novo domicílio" : "Editar domicílio"}>
       {at("micro_area_id", "micro_area_id",
         <Choice label="Microárea" options={loaded.areas.map((area) => ({ code: area.id, label: `${area.code} · ${area.name}` }))} value={draft.microAreaId}
@@ -233,5 +230,13 @@ export function HouseholdForm({ householdKey, map, back, onSaved }: HouseholdFor
       {general !== null && <Notice tone="down">{general}</Notice>}
       <Button label={saving ? "Salvando…" : "Salvar"} disabled={saving} onPress={() => { void save(); }} />
     </Screen>
+    </View>
+    {picking && (
+      <View style={StyleSheet.absoluteFill}>
+        <MapScreen Canvas={map.Canvas} readHead={map.readHead}
+          pick={{ onPicked: (at) => { set({ location: mapTapLocation(at.latitude, at.longitude, at.zoom) }); setNotice(null); setPicking(false); } }} />
+      </View>
+    )}
+    </View>
   );
 }

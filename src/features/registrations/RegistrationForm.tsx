@@ -6,14 +6,13 @@
 // answers; a document repeated on the tablet blocks. Labels and sentences
 // follow the dashboard's (modules/territory/RegistrationForm.tsx).
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 import { useServices } from "../../app/services";
 import { fmtDay } from "../../rules/homeVisit";
 import { createRegistryRules, type NewPatient, type PatientSex, type Problem, type RegistrationDraft } from "../../rules/registry";
 import { loadReference, type Reference } from "../../sync/reference";
-import { SIZES, useTheme } from "../../theme/theme";
 import { Choice, YesNo } from "../../ui/choices";
-import { Body, Button, Field, Muted, Notice, Screen, Title } from "../../ui/components";
+import { Body, Button, Field, FieldRefusal, Muted, Notice, Screen, Title } from "../../ui/components";
 import { SectionFields, dateFromScreen } from "../forms/SectionFields";
 import { NOT_READY, READ_ONLY } from "../households/HouseholdForm";
 import { AT_THE_DASHBOARD } from "../households/HouseholdScreen";
@@ -57,7 +56,6 @@ export interface RegistrationFormProps {
 }
 
 export function RegistrationForm({ registrationKey, householdKey, familyId, onSaved, onOpenExisting }: RegistrationFormProps) {
-  const { colors } = useTheme();
   const { db, crypto, now } = useServices();
   const [loaded, setLoaded] = useState<Loaded | "read_only" | "not_ready" | "missing" | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -157,7 +155,7 @@ export function RegistrationForm({ registrationKey, householdKey, familyId, onSa
   const at = (key: string, path: string, children: ReactNode) => (
     <View testID={`field-${key}`} style={{ gap: 6 }}>
       {children}
-      {problem?.path === path && <Text accessibilityRole="alert" style={{ fontSize: SIZES.small, color: colors.down }}>{problem.message}</Text>}
+      {problem?.path === path && <FieldRefusal problem={problem} />}
     </View>
   );
   const ownPaths = new Set([

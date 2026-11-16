@@ -11,8 +11,13 @@ import { newUuid } from "../../sync/testing";
 import { READ_ONLY } from "../households/HouseholdForm";
 import { AT_THE_DASHBOARD } from "../households/HouseholdScreen";
 import { HH, loadedTablet } from "../testing";
+import { scrollIntoView } from "../../ui/reveal";
 import { CPF_USED_HERE } from "./localDuplicates";
 import { LOOKS_LIKE, REFUSED_NOTE, RegistrationForm } from "./RegistrationForm";
+
+// The measuring and the scrolling are the device's: here, that each refusal asks to be brought into sight.
+jest.mock("../../ui/reveal", () => ({ ...jest.requireActual<typeof import("../../ui/reveal")>("../../ui/reveal"), scrollIntoView: jest.fn() }));
+const revealed = scrollIntoView as jest.MockedFunction<typeof scrollIntoView>;
 
 const NOW = Date.parse("2026-11-14T15:00:00Z");
 const FAMILY = "9d0e1f2a-3b4c-4d5e-9f6a-7b8c9d0e1f2a";
@@ -84,6 +89,24 @@ test("what the api would refuse is written under its field, in the api's order, 
   expect(await field("nacionalidade_cidadao").findByText("informe a nacionalidade")).toBeTruthy();
   expect(await outboxRepo.all(t.db)).toEqual([]);
   expect(t.onSaved).not.toHaveBeenCalled();
+});
+
+// More than ten things are asked of a new person: the refusal may be several screens above the button.
+test("each refusal is brought into sight: of the person, of the race and of a section", async () => {
+  await mount();
+  revealed.mockClear();
+  await type("Nome completo", "Benedita");
+  await press("Salvar cadastro");
+  expect(await field("full_name").findByText(NAME_MESSAGE)).toBeTruthy();
+  expect(revealed).toHaveBeenCalledTimes(1);
+  await typePerson();
+  await press("Salvar cadastro");
+  expect(await field("race_color").findByText("informe a raça/cor")).toBeTruthy();
+  expect(revealed).toHaveBeenCalledTimes(2);
+  await choose("race_color", "Parda");
+  await press("Salvar cadastro");
+  expect(await field("nacionalidade_cidadao").findByText("informe a nacionalidade")).toBeTruthy();
+  expect(revealed).toHaveBeenCalledTimes(3);
 });
 
 test("a refusal takes only the identification: the other sections are not asked and do not travel", async () => {

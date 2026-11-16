@@ -2,7 +2,13 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-
 import { DeviceEventEmitter, StyleSheet, Text } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import { SIZES } from "../theme/theme";
-import { Screen } from "./components";
+import { Button, FieldRefusal, Screen } from "./components";
+import { REVEAL_MARGIN, scrollIntoView } from "./reveal";
+import { useState } from "react";
+
+// The measuring and the scrolling are the device's (reveal.test.ts has the arithmetic): here, who asks for it and when.
+jest.mock("./reveal", () => ({ ...jest.requireActual<typeof import("./reveal")>("./reveal"), scrollIntoView: jest.fn() }));
+const revealed = scrollIntoView as jest.MockedFunction<typeof scrollIntoView>;
 
 // The app draws edge to edge: without the insets the title sits under the status bar and the last button
 // under the navigation bar (on a tablet, the taskbar), where the touch lands on the system instead of the app.
@@ -56,5 +62,46 @@ describe("Screen", () => {
     expect(padding()).toMatchObject({
       paddingTop: SIZES.pad, paddingBottom: SIZES.pad, paddingLeft: SIZES.pad, paddingRight: SIZES.pad,
     });
+  });
+});
+
+// A long form refuses a field far above the Save button: without this the person presses Save and sees nothing happen.
+describe("FieldRefusal", () => {
+  function Form() {
+    const [problem, setProblem] = useState<{ path: string; message: string } | null>(null);
+    return (
+      <Screen title="Cadastro">
+        {problem !== null && <FieldRefusal problem={problem} />}
+        <Button label="Salvar" onPress={() => setProblem({ path: "zip", message: "CEP com 8 dígitos" })} />
+      </Screen>
+    );
+  }
+  beforeEach(() => revealed.mockClear());
+
+  it("is brought into sight by the screen that holds it, below the status bar and with room for its field", async () => {
+    await render(
+      <SafeAreaInsetsContext.Provider value={{ top: 24, bottom: 60, left: 0, right: 0 }}><Form /></SafeAreaInsetsContext.Provider>,
+    );
+    expect(revealed).not.toHaveBeenCalled();
+    await fireEvent.press(screen.getByRole("button", { name: "Salvar" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("CEP com 8 dígitos");
+    expect(revealed).toHaveBeenCalledTimes(1);
+    const [scroll, node, margin] = revealed.mock.calls[0];
+    expect(scroll).not.toBeNull();
+    expect(node).not.toBeNull();
+    expect(margin).toBe(24 + REVEAL_MARGIN);
+  });
+
+  it("is brought into sight again when the same refusal comes back (saved again without fixing)", async () => {
+    await render(<Form />);
+    await fireEvent.press(screen.getByRole("button", { name: "Salvar" }));
+    await fireEvent.press(screen.getByRole("button", { name: "Salvar" }));
+    expect(revealed).toHaveBeenCalledTimes(2);
+  });
+
+  it("outside a Screen it is only the sentence", async () => {
+    await render(<FieldRefusal problem={{ message: "informe o sexo" }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("informe o sexo");
+    expect(revealed).not.toHaveBeenCalled();
   });
 });

@@ -4,12 +4,12 @@
 // appears by itself, with its key as the question until the app learns its
 // label. An answer left empty is not in the values at all (the item does not
 // carry the key).
-import { Text, View } from "react-native";
+import { View } from "react-native";
 import type { FieldSpec, RegistrationDictionaries, SectionKey } from "../../rules/dictionaries";
 import { FIELD_LABELS, sectionFieldLabel } from "../../rules/labels";
 import { SIZES, useTheme } from "../../theme/theme";
 import { Choice, MultiChoice, YesNo } from "../../ui/choices";
-import { Field, Title } from "../../ui/components";
+import { Field, FieldRefusal, Title } from "../../ui/components";
 
 type Values = Record<string, unknown>;
 export interface FieldProblem { path: string; message: string }
@@ -87,11 +87,10 @@ function Question({ section, spec, path, value, set, dict, show, problem }: {
     input = text((v) => (typeof v === "string" ? v : ""), (typed) => typed);
   }
 
-  const refusal = problem && problem.path === `${section}.${path}` ? problem.message : null;
   return (
     <View testID={`field-${path}`} style={{ gap: 6 }}>
       {input}
-      {refusal !== null && <Text accessibilityRole="alert" style={{ fontSize: SIZES.small, color: colors.down }}>{refusal}</Text>}
+      {problem && problem.path === `${section}.${path}` && <FieldRefusal problem={problem} />}
     </View>
   );
 }

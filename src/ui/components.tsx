@@ -1,9 +1,10 @@
 // The few building blocks every screen uses. Colours only from the theme;
 // every touch target at least 48 dp; text at least 18 sp.
-import { useContext, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, type ComponentRef, type ReactNode } from "react";
 import { KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View, type TextInputProps } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import { SIZES, useTheme } from "../theme/theme";
+import { REVEAL_MARGIN, scrollIntoView, type Measurable, type Scrollable } from "./reveal";
 
 const NO_INSETS = { top: 0, bottom: 0, left: 0, right: 0 };
 
@@ -11,6 +12,9 @@ const NO_INSETS = { top: 0, bottom: 0, left: 0, right: 0 };
 export function useScreenInsets() {
   return useContext(SafeAreaInsetsContext) ?? NO_INSETS;
 }
+
+// How something inside a `Screen` asks to be brought into sight (a refusal far above the button that caused it).
+const RevealContext = createContext<((node: Measurable | null) => void) | null>(null);
 
 // The app draws edge to edge: the content keeps clear of the status bar, the navigation bar (on a tablet, the
 // taskbar) and the cutouts, or the last button of a screen sits under a bar and the touch goes to the system.
@@ -22,17 +26,35 @@ export function Screen({ children, title }: { children: ReactNode; title?: strin
     paddingTop: SIZES.pad + insets.top, paddingBottom: SIZES.pad + insets.bottom,
     paddingLeft: SIZES.pad + insets.left, paddingRight: SIZES.pad + insets.right,
   };
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  // Edge to edge, what scrolls up passes behind the status bar: the margin starts below it.
+  const reveal = useCallback(
+    (node: Measurable | null) => scrollIntoView(scroll.current as unknown as Scrollable | null, node, insets.top + REVEAL_MARGIN),
+    [insets.top]);
   return (
     // Edge to edge, Android does not resize the window for the keyboard either: the scroll area ends where the
     // keyboard begins, and the native scroll brings the field in focus into what is left. Without this, on a
     // tablet (the keyboard takes half the screen) the person types in a field that is behind the keyboard.
     <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.bg }}>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ ...padding, gap: SIZES.gap }} keyboardShouldPersistTaps="handled">
-        {title !== undefined && <Title>{title}</Title>}
-        {children}
+      <ScrollView ref={scroll} style={{ flex: 1 }} contentContainerStyle={{ ...padding, gap: SIZES.gap }} keyboardShouldPersistTaps="handled">
+        <RevealContext.Provider value={reveal}>
+          {title !== undefined && <Title>{title}</Title>}
+          {children}
+        </RevealContext.Provider>
       </ScrollView>
     </KeyboardAvoidingView>
   );
+}
+
+// The sentence under a field the rules refused. A long form refuses a field far above the button: every refusal —
+// the same one again too, when the person saves again without fixing it — brings its sentence into sight, or the
+// person presses the button and sees nothing happen. `problem` is the object of this refusal: a new one each time.
+export function FieldRefusal({ problem }: { problem: { message: string } }) {
+  const { colors } = useTheme();
+  const reveal = useContext(RevealContext);
+  const sentence = useRef<ComponentRef<typeof Text>>(null);
+  useEffect(() => { reveal?.(sentence.current as unknown as Measurable | null); }, [problem, reveal]);
+  return <Text ref={sentence} accessibilityRole="alert" style={{ fontSize: SIZES.small, color: colors.down }}>{problem.message}</Text>;
 }
 
 export function Title({ children }: { children: ReactNode }) {

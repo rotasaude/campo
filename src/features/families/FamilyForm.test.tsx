@@ -8,7 +8,12 @@ import { newUuid } from "../../sync/testing";
 import { READ_ONLY } from "../households/HouseholdForm";
 import { saveHousehold } from "../households/save";
 import { AREA, HH, loadedTablet } from "../testing";
+import { scrollIntoView } from "../../ui/reveal";
 import { FamilyForm, MOVED_OUT_WARNING, NO_RESIDENTS } from "./FamilyForm";
+
+// The measuring and the scrolling are the device's: here, that each refusal asks to be brought into sight.
+jest.mock("../../ui/reveal", () => ({ ...jest.requireActual<typeof import("../../ui/reveal")>("../../ui/reveal"), scrollIntoView: jest.fn() }));
+const revealed = scrollIntoView as jest.MockedFunction<typeof scrollIntoView>;
 
 const NOW = Date.parse("2026-11-14T15:00:00Z");
 const FAMILY = "9d0e1f2a-3b4c-4d5e-9f6a-7b8c9d0e1f2a";
@@ -52,6 +57,17 @@ test("what the api would refuse is written under the field: no responsible, memb
   expect(await field("living_since").findByText("reside desde depois deste mês")).toBeTruthy();
   expect(await outboxRepo.all(t.db)).toEqual([]);
   expect(t.onSaved).not.toHaveBeenCalled();
+});
+
+test("each refusal is brought into sight, and again when saved without fixing", async () => {
+  await mount();
+  await screen.findByRole("header", { name: "Nova família" });
+  revealed.mockClear();
+  await press("Salvar família");
+  expect(await field("responsible").findByText("escolha o responsável")).toBeTruthy();
+  expect(revealed).toHaveBeenCalledTimes(1);
+  await press("Salvar família");
+  expect(revealed).toHaveBeenCalledTimes(2);
 });
 
 test("editing: the responsible is shown and cannot change; what the family has is in the form; moving out is final and says so", async () => {

@@ -9,7 +9,12 @@ import type { Db } from "../../db/types";
 import type { LocationPort } from "../../location/capture";
 import type { MapCanvasProps } from "../../map/canvas";
 import { AREA, HH, NEIGHBORHOOD, loadedTablet, stationChanged } from "../testing";
+import { scrollIntoView } from "../../ui/reveal";
 import { HouseholdForm, NO_FIX_MARK_ON_MAP, READ_ONLY } from "./HouseholdForm";
+
+// The measuring and the scrolling are the device's: here, that each refusal asks to be brought into sight.
+jest.mock("../../ui/reveal", () => ({ ...jest.requireActual<typeof import("../../ui/reveal")>("../../ui/reveal"), scrollIntoView: jest.fn() }));
+const revealed = scrollIntoView as jest.MockedFunction<typeof scrollIntoView>;
 
 // A drawing that lets the test touch the map.
 function Canvas(props: MapCanvasProps) {
@@ -93,6 +98,25 @@ test("what the api would refuse is refused on screen, under its field, and nothi
   expect(t.onSaved).not.toHaveBeenCalled();
 });
 
+// The CEP is at the top and the button at the end of a long form: without this the person presses Salvar and sees nothing.
+test("each refusal is brought into sight: under its own field and in the living conditions, and again when saved without fixing", async () => {
+  await mount();
+  revealed.mockClear();
+  await choose("property_type", "Domicílio");
+  await press("Salvar");
+  expect(await field("zip").findByText("CEP com 8 dígitos")).toBeTruthy();
+  expect(revealed).toHaveBeenCalledTimes(1);
+  await press("Salvar");
+  expect(revealed).toHaveBeenCalledTimes(2);
+
+  await fillAddress();
+  await fireEvent.press(field("localizacao").getByRole("radio", { name: /^Urbana/ }));
+  revealed.mockClear();
+  await press("Salvar");
+  expect(await field("situacao_moradia_posse_terra").findByText("informe a situação de moradia")).toBeTruthy();
+  expect(revealed).toHaveBeenCalledTimes(1);
+});
+
 test("a shop has no living conditions: the questions are not there and the item carries none", async () => {
   const t = await mount();
   await choose("property_type", "Domicílio");
@@ -139,6 +163,26 @@ test("no precise position: the screen says to mark on the map, and the map gives
   const [item] = await outboxRepo.all(t.db);
   expect(item.body.location).toMatchObject({ latitude: -25.4285, longitude: -49.2733, source: "map" });
   expect(JSON.stringify(item.body.location)).toMatch(/"accuracy_m":\d/);
+});
+
+// The map is opened from the end of the form. Were the form taken off the screen for it, it would come back at its top,
+// with the point just marked and the Salvar button several screens below.
+test("the form stays where it was under the map: there, out of sight and out of reach, and back when the map closes", async () => {
+  await mount();
+  await fillAddress();
+  await press("Marcar no mapa");
+  expect(await screen.findByRole("header", { name: "Marcar o ponto do imóvel" })).toBeTruthy();
+  // Not on the screen for whoever sees or touches it…
+  expect(screen.queryByLabelText("Logradouro")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Salvar" })).toBeNull();
+  // …and still there, with what was typed.
+  expect(screen.getByLabelText("Logradouro", { includeHiddenElements: true }).props.value).toBe("das Flores");
+
+  await fireEvent.press(await screen.findByText("tocar no mapa"));
+  await press("Usar este ponto");
+  expect(await screen.findByText("Ponto marcado no mapa")).toBeTruthy();
+  expect(screen.getByLabelText("Logradouro").props.value).toBe("das Flores");
+  expect(screen.queryByRole("header", { name: "Marcar o ponto do imóvel" })).toBeNull();
 });
 
 test("Back with the map open closes the map only: the form is there with what was typed, and Back then belongs to the navigator", async () => {

@@ -4,14 +4,13 @@
 // the dashboard) and with "moved out", which is final. The labels and the
 // sentences are the dashboard's (modules/territory/FamilyForm.tsx).
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 import { useServices } from "../../app/services";
 import { createRegistryRules, type Problem } from "../../rules/registry";
 import { familyEditable } from "../../sync/editable";
 import { loadReference, type Reference } from "../../sync/reference";
-import { SIZES, useTheme } from "../../theme/theme";
 import { Choice, YesNo } from "../../ui/choices";
-import { Body, Button, Field, Muted, Notice, Screen } from "../../ui/components";
+import { Body, Button, Field, FieldRefusal, Muted, Notice, Screen } from "../../ui/components";
 import { monthFromScreen, monthToScreen } from "../forms/SectionFields";
 import { NOT_READY, READ_ONLY } from "../households/HouseholdForm";
 import { readHousehold, type HouseholdView } from "../households/view";
@@ -26,7 +25,6 @@ interface Loaded { reference: Reference; view: HouseholdView; residents: Respons
 interface Draft { responsibleKey: string | null; income: string | null; members: string; since: string; movedOut: boolean }
 
 export function FamilyForm({ householdKey, familyId, onSaved }: { householdKey: string; familyId?: string; onSaved(): void }) {
-  const { colors } = useTheme();
   const { db, crypto, now } = useServices();
   const [loaded, setLoaded] = useState<Loaded | "read_only" | "not_ready" | "missing" | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -103,7 +101,7 @@ export function FamilyForm({ householdKey, familyId, onSaved }: { householdKey: 
   const at = (key: string, path: string, children: ReactNode) => (
     <View testID={`field-${key}`} style={{ gap: 6 }}>
       {children}
-      {problem?.path === path && <Text accessibilityRole="alert" style={{ fontSize: SIZES.small, color: colors.down }}>{problem.message}</Text>}
+      {problem?.path === path && <FieldRefusal problem={problem} />}
     </View>
   );
   const fieldPaths = ["responsible.patient_id", "income_band", "members_count", "living_since", "moved_out"];
