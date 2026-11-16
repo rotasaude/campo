@@ -21,6 +21,19 @@ module.exports = defineConfig([
   },
   { files: ["src/log.ts"], rules: { "no-console": "off" } },
   { files: ["src/sync/http.ts", "src/map/download.ts"], rules: { "no-restricted-globals": "off", "no-restricted-properties": "off" } },
+  // Maestro runs these in its own JavaScript, not in Node nor in the app: its API (`http`, `json`, `output`, `maestro`)
+  // and the `env:` of each flow are globals, and the scripts keep to `var`.
+  {
+    files: ["maestro/scripts/**/*.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: {
+        http: "readonly", json: "readonly", output: "writable", maestro: "readonly",
+        ACTION: "readonly", BODY: "readonly", EXPECT: "readonly", LABEL: "readonly", VALUE: "readonly", SERVER: "readonly",
+      },
+    },
+    rules: { "no-var": "off" },
+  },
   // Tests spy on the platform's fetch and on console to prove nothing leaks.
   { files: ["**/*.test.ts", "**/*.test.tsx", "src/**/testing.ts", "jest.setup.ts"], rules: { "no-restricted-globals": "off", "no-restricted-properties": "off" } },
 ]);
