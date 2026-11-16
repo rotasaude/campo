@@ -4,11 +4,17 @@ appId: br.rotasaude.campo
 ---
 # A flow that stopped half-way may have left the emulator without network.
 - setAirplaneMode: disabled
-- launchApp:
-    clearState: true
-- extendedWaitUntil:
-    visible: "Leia o QR do dashboard"
-    timeout: 30000
+# Right after clearing the data, Android sometimes kills the new process ("remove task")
+# and nothing comes back on screen: stop and launch again until the QR screen shows.
+- retry:
+    maxRetries: 3
+    commands:
+      - stopApp
+      - launchApp:
+          clearState: true
+      - extendedWaitUntil:
+          visible: "Leia o QR do dashboard"
+          timeout: 15000
 - tapOn:
     text: "Colar código"
     index: 1
