@@ -15,7 +15,8 @@ import { Body, Button, Muted, Notice, Screen } from "../../ui/components";
 import { loadHome } from "./homeData";
 
 export const VISITS_OFF = "Visita desligada pela secretaria";
-const TABLES = ["outbox", "who_to_visit", "micro_areas", "households"];
+// meta: the last sync and the clock; session: the switches of the city and the micro-areas.
+const TABLES = ["outbox", "who_to_visit", "micro_areas", "households", "meta", "session"];
 
 export function HomeScreen({ onOpenWho, onOpenToday, onNewActivity, onOpenHouseholds, onOpenMap, onOpenOutbox, onOpenAbout }: {
   onOpenWho(): void; onOpenToday(): void; onNewActivity(): void; onOpenHouseholds(): void; onOpenMap(): void; onOpenOutbox(): void; onOpenAbout(): void;

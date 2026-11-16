@@ -3,6 +3,7 @@ import { example } from "../contract/fixtures";
 import { expectValid } from "../contract/validate";
 import { outboxRepo } from "../db/repos/outboxRepo";
 import { territoryRepo } from "../db/repos/territoryRepo";
+import { dbEvents } from "../db/events";
 import { createTestDb } from "../db/testing/sqljsDb";
 import type { Db } from "../db/types";
 import { sendQueue } from "./dispatch";
@@ -60,6 +61,19 @@ test("full load from changes-first-page + changes-last-page", async () => {
   expect(await count(db, "who_to_visit")).toBe(WHO.micro_areas.length);
   expect(await meta(db, "cursor")).toBe(LAST.next_cursor);
   expect(await meta(db, "last_download_ok_at")).toBe("2026-11-14T18:00:00.000Z");
+});
+
+// The pages tell the screens about the territory before the download is complete: the moment of the last full download
+// is written after them, and the screens that show it are told then — or the home shows the round before (Task 26).
+test("a complete download tells the screens about meta once the moment of the last full download is written", async () => {
+  const db = await createTestDb();
+  const seen: (string | null)[] = [];
+  const stop = dbEvents.on("meta", () => { void meta(db, "last_download_ok_at").then((value) => seen.push(value)); });
+  const pages = [FIRST, LAST];
+  await downloadAll({ db, client: { changes: async () => pages.shift()! }, now: () => Date.parse("2026-11-16T12:00:00Z") });
+  stop();
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(seen.at(-1)).toBe("2026-11-16T12:00:00.000Z");
 });
 
 test("an HTTP failure in the middle keeps what was applied and does not claim a full download", async () => {

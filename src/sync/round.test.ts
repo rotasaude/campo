@@ -1,6 +1,7 @@
 import type { ChangesResponse, ReferenceResponse, SessionResponse, UploadItem } from "../contract";
 import { example } from "../contract/fixtures";
 import { outboxRepo } from "../db/repos/outboxRepo";
+import { dbEvents } from "../db/events";
 import { createTestDb } from "../db/testing/sqljsDb";
 import type { Db } from "../db/types";
 import { SECURE_KEYS } from "../security/secureStore";
@@ -214,6 +215,17 @@ test("a session of another contract: no round, and the outcome says the app must
   expect(await count(t.db, "session")).toBe(0);
   expect(await count(t.db, "households")).toBe(0);
   expect(t.syncMap).not.toHaveBeenCalled();
+});
+
+// What the session says (the features of the city, the teams) is on the home: it is read again when a round brings it.
+test("the screens are told when a round stores a new session", async () => {
+  const t = await setup();
+  const stored: unknown[] = [];
+  const stop = dbEvents.on("session", () => { void t.db.get<{ body: string }>("SELECT body FROM session WHERE id = 1").then((row) => stored.push(row && JSON.parse(row.body))); });
+  await runRound(t.deps, "button");
+  stop();
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(stored).toEqual([SESSION]);
 });
 
 test("the round measures the clock against server_time and keeps the city's offset", async () => {

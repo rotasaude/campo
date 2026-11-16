@@ -10,6 +10,7 @@
 //   stopped           rate limit, server or network: try again later, nothing is lost; app_outdated: the server speaks
 //                     another contract, and nothing is exchanged with it until the app is updated
 import type { SessionResponse } from "../contract";
+import { dbEvents } from "../db/events";
 import { territoryRepo } from "../db/repos/territoryRepo";
 import type { Db } from "../db/types";
 import { log } from "../log";
@@ -104,6 +105,9 @@ async function round(deps: RoundDeps): Promise<RoundOutcome> {
       // The token works: whatever suspended this tablet before is over.
       await tx.run("DELETE FROM meta WHERE key = ?", ["suspended"]);
     });
+    // What the session says (the city's switches, the teams) and the clock are on the screens.
+    dbEvents.emit("session");
+    dbEvents.emit("meta");
     await refreshReferenceOrKeep(deps, session.reference_version);
 
     const visitsOn = session.features.home_visits;

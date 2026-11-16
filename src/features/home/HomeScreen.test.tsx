@@ -1,9 +1,10 @@
-import { fireEvent, screen } from "@testing-library/react-native";
+import { act, fireEvent, screen } from "@testing-library/react-native";
 import { SyncContext, type SyncState } from "../../app/sync";
 import { fakeServices, renderWithServices } from "../../app/testing";
 import type { SessionResponse } from "../../contract";
 import { example } from "../../contract/fixtures";
 import { outboxRepo } from "../../db/repos/outboxRepo";
+import { dbEvents } from "../../db/events";
 import { createTestDb } from "../../db/testing/sqljsDb";
 import type { Db } from "../../db/types";
 import { enqueue } from "../../sync/outbox";
@@ -40,6 +41,24 @@ test("home shows counters, last sync and the day-25 warning", async () => {
   expect(screen.getByText("Última sincronização: 18/10/2026 12:00")).toBeTruthy();
   expect(screen.getByText("Sincronize até 17/11/2026: depois disso o território some do tablet")).toBeTruthy();
   for (const area of SESSION.teams[0].micro_areas) expect(screen.getByText(`${area.code} · ${area.name}`)).toBeTruthy();
+});
+
+// Task 26: after a round the home still showed the time of the round before.
+test("the home follows what a round writes: the last sync and the switches of the city", async () => {
+  const db = await seeded();
+  await mount(db);
+  expect(await screen.findByText("Última sincronização: 18/10/2026 12:00")).toBeTruthy();
+  await act(async () => {
+    await db.run("UPDATE meta SET value = '2026-11-14T14:30:00.000Z' WHERE key = 'last_download_ok_at'");
+    dbEvents.emit("meta");
+  });
+  expect(await screen.findByText("Última sincronização: 14/11/2026 11:30")).toBeTruthy();
+
+  await act(async () => {
+    await db.run("UPDATE session SET body = ?", [JSON.stringify({ ...SESSION, features: { ...SESSION.features, home_visits: false } })]);
+    dbEvents.emit("session");
+  });
+  expect(await screen.findByText("Visita desligada pela secretaria")).toBeTruthy();
 });
 
 test("the Sync button starts a round; while one runs it says so and cannot be pressed again", async () => {

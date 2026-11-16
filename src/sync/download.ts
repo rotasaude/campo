@@ -6,6 +6,7 @@
 // The download never touches the outbox: an edit waiting to be sent keeps the
 // version the person saw (Q41), and meets the station's change at send time.
 import type { ChangesResponse, HouseholdBody, MicroAreaBody, RegistrationBody, WhoToVisit } from "../contract";
+import { dbEvents } from "../db/events";
 import { territoryRepo } from "../db/repos/territoryRepo";
 import type { Db } from "../db/types";
 import { wipeTerritory } from "../security/wipe";
@@ -46,5 +47,7 @@ export async function downloadAll(deps: { db: Db; client: Pick<FieldClient, "cha
   }
   // Only a download that reached the end counts for the 30-day retention.
   await territoryRepo.setMeta(deps.db, "last_download_ok_at", new Date(deps.now()).toISOString());
+  // The pages told the screens about the territory before this was written: the ones that show it are told now.
+  dbEvents.emit("meta");
   return { complete: true };
 }
