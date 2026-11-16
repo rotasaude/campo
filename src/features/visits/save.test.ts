@@ -153,6 +153,42 @@ test("withdrawing a visit the server accepted is a withdrawal item with the reas
   expect((await local(db))[0].state).toBe("withdrawn");
 });
 
+// The database with one statement that fails: the nth run whose SQL matches. Inside a transaction too.
+function failingOn(db: Db, sql: RegExp, nth: number): Db {
+  let seen = 0;
+  const wrap = (inner: Db): Db => ({
+    exec: (text) => inner.exec(text),
+    run: async (text, params) => {
+      if (sql.test(text) && ++seen === nth) throw new Error("disk I/O error");
+      return inner.run(text, params);
+    },
+    all: (text, params) => inner.all(text, params),
+    get: (text, params) => inner.get(text, params),
+    tx: (fn) => inner.tx((handle) => fn(wrap(handle))),
+    close: () => inner.close(),
+  });
+  return wrap(db);
+}
+
+// Q82(3c): erasing a visit takes the visit's item, the person typed only for it and the line of the sheet. Half of
+// it would leave that person in the line to be created at the station for a visit that no longer exists.
+test("erasing a visit that was never sent is all or nothing: a failure in the middle leaves the line and the sheet as they were", async () => {
+  const db = await loadedTablet();
+  const uuid = await saveVisit(db, draft({ person: { kind: "new", patient: BENEDITA, duplicatesReviewed: true } }), ctx());
+  const before = (await outboxRepo.all(db)).map((item) => [item.type, item.client_uuid]);
+  expect(before.map(([type]) => type)).toEqual(["patient", "home_visit"]);
+
+  // The visit's item leaves the line; taking the typed person fails.
+  await expect(withdrawVisit(failingOn(db, /^DELETE FROM outbox WHERE seq/, 2), uuid, "", { newUuid })).rejects.toThrow("disk I/O error");
+  expect((await outboxRepo.all(db)).map((item) => [item.type, item.client_uuid])).toEqual(before);
+  expect((await local(db)).map((row) => row.client_uuid)).toEqual([uuid]);
+
+  // And whole when nothing fails.
+  expect(await withdrawVisit(db, uuid, "", { newUuid })).toBe("erased");
+  expect(await outboxRepo.all(db)).toEqual([]);
+  expect(await local(db)).toEqual([]);
+});
+
 test("a visit on its way to the server cannot be erased: the screen says to try again", async () => {
   const db = await loadedTablet();
   const uuid = await saveVisit(db, draft(), ctx());

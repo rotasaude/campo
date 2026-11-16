@@ -111,33 +111,39 @@ export async function todayVisits(db: Db, now: number): Promise<TodayVisit[]> {
 
 // A visit that never left the tablet is erased (with what was created only for it); one the server has is withdrawn by
 // an item of its own, with the reason — the sheet only changes when the server accepts the withdrawal.
+// One transaction: the visit's item, the person typed only for it and the line of the sheet go together or not at all
+// (half of it would leave that person in the line, to be created at the station for a visit that no longer exists).
 export async function withdrawVisit(db: Db, clientUuid: string, reason: string, deps: { newUuid(): string }): Promise<"erased" | "queued"> {
-  const visit = await db.get<{ state: string }>("SELECT state FROM local_visits WHERE client_uuid = ?", [clientUuid]);
-  if (!visit) throw new Error("visita não encontrada");
-  const item = await outboxRepo.byClientUuid(db, clientUuid);
-  if (item) {
-    if (item.state === "sending") throw new Error(VISIT_BEING_SENT);
-    await removeUnsent(db, clientUuid);
-    // A person typed only for this visit goes with it.
-    for (const dep of item.depends_on) {
-      const cited = await outboxRepo.byClientUuid(db, dep.client_uuid);
-      if (cited?.type === "patient" && cited.state !== "sending") await removeUnsent(db, cited.client_uuid);
-    }
-    await db.run("DELETE FROM local_visits WHERE client_uuid = ?", [clientUuid]);
-    dbEvents.emit("local_visits");
-    return "erased";
+  try {
+    return await db.tx(async (tx) => {
+      const visit = await tx.get<{ state: string }>("SELECT state FROM local_visits WHERE client_uuid = ?", [clientUuid]);
+      if (!visit) throw new Error("visita não encontrada");
+      const item = await outboxRepo.byClientUuid(tx, clientUuid);
+      if (item) {
+        if (item.state === "sending") throw new Error(VISIT_BEING_SENT);
+        await removeUnsent(tx, clientUuid);
+        // A person typed only for this visit goes with it.
+        for (const dep of item.depends_on) {
+          const cited = await outboxRepo.byClientUuid(tx, dep.client_uuid);
+          if (cited?.type === "patient" && cited.state !== "sending") await removeUnsent(tx, cited.client_uuid);
+        }
+        await tx.run("DELETE FROM local_visits WHERE client_uuid = ?", [clientUuid]);
+        return "erased";
+      }
+      // Not in the line and never accepted: the server does not have it, so there is nothing to withdraw — only the line of the sheet goes.
+      if (visit.state !== "accepted") {
+        await tx.run("DELETE FROM local_visits WHERE client_uuid = ?", [clientUuid]);
+        return "erased";
+      }
+      const queued = (await outboxRepo.all(tx)).some((other) => other.type === "home_visit_withdrawal" && other.body.visit_client_uuid === clientUuid);
+      if (queued) return "queued";
+      const refusal = textProblem(reason, { ...WITHDRAW_REASON, path: "reason" });
+      if (refusal) throw new Error(refusal.text);
+      await enqueue(tx, { type: "home_visit_withdrawal", body: { visit_client_uuid: clientUuid, reason: reason.trim() } }, deps.newUuid);
+      return "queued";
+    });
+  } finally {
+    // Whichever way it ended, the screens read again what the database really has now.
+    for (const table of ["outbox", "local_visits", "households", "registrations", "local_activities"]) dbEvents.emit(table);
   }
-  // Not in the line and never accepted: the server does not have it, so there is nothing to withdraw — only the line of the sheet goes.
-  if (visit.state !== "accepted") {
-    await db.run("DELETE FROM local_visits WHERE client_uuid = ?", [clientUuid]);
-    dbEvents.emit("local_visits");
-    return "erased";
-  }
-  const queued = (await outboxRepo.all(db)).some((other) => other.type === "home_visit_withdrawal" && other.body.visit_client_uuid === clientUuid);
-  if (queued) return "queued";
-  const refusal = textProblem(reason, { ...WITHDRAW_REASON, path: "reason" });
-  if (refusal) throw new Error(refusal.text);
-  await enqueue(db, { type: "home_visit_withdrawal", body: { visit_client_uuid: clientUuid, reason: reason.trim() } }, deps.newUuid);
-  dbEvents.emit("local_visits");
-  return "queued";
 }
