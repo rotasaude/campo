@@ -74,6 +74,6 @@ test("without a session (the first load has not happened) everything is empty, n
   const db = await createTestDb();
   expect(await loadHome(db, NOW)).toEqual({
     microAreas: [], toVisit: 0, pending: 0, attention: 0, conflicts: 0, lastSync: null, territoryWarning: null, clockWarning: null,
-    appUpdate: false, visitsOff: false, activitiesOn: false,
+    appUpdate: false, visitsOff: false, activitiesOn: false, registryOn: false,
   });
 });

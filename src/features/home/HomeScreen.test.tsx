@@ -53,13 +53,25 @@ test("while a round runs the button is disabled", async () => {
   expect(await screen.findByRole("button", { name: "Sincronizando…" })).toBeDisabled();
 });
 
-test("home with home_visits off shows only queue and Sync", async () => {
-  await mount(await seeded({ ...SESSION, features: { ...SESSION.features, home_visits: false } }));
+// Q82(3e): each part of the home follows its own switch of the city.
+test("home with home_visits off has no way into the visit; households and the map follow the registry", async () => {
+  await mount(await seeded({ ...SESSION, features: { ...SESSION.features, home_visits: false, territory_registry: true } }));
   expect(await screen.findByText("Visita desligada pela secretaria")).toBeTruthy();
   expect(screen.getByText("Pendentes de envio: 1")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Sincronizar" })).toBeTruthy();
   expect(screen.queryByText(/A visitar/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Quem visitar" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Minhas visitas de hoje" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Domicílios" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Mapa" })).toBeTruthy();
+});
+
+test("with territory_registry off the home has no way into the households nor the map; the visit stays", async () => {
+  await mount(await seeded({ ...SESSION, features: { ...SESSION.features, home_visits: true, territory_registry: false } }));
+  expect(await screen.findByRole("button", { name: "Quem visitar" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Minhas visitas de hoje" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Domicílios" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Mapa" })).toBeNull();
 });
 
 test("the collective activity is offered only where the city has it on", async () => {

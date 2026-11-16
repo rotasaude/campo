@@ -1,6 +1,8 @@
 // The first screen after the PIN: what there is to do today and what the
-// tablet still owes the server. With the visit turned off by the city, only
-// the queue and the sync button remain.
+// tablet still owes the server. Each way in follows its own switch of the city:
+// the visit (who to visit, today's visits), the collective activity, and the
+// territory registry (households and the map). The queue and the sync button
+// are always there.
 import { useCallback } from "react";
 import { View } from "react-native";
 import { useServices } from "../../app/services";
@@ -49,8 +51,8 @@ export function HomeScreen({ onOpenWho, onOpenToday, onNewActivity, onOpenHouseh
       {!home.visitsOff && <Button label="Quem visitar" variant="secondary" onPress={onOpenWho} />}
       {!home.visitsOff && <Button label="Minhas visitas de hoje" variant="secondary" onPress={onOpenToday} />}
       {home.activitiesOn && <Button label="Nova atividade coletiva" variant="secondary" onPress={onNewActivity} />}
-      <Button label="Domicílios" variant="secondary" onPress={onOpenHouseholds} />
-      <Button label="Mapa" variant="secondary" onPress={onOpenMap} />
+      {home.registryOn && <Button label="Domicílios" variant="secondary" onPress={onOpenHouseholds} />}
+      {home.registryOn && <Button label="Mapa" variant="secondary" onPress={onOpenMap} />}
       <Button label="Ver envios" variant="secondary" onPress={onOpenOutbox} />
       <Button label="Sobre" variant="secondary" onPress={onOpenAbout} />
     </Screen>

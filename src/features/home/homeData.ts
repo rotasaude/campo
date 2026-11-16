@@ -18,6 +18,8 @@ export interface HomeData {
   visitsOff: boolean;
   // The collective activity is offered to every tablet of a city that has it on; the api decides who may register.
   activitiesOn: boolean;
+  // The households and the map are the territory registry's: they follow its own switch, not the visit's (Q82).
+  registryOn: boolean;
 }
 
 const DAY_MS = 86_400_000;
@@ -47,5 +49,6 @@ export async function loadHome(db: Db, now: number): Promise<HomeData> {
     appUpdate: await referenceNeedsAppUpdate(db),
     visitsOff: session !== null && session.features.home_visits === false,
     activitiesOn: session !== null && session.features.collective_activities === true,
+    registryOn: session !== null && session.features.territory_registry === true,
   };
 }
