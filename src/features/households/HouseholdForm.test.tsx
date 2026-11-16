@@ -185,6 +185,27 @@ test("the form stays where it was under the map: there, out of sight and out of 
   expect(screen.queryByRole("header", { name: "Marcar o ponto do imóvel" })).toBeNull();
 });
 
+// A marked point adds "Tirar o ponto" above the button: on a tablet that pushes Salvar under the taskbar, and saving is
+// what the person does next.
+test("marking the point, on the map or by the GPS, brings the Salvar button into sight; taking the point off does not", async () => {
+  await mount({ location: gps(8.5) });
+  await fillAddress();
+  revealed.mockClear();
+  await press("Marcar no mapa");
+  await fireEvent.press(await screen.findByText("tocar no mapa"));
+  await press("Usar este ponto");
+  expect(await screen.findByText("Ponto marcado no mapa")).toBeTruthy();
+  expect(revealed).toHaveBeenCalledTimes(1);
+  expect(revealed.mock.calls[0][1]).not.toBeNull();
+
+  await press("Tirar o ponto");
+  expect(revealed).toHaveBeenCalledTimes(1);
+
+  await press("Usar o GPS aqui na frente");
+  expect(await screen.findByText("Ponto marcado pelo GPS (precisão de 8,5 m)")).toBeTruthy();
+  expect(revealed).toHaveBeenCalledTimes(2);
+});
+
 test("Back with the map open closes the map only: the form is there with what was typed, and Back then belongs to the navigator", async () => {
   const t = await mount();
   await fillAddress();

@@ -57,6 +57,15 @@ export function FieldRefusal({ problem }: { problem: { message: string } }) {
   return <Text ref={sentence} accessibilityRole="alert" style={{ fontSize: SIZES.small, color: colors.down }}>{problem.message}</Text>;
 }
 
+// Around what the person needs next (the button that saves): each time `after` becomes something — a new object each
+// time it happens — what is inside is brought into sight. Null or undefined: nothing happened, nothing moves.
+export function InSightAfter({ after, children }: { after: unknown; children: ReactNode }) {
+  const reveal = useContext(RevealContext);
+  const box = useRef<ComponentRef<typeof View>>(null);
+  useEffect(() => { if (after !== null && after !== undefined) reveal?.(box.current as unknown as Measurable | null); }, [after, reveal]);
+  return <View ref={box}>{children}</View>;
+}
+
 export function Title({ children }: { children: ReactNode }) {
   const { colors } = useTheme();
   return <Text accessibilityRole="header" style={{ fontSize: SIZES.title, fontWeight: "700", color: colors.ink }}>{children}</Text>;

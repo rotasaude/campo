@@ -12,7 +12,7 @@ import type { MapCanvasProps } from "../../map/canvas";
 import { createRegistryRules, type HouseholdInput, type Problem } from "../../rules/registry";
 import { loadReference, type Reference } from "../../sync/reference";
 import { Choice, YesNo } from "../../ui/choices";
-import { Body, Button, Field, FieldRefusal, Muted, Notice, Screen, Title } from "../../ui/components";
+import { Body, Button, Field, FieldRefusal, InSightAfter, Muted, Notice, Screen, Title } from "../../ui/components";
 import { SectionFields } from "../forms/SectionFields";
 import { MapScreen } from "../map/MapScreen";
 import { canEditRegistry, loadSession, myMicroAreas, type MyMicroArea } from "../session";
@@ -228,7 +228,10 @@ export function HouseholdForm({ householdKey, map, back, onSaved }: HouseholdFor
 
       {notice !== null && <Notice tone="warn">{notice}</Notice>}
       {general !== null && <Notice tone="down">{general}</Notice>}
-      <Button label={saving ? "Salvando…" : "Salvar"} disabled={saving} onPress={() => { void save(); }} />
+      {/* A marked point adds "Tirar o ponto" above the button and pushes it down — on a tablet, under the taskbar. */}
+      <InSightAfter after={draft.location}>
+        <Button label={saving ? "Salvando…" : "Salvar"} disabled={saving} onPress={() => { void save(); }} />
+      </InSightAfter>
     </Screen>
     </View>
     {picking && (
