@@ -51,6 +51,19 @@ test("the day-25 warning names the last day to sync; before it there is none", a
   expect((await loadHome(db, at(29))).territoryWarning).toBe("Sincronize até 31/10/2026: depois disso o território some do tablet");
 });
 
+// campo#2: the warning is the server's day 25, and a clock set back does not take it away.
+test("the day-25 warning counts on the server's clock and stays when the tablet is set back", async () => {
+  const last = "2026-10-01T15:00:00.000Z";
+  const at = (days: number) => Date.parse(last) + days * DAY;
+  const ahead = await setup({ lastOk: last, skewMs: -10 * DAY });
+  expect((await loadHome(ahead, at(34))).territoryWarning).toBeNull(); // the tablet reads 34, the server 24
+  expect((await loadHome(ahead, at(35))).territoryWarning).not.toBeNull();
+
+  const setBack = await setup({ lastOk: last });
+  await setBack.run("INSERT INTO meta (key, value) VALUES ('clock_high_water_ms', ?)", [String(at(26))]);
+  expect((await loadHome(setBack, at(3))).territoryWarning).toBe("Sincronize até 31/10/2026: depois disso o território some do tablet");
+});
+
 test("never synced: no last sync and no warning", async () => {
   const db = await setup({ lastOk: null });
   const home = await loadHome(db, NOW);

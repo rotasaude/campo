@@ -89,6 +89,17 @@ test("after 5 min in background the app locks; a shorter absence does not", asyn
   expect(screen.queryByText("telas principais")).toBeNull();
 });
 
+// campo#2: five minutes away lock even when the tablet's clock was set back to show one.
+test("five minutes away lock even with the tablet's clock set back during them", async () => {
+  const { platform } = await paired();
+  await mount(platform);
+  await unlock();
+  await screen.findByText("telas principais");
+
+  await act(async () => { platform.appState.emit("background"); platform.clock.now += 60_000; platform.clock.mono += 5 * 60_000; platform.appState.emit("active"); });
+  expect(await screen.findByRole("header", { name: "Digite o PIN" })).toBeTruthy();
+});
+
 // Q75(8): a lock in the middle of a form keeps the form — hidden, out of reach, with nothing going to the server.
 test("locked after 5 min: the screens below stay mounted but hidden, the scheduler stops, and what was typed is back after the PIN", async () => {
   const { platform } = await paired();

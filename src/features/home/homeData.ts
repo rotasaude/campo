@@ -5,6 +5,7 @@ import type { Db } from "../../db/types";
 import { formatCityDate, formatCityDateTime, needsClockWarning } from "../../sync/clock";
 import { referenceNeedsAppUpdate } from "../../sync/reference";
 import { TERRITORY_MAX_DAYS, territoryAge } from "../../sync/retention";
+import { HIGH_WATER_KEY, trustedTime } from "../../sync/trustedTime";
 
 export interface HomeData {
   microAreas: { id: string; code: string; name: string }[];
@@ -36,7 +37,9 @@ export async function loadHome(db: Db, now: number): Promise<HomeData> {
   const count = (...names: string[]) => names.reduce((sum, name) => sum + (states.get(name) ?? 0), 0);
   const who = await db.all<{ people: string }>("SELECT people FROM who_to_visit");
 
-  const age = territoryAge(lastOk, now);
+  // The server's day, never before the latest time seen (campo#2); read only, the round is the one that moves it.
+  const highWater = Number(meta.get(HIGH_WATER_KEY) ?? NaN);
+  const age = territoryAge(lastOk, trustedTime(now, skew, Number.isFinite(highWater) ? highWater : null));
   const limit = lastOk === null ? null : formatCityDate(new Date(Date.parse(lastOk) + TERRITORY_MAX_DAYS * DAY_MS).toISOString(), offset);
 
   return {

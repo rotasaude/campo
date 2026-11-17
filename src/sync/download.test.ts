@@ -63,6 +63,16 @@ test("full load from changes-first-page + changes-last-page", async () => {
   expect(await meta(db, "last_download_ok_at")).toBe("2026-11-14T18:00:00.000Z");
 });
 
+// campo#2: the moment of the last full download is the server's, so a tablet clock fixed later does not move the 30 days.
+test("the last full download is written in the server's time", async () => {
+  const db = await createTestDb();
+  await db.run("UPDATE meta SET value = ? WHERE key = 'clock_skew_ms'", [String(10 * 86_400_000)]); // the tablet is 10 days behind
+  const pages = [FIRST, LAST];
+  const client = { changes: jest.fn(async () => pages.shift()!) };
+  await downloadAll({ db, client, now: () => Date.parse("2026-11-04T18:00:00Z") });
+  expect(await meta(db, "last_download_ok_at")).toBe("2026-11-14T18:00:00.000Z");
+});
+
 // The pages tell the screens about the territory before the download is complete: the moment of the last full download
 // is written after them, and the screens that show it are told then — or the home shows the round before (Task 26).
 test("a complete download tells the screens about meta once the moment of the last full download is written", async () => {

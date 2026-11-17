@@ -29,7 +29,8 @@ export function cipheredRaw(inner: Db, cipher: string | null): Db {
 
 export interface FakePlatform extends Platform {
   secure: ReturnType<typeof memorySecure>;
-  clock: { now: number };
+  // `mono` is the process's clock: it moves only when a test moves it.
+  clock: { now: number; mono: number };
   // What the server answers next; null = works.
   server: { fail: HttpFailure | null; session: SessionResponse; requests: string[] };
   appState: Platform["appState"] & { emit(status: string): void };
@@ -42,7 +43,7 @@ export interface FakePlatform extends Platform {
 
 export function fakePlatform(o: { cipher?: string | null } = {}): FakePlatform {
   const secure = memorySecure();
-  const clock = { now: Date.parse("2026-11-14T15:00:00Z") };
+  const clock = { now: Date.parse("2026-11-14T15:00:00Z"), mono: 0 };
   const server: FakePlatform["server"] = { fail: null, session: SESSION, requests: [] };
   const listeners = new Set<(status: string) => void>();
   let scanned: (text: string) => void = () => undefined;
@@ -74,6 +75,7 @@ export function fakePlatform(o: { cipher?: string | null } = {}): FakePlatform {
     crypto: { digestHex: sha256.digestHex, randomUUID: () => "00000000-0000-4000-9000-000000000001" },
     random: fixedRandom,
     now: () => clock.now,
+    monotonic: () => clock.mono,
     fs: {
       documentDirectory: "file:///data/user/0/br.rotasaude.campo/files/",
       deleteAsync: async (uri) => { deleted.push(uri); },

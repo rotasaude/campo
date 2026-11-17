@@ -15,6 +15,8 @@ export interface Platform {
   crypto: CryptoPort;
   random(n: number): Uint8Array;
   now(): number;
+  // A clock of the process that only goes forward (performance.now): what the tablet's clock cannot be trusted for.
+  monotonic(): number;
   fs: MapFsPort;
   net: { isOnline(): Promise<boolean>; isWifi(): Promise<boolean> };
   // The SQLCipher connection (one per process) and how to forget it after the file is erased.

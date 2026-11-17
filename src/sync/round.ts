@@ -23,6 +23,7 @@ import { recoverSending } from "./outbox";
 import { refreshReference } from "./reference";
 import { enforceTerritoryAge, purgeAccepted } from "./retention";
 import { handleStale } from "./stale";
+import { anchorServerTime } from "./trustedTime";
 
 export type RoundTrigger = "open" | "foreground" | "timer" | "button" | "after_pairing";
 export type RoundOutcome =
@@ -85,15 +86,27 @@ async function failed(deps: RoundDeps, failure: HttpFailure): Promise<RoundOutco
 
 async function round(deps: RoundDeps): Promise<RoundOutcome> {
   const { db, client } = deps;
-  // Even offline: 30 days without a complete download and the copy of the territory goes.
-  await enforceTerritoryAge(db, deps.now());
-  if (!(await deps.net.isOnline())) return { kind: "skipped", reason: "offline" };
+  // Even offline: 30 days without a complete download and the copy of the territory goes. Online, the age is judged
+  // after the session, with the clock it measures (campo#2); without a session, with the last difference known.
+  if (!(await deps.net.isOnline())) {
+    await enforceTerritoryAge(db, deps.now());
+    return { kind: "skipped", reason: "offline" };
+  }
   await recoverSending(db);
 
   try {
-    const session = await client.session();
+    let session: SessionResponse;
+    try {
+      session = await client.session();
+    } catch (err) {
+      await enforceTerritoryAge(db, deps.now());
+      throw err;
+    }
     // Another contract: its answers are not this app's to read. Nothing is kept from it, sent to it or downloaded.
-    if (!speaksOurContract(session)) return { kind: "stopped", reason: "app_outdated" };
+    if (!speaksOurContract(session)) {
+      await enforceTerritoryAge(db, deps.now());
+      return { kind: "stopped", reason: "app_outdated" };
+    }
     const skew = measureSkew(session.server_time, deps.now());
     const offset = cityOffsetMinutes(session.server_time);
     await db.tx(async (tx) => {
@@ -102,9 +115,11 @@ async function round(deps: RoundDeps): Promise<RoundOutcome> {
         [JSON.stringify(session), new Date(deps.now()).toISOString()]);
       await territoryRepo.setMeta(tx, "clock_skew_ms", String(skew));
       await territoryRepo.setMeta(tx, "city_offset_min", String(offset));
+      await anchorServerTime(tx, Date.parse(session.server_time));
       // The token works: whatever suspended this tablet before is over.
       await tx.run("DELETE FROM meta WHERE key = ?", ["suspended"]);
     });
+    await enforceTerritoryAge(db, deps.now());
     // What the session says (the city's switches, the teams) and the clock are on the screens.
     dbEvents.emit("session");
     dbEvents.emit("meta");

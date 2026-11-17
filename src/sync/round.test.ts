@@ -253,6 +253,30 @@ test("a territory older than 30 days is wiped at the start of the round, even of
   expect((await outboxRepo.all(t.db)).map((i) => i.client_uuid)).toEqual([kept.client_uuid]);
 });
 
+// campo#2: online, the territory's age is measured after the session, with the clock that session measured — a tablet
+// whose clock was fixed since the last round is not judged by the old difference.
+test("online, the 30 days are judged with the clock of this round's session", async () => {
+  const t = await setup();
+  await t.db.run("INSERT INTO households (key, micro_area_id, body, street_norm, number) VALUES ('kept', 'm', '{}', 'x', '1')");
+  // Server time of the last full download: 25 days ago. Back then the tablet ran 10 days behind; it was fixed since.
+  await t.db.run("INSERT INTO meta (key, value) VALUES ('last_download_ok_at', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    [new Date(NOW - 25 * 86_400_000).toISOString()]);
+  await t.db.run("UPDATE meta SET value = ? WHERE key = 'clock_skew_ms'", [String(10 * 86_400_000)]);
+  // The download fails, so what is checked is only what the round decided about the copy it had.
+  await runRound({ ...t.deps, client: { ...t.deps.client, changes: async () => { throw new FieldHttpError({ kind: "network" }); } } }, "timer");
+  expect(await count(t.db, "households")).toBe(1);
+  expect(await meta(t.db, "clock_skew_ms")).toBe("0");
+  expect(await meta(t.db, "clock_high_water_ms")).toBe(String(Date.parse(SESSION.server_time)));
+});
+
+test("a server that cannot be reached still judges the 30 days, with the last difference known", async () => {
+  const t = await setup({ fail: { session: { kind: "network" } } });
+  await t.db.run("INSERT INTO households (key, micro_area_id, body, street_norm, number) VALUES ('old', 'm', '{}', 'x', '1')");
+  await t.db.run("INSERT INTO meta (key, value) VALUES ('last_download_ok_at', '2026-10-01T12:00:00.000Z')");
+  await runRound(t.deps, "timer");
+  expect(await count(t.db, "households")).toBe(0);
+});
+
 test("a failing map sync never changes the outcome of the round", async () => {
   const t = await setup();
   t.syncMap.mockRejectedValueOnce(new Error("disk full"));

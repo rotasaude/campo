@@ -49,6 +49,7 @@ export const devicePlatform: Platform = {
   },
   random: (n) => Crypto.getRandomBytes(n),
   now: () => Date.now(),
+  monotonic: () => performance.now(),
   fs: {
     documentDirectory: LegacyFs.documentDirectory ?? "",
     makeDirectoryAsync: (uri, options) => LegacyFs.makeDirectoryAsync(uri, options),

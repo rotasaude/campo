@@ -31,6 +31,38 @@ test("day 24 no warn, day 25 warn, day 30 wipes territory but not the outbox", a
   expect(await enforceTerritoryAge(db, at(31))).toBe(false);
 });
 
+// campo#2: the 30 days are the server's, not the tablet's clock.
+test("a tablet ten days ahead of the server does not shorten the 30 days", async () => {
+  const db = await createTestDb();
+  await db.run("INSERT INTO households (key, micro_area_id, body, street_norm, number) VALUES ('h', 'm', '{}', 'x', '1')");
+  await db.run("INSERT INTO meta (key, value) VALUES ('last_download_ok_at', ?), ('clock_skew_ms', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    [LAST, String(-10 * DAY)]);
+  // The tablet reads day 39, the server day 29.
+  expect(await enforceTerritoryAge(db, at(39))).toBe(false);
+  expect(await count(db, "households")).toBe(1);
+  expect(await enforceTerritoryAge(db, at(40))).toBe(true);
+});
+
+test("a tablet ten days behind the server does not stretch the 30 days", async () => {
+  const db = await createTestDb();
+  await db.run("INSERT INTO households (key, micro_area_id, body, street_norm, number) VALUES ('h', 'm', '{}', 'x', '1')");
+  await db.run("INSERT INTO meta (key, value) VALUES ('last_download_ok_at', ?), ('clock_skew_ms', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    [LAST, String(10 * DAY)]);
+  // The tablet reads day 20, the server day 30.
+  expect(await enforceTerritoryAge(db, at(20))).toBe(true);
+});
+
+test("a clock set back between two openings does not take days off the territory's age", async () => {
+  const db = await createTestDb();
+  await db.run("INSERT INTO households (key, micro_area_id, body, street_norm, number) VALUES ('h', 'm', '{}', 'x', '1')");
+  await db.run("INSERT INTO meta (key, value) VALUES ('last_download_ok_at', ?)", [LAST]);
+  expect(await enforceTerritoryAge(db, at(29))).toBe(false);
+  // Next opening: the tablet was set back twenty days. Before, the age read 9 days; the time seen does not go back.
+  expect(await enforceTerritoryAge(db, at(9))).toBe(false);
+  expect((await db.get<{ value: string }>("SELECT value FROM meta WHERE key = 'clock_high_water_ms'"))?.value).toBe(String(at(29)));
+  expect(await enforceTerritoryAge(db, at(30))).toBe(true);
+});
+
 test("a tablet that never completed a download has nothing to expire", async () => {
   const db = await createTestDb();
   await db.run("INSERT INTO households (key, micro_area_id, body, street_norm, number) VALUES ('h', 'm', '{}', 'x', '1')");

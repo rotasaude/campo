@@ -6,6 +6,7 @@ import { dbEvents } from "../db/events";
 import { territoryRepo } from "../db/repos/territoryRepo";
 import type { Db } from "../db/types";
 import { wipeTerritory } from "../security/wipe";
+import { readTrustedNow } from "./trustedTime";
 
 export const TERRITORY_MAX_DAYS = 30;
 export const TERRITORY_WARN_DAY = 25;
@@ -20,7 +21,9 @@ export function territoryAge(lastOkAt: string | null, now: number): { days: numb
 }
 
 // True when the territory was erased. wipeTerritory also forgets the cursor and the date, so the next download is a full one.
-export async function enforceTerritoryAge(db: Db, now: number): Promise<boolean> {
+// `deviceNow` is the tablet's clock; the age is counted on the server's time (trustedTime.ts, campo#2).
+export async function enforceTerritoryAge(db: Db, deviceNow: number): Promise<boolean> {
+  const now = await readTrustedNow(db, deviceNow);
   if (!territoryAge(await territoryRepo.getMeta(db, "last_download_ok_at"), now).expired) return false;
   await wipeTerritory(db);
   territoryRepo.emitTerritory();

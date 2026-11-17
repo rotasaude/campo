@@ -11,6 +11,7 @@ import { territoryRepo } from "../db/repos/territoryRepo";
 import type { Db } from "../db/types";
 import { wipeTerritory } from "../security/wipe";
 import type { FieldClient } from "./http";
+import { readTrustedNow } from "./trustedTime";
 
 export async function applyPage(db: Db, page: ChangesResponse): Promise<void> {
   await db.tx(async (tx) => {
@@ -45,8 +46,8 @@ export async function downloadAll(deps: { db: Db; client: Pick<FieldClient, "cha
     await applyPage(deps.db, page);
     if (!page.has_more) break;
   }
-  // Only a download that reached the end counts for the 30-day retention.
-  await territoryRepo.setMeta(deps.db, "last_download_ok_at", new Date(deps.now()).toISOString());
+  // Only a download that reached the end counts for the 30-day retention, written in the server's time (campo#2).
+  await territoryRepo.setMeta(deps.db, "last_download_ok_at", new Date(await readTrustedNow(deps.db, deps.now())).toISOString());
   // The pages told the screens about the territory before this was written: the ones that show it are told now.
   dbEvents.emit("meta");
   return { complete: true };
