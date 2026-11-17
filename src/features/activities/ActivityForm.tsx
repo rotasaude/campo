@@ -98,7 +98,11 @@ export function ActivityForm({ onSaved }: { onSaved(): void }) {
     today: data.today, min_date: data.session.min_date, domains,
     teams: data.session.teams.map((team) => ({
       id: team.id, ine: team.ine, name: team.name, cbo: data.session.professional.cbo, can_register: true,
-      professionals: professionalOptions(data.reference, team.id).map((p) => ({ ...p, in_team: true })),
+      // Whoever registers is the activity's header, never one of the professionals who took part (the api refuses it;
+      // the dashboard takes them out on the server). The reference carries the whole team, this person included.
+      professionals: professionalOptions(data.reference, team.id)
+        .filter((p) => p.id !== data.session.professional.id)
+        .map((p) => ({ ...p, in_team: true })),
     })),
     units: healthUnitOptions(data.reference).map((unit) => ({ id: unit.id, name: unit.name, has_cnes: unit.has_cnes })),
   };

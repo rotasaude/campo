@@ -79,6 +79,22 @@ test("a group session (type 5) with nobody on the list is refused, with every ot
   expect(t.onSaved).not.toHaveBeenCalled();
 });
 
+// campo#5: whoever registers is already the activity's header — the api refuses them in the list. The reference carries
+// the whole team, the person using the tablet included; the dashboard takes them out on the server.
+test("the person using the tablet is not offered among the professionals who took part", async () => {
+  const db = await loadedTablet();
+  const me = example<SessionResponse>("session-acs.json").professional.id;
+  const row = (await db.get<{ body: string }>("SELECT body FROM reference WHERE id = 1"))!;
+  const reference = JSON.parse(row.body) as ReferenceResponse;
+  reference.team_professionals = [...reference.team_professionals, { team_id: TEAM, professional_id: me, name: "Eu Mesma Agente", cbo: "515105", has_cns: true }];
+  await db.run("UPDATE reference SET body = ? WHERE id = 1", [JSON.stringify(reference)]);
+  await mount(db);
+  await screen.findByRole("header", { name: "Nova atividade coletiva" });
+  await educationAtTheUnit();
+  expect(screen.queryByRole("checkbox", { name: /Eu Mesma Agente/ })).toBeNull();
+  expect(screen.getByRole("checkbox", { name: "Carla Mendes" })).toBeTruthy();
+});
+
 test("a unit without CNES and a professional without CNS are refused with the dashboard's sentences (Q6)", async () => {
   const db = await loadedTablet();
   const row = (await db.get<{ body: string }>("SELECT body FROM reference WHERE id = 1"))!;
