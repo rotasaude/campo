@@ -1,6 +1,7 @@
 // The offline reference: what the forms need without a network (registration
 // dictionaries, neighbourhoods, health units, the team's professionals and the
-// domains of the visit and of the activity). It has no citizen data.
+// domains of the visit and of the activity, and — where the city's vector_control gate is usable — the vector
+// control domains of the bulletin, 35a). It has no citizen data.
 //
 // The session carries `reference_version` (a SHA-256 the api computes); the
 // tablet only compares, never recomputes, and downloads again when it changes.
@@ -10,6 +11,7 @@ import type { ReferenceResponse } from "../contract";
 import type { Db } from "../db/types";
 import { ReferenceShapeError, parseRegistrationDictionaries, type RegistrationDictionaries } from "../rules/dictionaries";
 import type { CollectiveDomains, HomeVisitDomains } from "../rules/domains";
+import { parseVectorDomains, type VectorControlDomains } from "../rules/vectorDomains";
 import type { FieldClient } from "./http";
 
 export interface Reference {
@@ -20,6 +22,8 @@ export interface Reference {
   teamProfessionals: { team_id: string; professional_id: string; name: string; cbo: string; has_cns: boolean }[];
   homeVisitDomains: HomeVisitDomains;
   collectiveDomains: CollectiveDomains;
+  // null = the block did not come (gate off in the city): no bulletin.
+  vectorDomains: VectorControlDomains | null;
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -50,6 +54,7 @@ export function parseReference(raw: ReferenceResponse): Reference {
       (r) => ({ team_id: r.team_id as string, professional_id: r.professional_id as string, name: r.name as string, cbo: r.cbo as string, has_cns: r.has_cns as boolean })),
     homeVisitDomains: body.home_visit_domains as unknown as HomeVisitDomains,
     collectiveDomains: body.collective_activity_domains as unknown as CollectiveDomains,
+    vectorDomains: parseVectorDomains(body.vector_control_domains),
   };
 }
 

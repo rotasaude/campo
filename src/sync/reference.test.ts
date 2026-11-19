@@ -2,11 +2,15 @@ import { domains, type ReferenceResponse } from "../contract";
 import { example } from "../contract/fixtures";
 import { expectValid } from "../contract/validate";
 import { createTestDb } from "../db/testing/sqljsDb";
+import { ReferenceShapeError } from "../rules/dictionaries";
+import { DEPOSIT_GROUPS, MEASURE_METHODS, RISK_CLASSES, VECTOR_ACTIVITIES, VECTOR_SITUATIONS, VECTOR_WORK_TYPES, parseVectorDomains } from "../rules/vectorDomains";
 import { FieldHttpError } from "./http";
 import { APP_UPDATE_NOTICE, healthUnitOptions, loadReference, parseReference, professionalOptions, referenceNeedsAppUpdate, refreshReference } from "./reference";
 import { referenceFixture } from "./testing";
 
 const EXAMPLE = example<ReferenceResponse>("reference.json");
+// The v1.3.0 example with the vector block (same reference_version as reference.json in the tag: told apart here).
+const VECTOR = { ...example<ReferenceResponse>("reference-vector-control.json"), reference_version: "35".repeat(32) };
 const clientOf = (body: unknown) => ({ reference: jest.fn(async () => body as ReferenceResponse) });
 
 test("reference example validates against reference-response-v1.json", () => {
@@ -125,4 +129,69 @@ test("home visit and activity codes in the reference equal those of domains-v1.j
   expect(Object.keys(ref.homeVisitDomains.measurement_ranges).sort()).toEqual(ranged.sort());
   expect(codes(ref.collectiveDomains.activity_types)).toEqual(codes(domains.collective_activity.tipo_atividade_coletiva));
   expect(codes(ref.collectiveDomains.procedures)).toEqual(codes(domains.collective_activity.outro_procedimento_coletivo));
+});
+
+test("reference without vector_control_domains parses with vectorDomains null", () => {
+  expect(EXAMPLE).not.toHaveProperty("vector_control_domains");
+  expect(parseReference(EXAMPLE).vectorDomains).toBeNull();
+  expect(parseReference(referenceFixture()).vectorDomains).toBeNull();
+  expect(parseVectorDomains(undefined)).toBeNull();
+});
+
+test("vector_control_domains of the v1.3.0 example is parsed with the five limits", async () => {
+  expect(() => expectValid("reference-response", VECTOR)).not.toThrow();
+  const parsed = parseReference(VECTOR).vectorDomains!;
+  expect(parsed.limits).toEqual({ deposit_count_max: 999, charges_max: 999, samples_max: 99, larvae_collected_max: 10, measures_max: 20 });
+  expect(parsed.limits).toEqual(domains.vector_control.limits);
+  // Nothing renamed or dropped; the charge stays text with two places (Q15).
+  expect(parsed).toEqual(VECTOR.vector_control_domains);
+  expect(parsed.products.map((p) => p.charge_size)).toEqual(["1.00", "12.50"]);
+  expect(parsed.cadences[0]).toEqual({ neighborhood_id: null, risk_class: null, strategic_point: true, days: 15 });
+  // The codes the app knows are those of domains-v1.json.
+  const codes = (list: readonly { code: string }[]) => list.map((entry) => entry.code);
+  expect(VECTOR_ACTIVITIES).toEqual(codes(domains.vector_control.activities));
+  expect(VECTOR_WORK_TYPES).toEqual(codes(domains.vector_control.work_types));
+  expect(VECTOR_SITUATIONS).toEqual(codes(domains.vector_control.situations));
+  expect(DEPOSIT_GROUPS).toEqual(codes(domains.vector_control.deposit_groups));
+  expect(MEASURE_METHODS).toEqual(codes(domains.vector_control.measure_methods));
+  expect(RISK_CLASSES).toEqual(codes(domains.vector_control.risk_classes));
+
+  // Stored and read back the same.
+  const db = await createTestDb();
+  expect(await refreshReference(db, clientOf(VECTOR), VECTOR.reference_version)).toBe("updated");
+  expect((await loadReference(db))!.vectorDomains).toEqual(VECTOR.vector_control_domains);
+});
+
+test("a malformed vector block keeps the previous reference (kept_previous)", async () => {
+  const db = await createTestDb();
+  expect(await refreshReference(db, clientOf(VECTOR), VECTOR.reference_version)).toBe("updated");
+  const block = VECTOR.vector_control_domains!;
+  const [product] = block.products;
+  const broken: [string, unknown][] = [
+    ["invalid-reference-product-charge-size-number.json", example<ReferenceResponse>("invalid-reference-product-charge-size-number.json").vector_control_domains],
+    ["invalid-reference-product-without-uses.json", example<ReferenceResponse>("invalid-reference-product-without-uses.json").vector_control_domains],
+    ["null block", null],
+    ["charge without two places", { ...block, products: [{ ...product, charge_size: "1.5" }] }],
+    ["mechanical product", { ...block, products: [{ ...product, uses: ["mechanical"] }] }],
+    ["unknown unit", { ...block, products: [{ ...product, unit: "kg" }] }],
+    ["limit missing", { ...block, limits: { ...block.limits, measures_max: undefined } }],
+    ["limit zero", { ...block, limits: { ...block.limits, samples_max: 0 } }],
+    ["parameter not integer", { ...block, parameters: { ...block.parameters, default_days: "60" } }],
+    ["cadence risk unknown", { ...block, cadences: [{ ...block.cadences[0], risk_class: "blue" }] }],
+    ["cadence days fraction", { ...block, cadences: [{ ...block.cadences[0], days: 15.5 }] }],
+    ["activity unknown", { ...block, activities: [...block.activities, { code: "novidade", label: "Novidade" }] }],
+    ["list as object", { ...block, deposit_groups: { A1: "A1" } }],
+    ["empty list", { ...block, situations: [] }],
+  ];
+  for (const [index, [label, raw]] of broken.entries()) {
+    let thrown: unknown = null;
+    try { parseVectorDomains(raw); } catch (err) { thrown = err; }
+    expect([label, thrown instanceof ReferenceShapeError]).toEqual([label, true]);
+    const body = { ...VECTOR, reference_version: index.toString(16).padStart(2, "0").repeat(32), vector_control_domains: raw };
+    expect(await refreshReference(db, clientOf(body), body.reference_version)).toBe("kept_previous");
+    const stored = (await loadReference(db))!;
+    expect(stored.version).toBe(VECTOR.reference_version);
+    expect(stored.vectorDomains).toEqual(block);
+  }
+  expect(await referenceNeedsAppUpdate(db)).toBe(true);
 });

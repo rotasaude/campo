@@ -2,8 +2,11 @@
 import type { SessionResponse } from "../contract";
 import type { Db } from "../db/types";
 import { cityToday } from "../sync/clock";
+import type { Reference } from "../sync/reference";
 
 export const ACS_CBO = "515105";
+// The endemic agent (ACE). Moves to src/rules/vectorInspection.ts in Task 6.
+const ENDEMIC_AGENT_CBO = "515140";
 
 export async function loadSession(db: Db): Promise<SessionResponse | null> {
   const row = await db.get<{ body: string }>("SELECT body FROM session WHERE id = 1");
@@ -14,6 +17,17 @@ export async function loadSession(db: Db): Promise<SessionResponse | null> {
 // Everybody else reads.
 export function canEditRegistry(session: SessionResponse | null): boolean {
   return session !== null && session.features.territory_registry === true && session.professional.cbo === ACS_CBO;
+}
+
+// The city's vector_control switch (absent = off).
+export function vectorControlOn(session: SessionResponse | null): boolean {
+  return session?.features.vector_control === true;
+}
+
+// Who records the vector control bulletin at the visit: the endemic agent, with the switch on and the reference's
+// vector domains in hand. Without the domains the bulletin is not shown. The ACS and the other CBOs see nothing new.
+export function canRecordInspection(session: SessionResponse | null, reference: Reference | null): boolean {
+  return vectorControlOn(session) && session?.professional.cbo === ENDEMIC_AGENT_CBO && (reference?.vectorDomains ?? null) !== null;
 }
 
 export interface MyMicroArea { id: string; code: string; name: string; teamId: string }
