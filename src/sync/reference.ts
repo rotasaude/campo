@@ -22,7 +22,7 @@ export interface Reference {
   teamProfessionals: { team_id: string; professional_id: string; name: string; cbo: string; has_cns: boolean }[];
   homeVisitDomains: HomeVisitDomains;
   collectiveDomains: CollectiveDomains;
-  // null = the block did not come (gate off in the city): no bulletin.
+  // null = the block did not come (gate off in the city) or carries a code this app does not know (Q44(1)): no bulletin.
   vectorDomains: VectorControlDomains | null;
 }
 

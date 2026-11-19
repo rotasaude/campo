@@ -1,7 +1,10 @@
-import { domains, type ReferenceResponse } from "../contract";
+import { domains, type ReferenceResponse, type SessionResponse } from "../contract";
 import { example } from "../contract/fixtures";
 import { expectValid } from "../contract/validate";
 import { createTestDb } from "../db/testing/sqljsDb";
+import { loadHome } from "../features/home/homeData";
+import { canRecordInspection, loadSession } from "../features/session";
+import { loadedTablet } from "../features/testing";
 import { ReferenceShapeError } from "../rules/dictionaries";
 import { DEPOSIT_GROUPS, MEASURE_METHODS, RISK_CLASSES, VECTOR_ACTIVITIES, VECTOR_SITUATIONS, VECTOR_WORK_TYPES, parseVectorDomains } from "../rules/vectorDomains";
 import { FieldHttpError } from "./http";
@@ -11,6 +14,7 @@ import { referenceFixture } from "./testing";
 const EXAMPLE = example<ReferenceResponse>("reference.json");
 // The v1.3.0 example with the vector block (same reference_version as reference.json in the tag: told apart here).
 const VECTOR = { ...example<ReferenceResponse>("reference-vector-control.json"), reference_version: "35".repeat(32) };
+const NOW = Date.parse("2026-11-19T15:00:00Z");
 const clientOf = (body: unknown) => ({ reference: jest.fn(async () => body as ReferenceResponse) });
 
 test("reference example validates against reference-response-v1.json", () => {
@@ -162,6 +166,45 @@ test("vector_control_domains of the v1.3.0 example is parsed with the five limit
   expect((await loadReference(db))!.vectorDomains).toEqual(VECTOR.vector_control_domains);
 });
 
+test("Q44(1): a domain with a new use is saved with vectorDomains null and the ACS gets no app update notice", async () => {
+  const block = VECTOR.vector_control_domains!;
+  const [product] = block.products;
+  const news: [string, unknown][] = [
+    ["new product use", { ...block, products: [{ ...product, uses: ["focal", "larvitrampa"] }] }],
+    ["new product unit", { ...block, products: [{ ...product, unit: "kg" }] }],
+    ["new activity", { ...block, activities: [...block.activities, { code: "novidade", label: "Novidade" }] }],
+    ["new deposit group", { ...block, deposit_groups: [...block.deposit_groups, { code: "F", label: "F" }] }],
+    ["new cadence risk", { ...block, cadences: [{ ...block.cadences[0], risk_class: "blue" }] }],
+  ];
+  for (const [index, [label, raw]] of news.entries()) {
+    expect([label, parseVectorDomains(raw)]).toEqual([label, null]);
+    // A tablet of the ACS with the previous reference: the new one is stored, without the vector block.
+    const db = await loadedTablet();
+    const body = { ...VECTOR, reference_version: (index + 0xa0).toString(16).repeat(32), vector_control_domains: raw };
+    expect([label, await refreshReference(db, clientOf(body), body.reference_version)]).toEqual([label, "updated"]);
+    const stored = (await loadReference(db))!;
+    expect([stored.version, stored.vectorDomains]).toEqual([body.reference_version, null]);
+    expect(await referenceNeedsAppUpdate(db)).toBe(false);
+    const session = (await loadSession(db))!;
+    expect(session.professional.cbo).toBe("515105");
+    expect((await loadHome(db, NOW)).appUpdate).toBe(false);
+    // The bulletin is unavailable for the agent too, with the same reference.
+    expect(canRecordInspection(example<SessionResponse>("session-endemic-agent.json"), stored)).toBe(false);
+  }
+});
+
+test("Q44(1)/Q71: an unknown code in a 24c dictionary still refuses the whole reference", async () => {
+  const db = await createTestDb();
+  expect(await refreshReference(db, clientOf(VECTOR), VECTOR.reference_version)).toBe("updated");
+  const newer = { ...VECTOR, reference_version: "bc".repeat(32),
+    registration_dictionaries: { ...VECTOR.registration_dictionaries, sections: { living_conditions: [{ key: "novo", ledi: "novo", type: "novidade" }] } } };
+  expect(await refreshReference(db, clientOf(newer), newer.reference_version)).toBe("kept_previous");
+  expect(await referenceNeedsAppUpdate(db)).toBe(true);
+  const stored = (await loadReference(db))!;
+  expect(stored.version).toBe(VECTOR.reference_version);
+  expect(stored.vectorDomains).toEqual(VECTOR.vector_control_domains);
+});
+
 test("a malformed vector block keeps the previous reference (kept_previous)", async () => {
   const db = await createTestDb();
   expect(await refreshReference(db, clientOf(VECTOR), VECTOR.reference_version)).toBe("updated");
@@ -173,14 +216,14 @@ test("a malformed vector block keeps the previous reference (kept_previous)", as
     ["null block", null],
     ["charge without two places", { ...block, products: [{ ...product, charge_size: "1.5" }] }],
     ["mechanical product", { ...block, products: [{ ...product, uses: ["mechanical"] }] }],
-    ["unknown unit", { ...block, products: [{ ...product, unit: "kg" }] }],
     ["limit missing", { ...block, limits: { ...block.limits, measures_max: undefined } }],
     ["limit zero", { ...block, limits: { ...block.limits, samples_max: 0 } }],
     ["parameter not integer", { ...block, parameters: { ...block.parameters, default_days: "60" } }],
-    ["cadence risk unknown", { ...block, cadences: [{ ...block.cadences[0], risk_class: "blue" }] }],
     ["cadence days fraction", { ...block, cadences: [{ ...block.cadences[0], days: 15.5 }] }],
-    ["activity unknown", { ...block, activities: [...block.activities, { code: "novidade", label: "Novidade" }] }],
     ["list as object", { ...block, deposit_groups: { A1: "A1" } }],
+    ["code not text", { ...block, work_types: [{ code: 1, label: "Rotina" }] }],
+    // Shape wins over news: a new code does not excuse a broken block.
+    ["unknown code and broken shape", { ...block, activities: [...block.activities, { code: "novidade", label: "Novidade" }], limits: {} }],
     ["empty list", { ...block, situations: [] }],
   ];
   for (const [index, [label, raw]] of broken.entries()) {
