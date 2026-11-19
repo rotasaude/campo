@@ -6,6 +6,7 @@ import { territoryRepo } from "../db/repos/territoryRepo";
 import { dbEvents } from "../db/events";
 import { createTestDb } from "../db/testing/sqljsDb";
 import type { Db } from "../db/types";
+import * as logModule from "../log";
 import { sendQueue } from "./dispatch";
 import { applyPage, downloadAll } from "./download";
 import { householdEditable } from "./editable";
@@ -299,4 +300,53 @@ test("stale version rewrites the row through the same path: search fields follow
   await handleStale(db, edit, { ...stale, current_version: 4, current: current as unknown as Record<string, never> });
   const row = (await householdRow(db, HH.id))!;
   expect([row.street_norm, row.number, row.has_location, row.version]).toEqual(["sao joao", "77", 0, 4]);
+});
+
+// Q6(3): a page may bring a type this version of the app does not know (a newer contract, a switch turned on before
+// the update). It is skipped and the rest of the page, the cursor included, is applied — or every round fails the same.
+describe("change types the app does not know", () => {
+  const lastPage = LAST;
+  const UUID_A = "a0a0a0a0-0000-4000-8000-0000000000a1";
+  let db: Db;
+  let logged: unknown[][];
+  beforeEach(async () => {
+    db = await createTestDb();
+    logged = [];
+    jest.spyOn(logModule, "log").mockImplementation((...args) => { logged.push(args); });
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  test("an unknown change type is skipped and the cursor moves on", async () => {
+    const page = { ...example<ChangesResponse>("changes-last-page.json"),
+      items: [...lastPage.items, { type: "lighthouse", id: UUID_A, version: 1, body: { id: UUID_A } }] } as unknown as ChangesResponse;
+    await applyPage(db, page);
+    expect(await territoryRepo.getMeta(db, "cursor")).toBe(page.next_cursor);
+    expect(await db.get("SELECT key FROM registrations WHERE key = ?", [UUID_A])).toBeNull();
+    expect(logged).toContainEqual(["sync.change.skipped", { type: "lighthouse" }]);
+  });
+
+  test("an unknown removal type is skipped", async () => {
+    await applyPage(db, FIRST);
+    const page = withPage(REMOVALS, {
+      next_cursor: "after-the-lighthouse",
+      removals: [{ type: "lighthouse", id: HH.id, reason: "moved" }] as unknown as ChangesResponse["removals"],
+    });
+    await applyPage(db, page);
+    expect([await count(db, "micro_areas"), await count(db, "households"), await count(db, "families"), await count(db, "registrations")]).toEqual([1, 1, 1, 1]);
+    expect(await territoryRepo.getMeta(db, "cursor")).toBe("after-the-lighthouse");
+    expect(logged).toContainEqual(["sync.change.skipped", { type: "lighthouse" }]);
+  });
+
+  test("known items of the same page are still applied", async () => {
+    const unknown = { type: "lighthouse", id: UUID_A, version: 1, body: { id: UUID_A } };
+    const page = { ...FIRST, items: [unknown, ...FIRST.items, unknown] } as unknown as ChangesResponse;
+    await applyPage(db, page);
+    expect(await db.get("SELECT id FROM micro_areas")).toEqual({ id: FIRST.items[0].id });
+    expect(await db.get("SELECT key, version FROM households")).toEqual({ key: HH.id, version: 3 });
+    expect(await db.get("SELECT key, version FROM registrations")).toEqual({ key: REG.id, version: 2 });
+    expect(await territoryRepo.getMeta(db, "cursor")).toBe(FIRST.next_cursor);
+    expect(logged.filter(([event]) => event === "sync.change.skipped")).toEqual([
+      ["sync.change.skipped", { type: "lighthouse" }], ["sync.change.skipped", { type: "lighthouse" }],
+    ]);
+  });
 });

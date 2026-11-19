@@ -9,9 +9,21 @@ import type { ChangesResponse, HouseholdBody, MicroAreaBody, RegistrationBody, W
 import { dbEvents } from "../db/events";
 import { territoryRepo } from "../db/repos/territoryRepo";
 import type { Db } from "../db/types";
+import { log } from "../log";
 import { wipeTerritory } from "../security/wipe";
 import type { FieldClient } from "./http";
 import { readTrustedNow } from "./trustedTime";
+
+// The types this version of the app stores. A page may bring others (a newer contract, a switch turned on before the
+// update reached the tablet): they are skipped, and the rest of the page and its cursor are applied — failing on them
+// would roll the page back and stop every later round at the same cursor (Q6(3)).
+export const KNOWN_CHANGE_TYPES: readonly string[] = ["micro_area", "household", "registration"];
+
+const known = (change: { type: string }): boolean => {
+  if (KNOWN_CHANGE_TYPES.includes(change.type)) return true;
+  log("sync.change.skipped", { type: change.type });
+  return false;
+};
 
 export async function applyPage(db: Db, page: ChangesResponse): Promise<void> {
   await db.tx(async (tx) => {
@@ -19,17 +31,23 @@ export async function applyPage(db: Db, page: ChangesResponse): Promise<void> {
     if (page.reset) await wipeTerritory(tx);
 
     // Households before registrations: a registration is filed under its household's local key.
-    const order = { micro_area: 0, household: 1, registration: 2 } as const;
-    const items = [...page.items].sort((a, b) => order[a.type] - order[b.type]);
+    const order: Record<string, number> = { micro_area: 0, household: 1, registration: 2 };
+    const items = page.items.filter(known).sort((a, b) => order[a.type] - order[b.type]);
     for (const item of items) {
-      if (item.type === "micro_area") await territoryRepo.putMicroArea(tx, item.body as unknown as MicroAreaBody);
-      else if (item.type === "household") await territoryRepo.putHousehold(tx, item.body as unknown as HouseholdBody);
-      else await territoryRepo.putRegistration(tx, item.body as unknown as RegistrationBody);
+      switch (item.type) {
+        case "micro_area": await territoryRepo.putMicroArea(tx, item.body as unknown as MicroAreaBody); break;
+        case "household": await territoryRepo.putHousehold(tx, item.body as unknown as HouseholdBody); break;
+        case "registration": await territoryRepo.putRegistration(tx, item.body as unknown as RegistrationBody); break;
+        default: break; // never written: `known` already left it out
+      }
     }
     // moved, erased and out_of_scope end the same way on the tablet: the record is not here any more.
-    for (const removal of page.removals) {
-      if (removal.type === "household") await territoryRepo.removeHousehold(tx, removal.id);
-      else await territoryRepo.removeRegistration(tx, removal.id);
+    for (const removal of page.removals.filter(known)) {
+      switch (removal.type) {
+        case "household": await territoryRepo.removeHousehold(tx, removal.id); break;
+        case "registration": await territoryRepo.removeRegistration(tx, removal.id); break;
+        default: break;
+      }
     }
     // null on the middle pages: the list of the last full download stays until the new one arrives whole.
     if (page.who_to_visit) await territoryRepo.replaceWhoToVisit(tx, page.who_to_visit as unknown as WhoToVisit);

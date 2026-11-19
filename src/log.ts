@@ -6,6 +6,7 @@ export type LogEvent =
   | "sync.round.start"
   | "sync.round.end"
   | "sync.item.result"
+  | "sync.change.skipped"
   | "map.download.failed";
 
 export type LogFields = {
