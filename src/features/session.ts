@@ -1,12 +1,11 @@
 // What the screens ask the session: who is using the tablet and what they may do here.
 import type { SessionResponse } from "../contract";
 import type { Db } from "../db/types";
+import { ENDEMIC_AGENT_CBO } from "../rules/vectorInspection";
 import { cityToday } from "../sync/clock";
 import type { Reference } from "../sync/reference";
 
 export const ACS_CBO = "515105";
-// The endemic agent (ACE). Moves to src/rules/vectorInspection.ts in Task 6.
-const ENDEMIC_AGENT_CBO = "515140";
 
 export async function loadSession(db: Db): Promise<SessionResponse | null> {
   const row = await db.get<{ body: string }>("SELECT body FROM session WHERE id = 1");

@@ -2,6 +2,8 @@
 // domains-v1.json). A phrase never carries a value: not the name, not the
 // number typed, not a coordinate. The test fails when the contract gains a
 // code that has no phrase here.
+import { VECTOR_ERRORS } from "../../rules/vectorErrors";
+
 const CHECK_FIELD = "Confira o campo destacado.";
 
 export const ERROR_PHRASES: Record<string, string> = {
@@ -65,7 +67,35 @@ export const ERROR_PHRASES: Record<string, string> = {
   household_changed: "O domicílio mudou no Rota Saúde depois deste cadastro. Sincronize e confira o domicílio.",
   invalid_location: "Ponto inválido. Marque de novo no mapa ou leia o GPS outra vez.",
   family_not_found: "O Rota Saúde não encontrou a família deste registro. Sincronize e escolha a família de novo.",
+
+  // ── errors.item of the 35a (field-sync v1.3.0) ────────────────────────────
+  // The dashboard's phrases (src/rules/vectorErrors.ts), copied, never written here (Q9): lowercase, no period, as there.
+  vector_inspection_invalid: VECTOR_ERRORS.vector_inspection_invalid,
+  situation_outcome_mismatch: VECTOR_ERRORS.situation_outcome_mismatch,
+  inspection_not_worked: VECTOR_ERRORS.inspection_not_worked,
+  activity_property_mismatch: VECTOR_ERRORS.activity_property_mismatch,
+  liraa_item_not_found: VECTOR_ERRORS.liraa_item_not_found,
+  transmission_block_not_active: VECTOR_ERRORS.transmission_block_not_active,
+  deposit_counts_inconsistent: VECTOR_ERRORS.deposit_counts_inconsistent,
+  product_not_allowed: VECTOR_ERRORS.product_not_allowed,
+  samples_exceed_larvae: VECTOR_ERRORS.samples_exceed_larvae,
+  inspection_times_invalid: VECTOR_ERRORS.inspection_times_invalid,
+  reason_derived: VECTOR_ERRORS.reason_derived,
+  block_already_set: VECTOR_ERRORS.block_already_set,
+  household_without_neighborhood: VECTOR_ERRORS.household_without_neighborhood,
+  block_not_in_household_neighborhood: VECTOR_ERRORS.block_not_in_household_neighborhood,
+  household_without_block: VECTOR_ERRORS.household_without_block,
+  consent_required: VECTOR_ERRORS.consent_required,
+  ovitrap_number_taken: VECTOR_ERRORS.ovitrap_number_taken,
+  collection_out_of_range: VECTOR_ERRORS.collection_out_of_range,
+  reading_not_open: VECTOR_ERRORS.reading_not_open,
+  ovitrap_not_active: VECTOR_ERRORS.ovitrap_not_active,
+  sample_label_taken: VECTOR_ERRORS.sample_label_taken,
 };
+
+// Codes the 35a items share with the 24c (registry, home visit, HTTP): the table is keyed by code alone, so they keep
+// the 24c phrase above and not the VECTOR_ERRORS one (the screens show VECTOR_ERRORS for their own checks).
+export const SHARED_24C_CODES: readonly string[] = ["cbo_not_allowed", "feature_disabled", "invalid_transition"];
 
 // The code is a contract identifier (letters, digits, underscore): anything else is not echoed.
 const CODE = /^[a-z0-9_]{1,64}$/;
