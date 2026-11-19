@@ -4,11 +4,12 @@
 // is what the tablet still owes it.
 import type { Db } from "./types";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const FLAG = (column: string) => `${column} INTEGER NOT NULL DEFAULT 0 CHECK (${column} IN (0, 1))`;
 
-const STATEMENTS = [
+// v1 (24c). Kept as it was: a v1 database is made complete by these before it is taken to v2.
+const STATEMENTS_V1 = [
   `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS session (id INTEGER PRIMARY KEY CHECK (id = 1), body TEXT NOT NULL, fetched_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS micro_areas (id TEXT PRIMARY KEY NOT NULL, body TEXT NOT NULL, team_id TEXT NOT NULL)`,
@@ -51,6 +52,25 @@ const STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_outbox_state ON outbox (state, seq)`,
 ];
 
+// v2 (35a): the vector control copies of the server. The household's vector profile lives in households.body (§14).
+const STATEMENTS_V2 = [
+  `CREATE TABLE IF NOT EXISTS city_blocks (
+     id TEXT PRIMARY KEY NOT NULL, neighborhood_id TEXT NOT NULL, number TEXT NOT NULL, ${FLAG("active")},
+     version INTEGER NOT NULL, body TEXT NOT NULL)`,
+  // key: the server id, or the client_uuid of the installation made on the tablet.
+  `CREATE TABLE IF NOT EXISTS ovitraps (
+     key TEXT PRIMARY KEY NOT NULL, id TEXT UNIQUE, client_uuid TEXT, household_key TEXT NOT NULL, number TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('active', 'removed', 'lost')), version INTEGER, body TEXT NOT NULL)`,
+  // household_id: the server's (a LIRAa item never names a household born on the tablet).
+  `CREATE TABLE IF NOT EXISTS liraa_items (
+     id TEXT PRIMARY KEY NOT NULL, survey_id TEXT NOT NULL, household_id TEXT NOT NULL, city_block_id TEXT NOT NULL,
+     status TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS transmission_blocks (id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_city_blocks_neighborhood ON city_blocks (neighborhood_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_ovitraps_household ON ovitraps (household_key)`,
+  `CREATE INDEX IF NOT EXISTS idx_liraa_items_household ON liraa_items (household_id)`,
+];
+
 // Values every installation starts with; the session ones (host, user, city offset) are written at registration.
 const META_DEFAULTS: [string, string][] = [
   ["schema_version", String(SCHEMA_VERSION)],
@@ -60,13 +80,23 @@ const META_DEFAULTS: [string, string][] = [
 
 export class UnknownSchemaError extends Error {}
 
-// Idempotent: runs at every open.
+// Idempotent: runs at every open, in one transaction — an upgrade that fails leaves the database as it was.
+// 1 → 2 never deletes a row: the queue and the territory stay. Only the cursor goes (Q6): the next download is a full
+// one, and brings the new entities and the `vector` of the households downloaded before. last_download_ok_at stays,
+// so the 30 days do not start over and the tablet is not taken for a first load waiting for Wi-Fi (Q13(4)).
 export async function migrate(db: Db): Promise<void> {
   await db.tx(async (tx) => {
-    for (const statement of STATEMENTS) await tx.exec(statement);
+    for (const statement of STATEMENTS_V1) await tx.exec(statement);
     for (const [key, value] of META_DEFAULTS) await tx.run("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)", [key, value]);
     const row = await tx.get<{ value: string }>("SELECT value FROM meta WHERE key = ?", ["schema_version"]);
+    if (row?.value === "1") {
+      for (const statement of STATEMENTS_V2) await tx.exec(statement);
+      await tx.run("DELETE FROM meta WHERE key = ?", ["cursor"]);
+      await tx.run("UPDATE meta SET value = ? WHERE key = ?", [String(SCHEMA_VERSION), "schema_version"]);
+      return;
+    }
     // A database written by a newer app: never guess its shape.
     if (row?.value !== String(SCHEMA_VERSION)) throw new UnknownSchemaError(`esquema local ${row?.value ?? "ausente"}: atualize o app`);
+    for (const statement of STATEMENTS_V2) await tx.exec(statement);
   });
 }

@@ -132,8 +132,11 @@ async function round(deps: RoundDeps): Promise<RoundOutcome> {
       if (sent.stop === "http") return failed(deps, sent.failure ?? { kind: "network" });
     }
 
-    // The first load is the big one: it waits for Wi-Fi unless the person allowed mobile data.
-    const initial = (await territoryRepo.getMeta(db, "cursor")) === null;
+    // The first load is the big one: it waits for Wi-Fi unless the person allowed mobile data. First = no download ever
+    // reached the end (Q13(4)): a tablet migrated to v2 lost only its cursor (Q6) and downloads on any network; a fresh
+    // one, and one whose territory the 30 days took (wipeTerritory forgets both), still wait.
+    const initial = (await territoryRepo.getMeta(db, "cursor")) === null
+      && (await territoryRepo.getMeta(db, "last_download_ok_at")) === null;
     if (initial && !(await deps.net.isWifi()) && (await territoryRepo.getMeta(db, "mobile_data")) !== "1") {
       return { kind: "skipped", reason: "needs_wifi" };
     }

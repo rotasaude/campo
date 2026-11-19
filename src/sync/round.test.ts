@@ -2,7 +2,9 @@ import type { ChangesResponse, ReferenceResponse, SessionResponse, UploadItem } 
 import { example } from "../contract/fixtures";
 import { outboxRepo } from "../db/repos/outboxRepo";
 import { dbEvents } from "../db/events";
-import { createTestDb } from "../db/testing/sqljsDb";
+import { migrate } from "../db/migrations";
+import { SCHEMA_V1 } from "../db/testing/schemaV1";
+import { createEmptyTestDb, createTestDb } from "../db/testing/sqljsDb";
 import type { Db } from "../db/types";
 import { SECURE_KEYS } from "../security/secureStore";
 import { memorySecure } from "../security/testing";
@@ -19,8 +21,8 @@ const VISIT = exampleItems("upload-home-visit-resident.json")[0];
 const NOW = Date.parse("2026-11-12T12:00:00Z");
 
 type Fail = Partial<Record<"session" | "uploads" | "changes" | "reference", HttpFailure>>;
-async function setup(o: { session?: SessionResponse; fail?: Fail; wifi?: boolean; online?: boolean; locked?: boolean } = {}) {
-  const db = await createTestDb();
+async function setup(o: { session?: SessionResponse; fail?: Fail; wifi?: boolean; online?: boolean; locked?: boolean; db?: Db } = {}) {
+  const db = o.db ?? await createTestDb();
   const secure = memorySecure(Object.fromEntries(Object.values(SECURE_KEYS).map((key) => [key, "x"])));
   const calls: string[] = [];
   const fail = o.fail ?? {};
@@ -163,6 +165,32 @@ test("initial load without wifi waits unless mobile data is allowed", async () =
   const later = await setup({ wifi: false });
   await later.db.run("INSERT INTO meta (key, value) VALUES ('cursor', 'c')");
   expect(await runRound(later.deps, "timer")).toEqual({ kind: "ok", downloaded: true });
+});
+
+// Q13(4): the first load is the one that never reached the end. A tablet of the 24c updated to v2 lost its cursor in
+// the migration (Q6) but has its territory: it is not waiting for a big load, and stopping it until Wi-Fi would keep it
+// from the new entities for nothing. A fresh tablet, and one whose territory the 30 days took, still wait.
+test("a migrated tablet downloads on mobile data; a fresh one still waits for wifi", async () => {
+  const v1 = await createEmptyTestDb();
+  await v1.tx(async (tx) => { for (const s of SCHEMA_V1) await tx.exec(s); });
+  await v1.run("INSERT INTO meta (key, value) VALUES ('schema_version', '1'), ('cursor', 'c1'), ('last_download_ok_at', ?)",
+    [new Date(NOW - 86_400_000).toISOString()]);
+  await migrate(v1);
+  expect(await meta(v1, "cursor")).toBeNull();
+  const migrated = await setup({ wifi: false, db: v1 });
+  expect(await runRound(migrated.deps, "open")).toEqual({ kind: "ok", downloaded: true });
+  expect(migrated.calls).toContain("changes");
+
+  const fresh = await setup({ wifi: false });
+  expect(await runRound(fresh.deps, "after_pairing")).toEqual({ kind: "skipped", reason: "needs_wifi" });
+  expect(fresh.calls).not.toContain("changes");
+
+  // 30 days without a complete download: the territory and its date go, and the next load is the big one again.
+  const expired = await setup({ wifi: false });
+  await expired.db.run("INSERT INTO meta (key, value) VALUES ('cursor', 'c'), ('last_download_ok_at', ?)",
+    [new Date(NOW - 40 * 86_400_000).toISOString()]);
+  expect(await runRound(expired.deps, "timer")).toEqual({ kind: "skipped", reason: "needs_wifi" });
+  expect(expired.calls).not.toContain("changes");
 });
 
 test("reference refreshed only when the version changes", async () => {

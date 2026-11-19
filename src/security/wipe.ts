@@ -16,7 +16,17 @@ export interface FsPort {
 // activity still to be sent.
 const QUEUED_ROW = "client_uuid IS NOT NULL AND key IN (SELECT target_id FROM outbox WHERE target_id IS NOT NULL)";
 
-// Keeps outbox, client_ids, reference, map_file and session — and the rows the outbox still needs (see QUEUED_ROW).
+// An ovitrap installed on the tablet is kept while its installation is in the line, or while a collection in the line
+// names it by its client_uuid (the installation accepted, the collection not yet). The server's come back with the
+// next download.
+const QUEUED_OVITRAP = `client_uuid IS NOT NULL AND (
+  client_uuid IN (SELECT client_uuid FROM outbox)
+  OR client_uuid IN (SELECT json_extract(body, '$.ovitrap_client_uuid') FROM outbox
+                     WHERE type = 'ovitrap_collection' AND json_extract(body, '$.ovitrap_client_uuid') IS NOT NULL))`;
+
+// Keeps outbox, client_ids, reference, map_file and session — and the rows the outbox still needs (see QUEUED_ROW and
+// QUEUED_OVITRAP). In meta only the download's cursor and date go: the trusted clock (clock_skew_ms and the high water,
+// campo#2) is not territory.
 export async function wipeTerritory(db: Db): Promise<void> {
   await db.tx(async (tx) => {
     await tx.exec("DELETE FROM micro_areas");
@@ -26,6 +36,10 @@ export async function wipeTerritory(db: Db): Promise<void> {
     await tx.exec(`DELETE FROM registrations WHERE NOT (${QUEUED_ROW})`);
     await tx.exec("DELETE FROM local_visits WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
     await tx.exec("DELETE FROM local_activities WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
+    await tx.exec("DELETE FROM city_blocks");
+    await tx.exec("DELETE FROM liraa_items");
+    await tx.exec("DELETE FROM transmission_blocks");
+    await tx.exec(`DELETE FROM ovitraps WHERE NOT (${QUEUED_OVITRAP})`);
     await tx.run("DELETE FROM meta WHERE key IN (?, ?)", ["cursor", "last_download_ok_at"]);
   });
 }
