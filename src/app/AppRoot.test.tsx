@@ -8,6 +8,10 @@ import { setPin } from "../security/pin";
 import { SECURE_KEYS } from "../security/secureStore";
 import { sha256 } from "../security/testing";
 import { QR_PREFIX } from "../setup/qr";
+import type { ChangesResponse } from "../contract";
+import { example } from "../contract/fixtures";
+import { downloadAll } from "../sync/download";
+import { FieldHttpError } from "../sync/http";
 import { enqueue } from "../sync/outbox";
 import { newUuid } from "../sync/testing";
 import { AppRoot, WIPE_FAILED, useApp } from "./AppRoot";
@@ -209,6 +213,24 @@ test("a cold start has nothing below the PIN", async () => {
   expect(await screen.findByRole("header", { name: "Digite o PIN" })).toBeTruthy();
   expect(screen.queryByTestId("main-screens", { includeHiddenElements: true })).toBeNull();
   expect(screen.queryByLabelText("Observação", { includeHiddenElements: true })).toBeNull();
+});
+
+// Q42, review I1: a tablet migrated to v2 (no cursor, a full download before) restarts its download; page 1 is applied
+// and page 2 never comes. The next unlock goes to the main screens, not to "Primeira carga": the queue and offline
+// visits stay in reach.
+test("a migrated tablet whose restart stopped after page 1 is not sent to the first load on the next unlock", async () => {
+  const { platform, db } = await paired({ loaded: false });
+  await db!.run("INSERT INTO meta (key, value) VALUES ('last_download_ok_at', '2026-11-14T12:00:00.000Z')");
+  const client = {
+    changes: jest.fn().mockResolvedValueOnce(example<ChangesResponse>("changes-first-page.json")).mockRejectedValueOnce(new FieldHttpError({ kind: "network" })),
+  };
+  await expect(downloadAll({ db: db!, client, now: () => 0 })).rejects.toBeInstanceOf(FieldHttpError);
+  platform.server.fail = { kind: "network" }; // still out of reach
+  await mount(platform);
+  await unlock();
+  expect(await screen.findByText("telas principais")).toBeTruthy();
+  expect(screen.queryByRole("header", { name: "Primeira carga" })).toBeNull();
+  expect(await db!.get("SELECT value FROM meta WHERE key = 'last_download_ok_at'")).toEqual({ value: "2026-11-14T12:00:00.000Z" });
 });
 
 test("a tablet that was never paired opens on the QR; a good QR leads to the PIN and then to the first load", async () => {

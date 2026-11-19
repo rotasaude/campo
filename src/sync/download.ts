@@ -37,12 +37,13 @@ const known = (change: { type: string }): boolean => {
 // startsOver: the first page of a download that began without a cursor (Q42) — applied as a reset of the territory,
 // in its own transaction, so a tablet that lost its cursor (the migration to v2, the 30 days) keeps nothing from another
 // scope. Unlike a server reset it keeps the visits and activities already accepted (Q42 (b)): the person's "Visitado
-// hoje" does not go with the update. Never before the request: a page that never arrived wipes nothing.
+// hoje" does not go with the update, and the moment of the last full download, so a restart that stops after page 1
+// does not send the tablet to the first load. Never before the request: a page that never arrived wipes nothing.
 export async function applyPage(db: Db, page: ChangesResponse, options: { startsOver?: boolean } = {}): Promise<void> {
   await db.tx(async (tx) => {
     // A scope change: everything the tablet has of the territory is replaced by what follows.
     if (page.reset) await wipeTerritory(tx);
-    else if (options.startsOver === true) await wipeTerritory(tx, { keepLocalRecords: true });
+    else if (options.startsOver === true) await wipeTerritory(tx, { restart: true });
 
     const items = page.items.filter(known).sort((a, b) => rank(a.type) - rank(b.type));
     for (const item of items) {

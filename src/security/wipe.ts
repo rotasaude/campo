@@ -21,9 +21,11 @@ const QUEUED_ROW = "client_uuid IS NOT NULL AND key IN (SELECT target_id FROM ou
 // QUEUED_OVITRAP). In meta only the download's cursor and date go: the trusted clock (clock_skew_ms and the high water,
 // campo#2) is not territory.
 //
-// keepLocalRecords: the visits and activities the server already accepted stay (the "Visitado hoje" mark). Used by the
-// start-over of a download without a cursor (Q42 (b)); a server reset and the 30 days take them too (24c).
-export async function wipeTerritory(db: Db, options: { keepLocalRecords?: boolean } = {}): Promise<void> {
+// restart: the first page of a download that began without a cursor (Q42). Only the territory and the cursor go: the
+// visits and activities the server already accepted stay (the "Visitado hoje" mark, Q42 (b)), and so does
+// last_download_ok_at — a restart that stops after page 1 is not a first load (Q13(4), review I1). A server reset and
+// the 30 days take both (24c).
+export async function wipeTerritory(db: Db, options: { restart?: boolean } = {}): Promise<void> {
   await db.tx(async (tx) => {
     await tx.exec("DELETE FROM micro_areas");
     await tx.exec("DELETE FROM who_to_visit");
@@ -34,8 +36,9 @@ export async function wipeTerritory(db: Db, options: { keepLocalRecords?: boolea
     await tx.exec("DELETE FROM liraa_items");
     await tx.exec("DELETE FROM transmission_blocks");
     await tx.exec(`DELETE FROM ovitraps WHERE NOT (${QUEUED_OVITRAP})`);
-    await tx.run("DELETE FROM meta WHERE key IN (?, ?)", ["cursor", "last_download_ok_at"]);
-    if (options.keepLocalRecords === true) return;
+    await tx.run("DELETE FROM meta WHERE key = ?", ["cursor"]);
+    if (options.restart === true) return;
+    await tx.run("DELETE FROM meta WHERE key = ?", ["last_download_ok_at"]);
     await tx.exec("DELETE FROM local_visits WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
     await tx.exec("DELETE FROM local_activities WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
   });

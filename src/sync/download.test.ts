@@ -559,6 +559,28 @@ describe("first page of a download without a cursor", () => {
     expect(await db.all("SELECT client_uuid FROM local_activities")).toEqual([{ client_uuid: "a-today" }]);
   });
 
+  // The restart stopped after page 1 (review I1): the territory is half there, but the tablet is not a first load —
+  // last_download_ok_at stays, so Q13(4) and the gate still see a tablet that downloaded before.
+  test("a restart that fails after its first page keeps the last download mark", async () => {
+    const db = await createTestDb();
+    await seedOldScope(db);
+    const client = { changes: jest.fn().mockResolvedValueOnce(FIRST).mockRejectedValueOnce(new FieldHttpError({ kind: "network" })) };
+    await expect(downloadAll({ db, client, now: () => 0 })).rejects.toBeInstanceOf(FieldHttpError);
+    expect(await db.all("SELECT key FROM households")).toEqual([{ key: HH.id }]);
+    expect(await meta(db, "cursor")).toBe(FIRST.next_cursor);
+    expect(await meta(db, "last_download_ok_at")).toBe("2026-11-10T12:00:00.000Z");
+  });
+
+  // A server reset that stops after its page forgets the mark, as in the 24c.
+  test("a server reset that fails after its page forgets the last download mark, as before", async () => {
+    const db = await createTestDb();
+    await seedOldScope(db);
+    await territoryRepo.setMeta(db, "cursor", "from-before");
+    const client = { changes: jest.fn().mockResolvedValueOnce(RESET).mockRejectedValueOnce(new FieldHttpError({ kind: "network" })) };
+    await expect(downloadAll({ db, client, now: () => 0 })).rejects.toBeInstanceOf(FieldHttpError);
+    expect(await meta(db, "last_download_ok_at")).toBeNull();
+  });
+
   // The 24c's scope change is unchanged: a server reset takes the accepted visits too.
   test("server reset still wipes the accepted visits", async () => {
     const db = await createTestDb();

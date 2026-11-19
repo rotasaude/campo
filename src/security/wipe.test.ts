@@ -44,6 +44,18 @@ test("wipeTerritory keeps outbox, reference and map", async () => {
   expect(meta).toEqual(["clock_skew_ms", "mobile_data", "schema_version", "session_host"]);
 });
 
+// Q42: the restart of a download without a cursor takes the territory and the cursor only. The accepted visits and the
+// moment of the last full download stay: a migrated tablet whose restart stops after page 1 is not taken for a first load.
+test("wipeTerritory for the restart keeps the accepted visits and the last download mark", async () => {
+  const db = await createTestDb();
+  await fill(db);
+  await wipeTerritory(db, { restart: true });
+  for (const table of WIPED.filter((t) => !["local_visits", "local_activities"].includes(t))) expect([table, await count(db, table)]).toEqual([table, 0]);
+  for (const table of [...KEPT, "local_visits", "local_activities"]) expect([table, await count(db, table)]).toEqual([table, 1]);
+  const meta = (await db.all<{ key: string }>("SELECT key FROM meta ORDER BY key")).map((row) => row.key);
+  expect(meta).toEqual(["clock_skew_ms", "last_download_ok_at", "mobile_data", "schema_version", "session_host"]);
+});
+
 // campo#2: the clock the 30 days are counted on is not territory. Losing it would let a clock set back hide the age.
 test("wipeTerritory keeps the trusted clock (high water and skew)", async () => {
   const db = await createTestDb();
