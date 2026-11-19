@@ -12,14 +12,16 @@ import type { Db } from "../../db/types";
 import { APP_UPDATE_NOTICE } from "../../sync/reference";
 import { CONTRACT_UPDATE_NOTICE } from "../../sync/round";
 import { Body, Button, Muted, Notice, Screen } from "../../ui/components";
+import { DUE_TABLES } from "../vector/dueData";
 import { loadHome } from "./homeData";
 
 export const VISITS_OFF = "Visita desligada pela secretaria";
 // meta: the last sync and the clock; session: the switches of the city and the micro-areas.
-const TABLES = ["outbox", "who_to_visit", "micro_areas", "households", "meta", "session"];
+// reference and the vector tables (DUE_TABLES): the endemic agent's properties due.
+const TABLES = [...new Set(["outbox", "who_to_visit", "micro_areas", "households", "meta", "session", ...DUE_TABLES])];
 
-export function HomeScreen({ onOpenWho, onOpenToday, onNewActivity, onOpenHouseholds, onOpenMap, onOpenOutbox, onOpenAbout }: {
-  onOpenWho(): void; onOpenToday(): void; onNewActivity(): void; onOpenHouseholds(): void; onOpenMap(): void; onOpenOutbox(): void; onOpenAbout(): void;
+export function HomeScreen({ onOpenWho, onOpenToday, onOpenDue, onNewActivity, onOpenHouseholds, onOpenMap, onOpenOutbox, onOpenAbout }: {
+  onOpenWho(): void; onOpenToday(): void; onOpenDue(): void; onNewActivity(): void; onOpenHouseholds(): void; onOpenMap(): void; onOpenOutbox(): void; onOpenAbout(): void;
 }) {
   const { now } = useServices();
   const sync = useSyncState();
@@ -40,6 +42,7 @@ export function HomeScreen({ onOpenWho, onOpenToday, onNewActivity, onOpenHouseh
         <View style={{ gap: 8 }}>
           {home.microAreas.map((area) => <Body key={area.id}>{`${area.code} · ${area.name}`}</Body>)}
           <Body>{`A visitar: ${home.toVisit}`}</Body>
+          {home.vectorDue !== null && <Body>{`Imóveis a visitar: ${home.vectorDue}`}</Body>}
         </View>
       )}
       <View style={{ gap: 8 }}>
@@ -51,6 +54,7 @@ export function HomeScreen({ onOpenWho, onOpenToday, onNewActivity, onOpenHouseh
 
       <Button label={sync.running ? "Sincronizando…" : "Sincronizar"} disabled={sync.running} onPress={sync.run} />
       {!home.visitsOff && <Button label="Quem visitar" variant="secondary" onPress={onOpenWho} />}
+      {home.vectorDue !== null && <Button label="Imóveis a visitar" variant="secondary" onPress={onOpenDue} />}
       {!home.visitsOff && <Button label="Minhas visitas de hoje" variant="secondary" onPress={onOpenToday} />}
       {home.activitiesOn && <Button label="Nova atividade coletiva" variant="secondary" onPress={onNewActivity} />}
       {home.registryOn && <Button label="Domicílios" variant="secondary" onPress={onOpenHouseholds} />}

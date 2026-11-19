@@ -3,9 +3,11 @@
 import type { SessionResponse } from "../../contract";
 import type { Db } from "../../db/types";
 import { formatCityDate, formatCityDateTime, needsClockWarning } from "../../sync/clock";
-import { referenceNeedsAppUpdate } from "../../sync/reference";
+import { loadReference, referenceNeedsAppUpdate } from "../../sync/reference";
 import { TERRITORY_MAX_DAYS, territoryAge } from "../../sync/retention";
 import { HIGH_WATER_KEY, trustedTime } from "../../sync/trustedTime";
+import { canRecordInspection } from "../session";
+import { loadDue } from "../vector/dueData";
 
 export interface HomeData {
   microAreas: { id: string; code: string; name: string }[];
@@ -21,6 +23,9 @@ export interface HomeData {
   activitiesOn: boolean;
   // The households and the map are the territory registry's: they follow its own switch, not the visit's (Q82).
   registryOn: boolean;
+  // 35a: how many properties are due for the endemic agent (src/features/vector/dueData.ts); null for whoever does not
+  // record the bulletin (canRecordInspection) or with the visit off (the bulletin goes inside the visit).
+  vectorDue: number | null;
 }
 
 const DAY_MS = 86_400_000;
@@ -42,6 +47,10 @@ export async function loadHome(db: Db, now: number): Promise<HomeData> {
   const age = territoryAge(lastOk, trustedTime(now, skew, Number.isFinite(highWater) ? highWater : null));
   const limit = lastOk === null ? null : formatCityDate(new Date(Date.parse(lastOk) + TERRITORY_MAX_DAYS * DAY_MS).toISOString(), offset);
 
+  const visitsOff = session !== null && session.features.home_visits === false;
+  const reference = await loadReference(db).catch(() => null);
+  const vectorDue = !visitsOff && canRecordInspection(session, reference) ? (await loadDue(db, now)).items.length : null;
+
   return {
     microAreas: (session?.teams ?? []).flatMap((team) => team.micro_areas.map((area) => ({ id: area.id, code: area.code, name: area.name }))),
     toVisit: who.reduce((sum, row) => sum + (JSON.parse(row.people) as unknown[]).length, 0),
@@ -50,8 +59,9 @@ export async function loadHome(db: Db, now: number): Promise<HomeData> {
     territoryWarning: age.warn && limit !== null ? `Sincronize até ${limit}: depois disso o território some do tablet` : null,
     clockWarning: needsClockWarning(skew) ? `O relógio do tablet está ${Math.round(Math.abs(skew) / 60_000)} min diferente do servidor` : null,
     appUpdate: await referenceNeedsAppUpdate(db),
-    visitsOff: session !== null && session.features.home_visits === false,
+    visitsOff,
     activitiesOn: session !== null && session.features.collective_activities === true,
     registryOn: session !== null && session.features.territory_registry === true,
+    vectorDue,
   };
 }

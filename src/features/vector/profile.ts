@@ -20,26 +20,40 @@ export interface VectorProfile {
 const EMPTY: VectorProfile = { city_block_id: null, risk_class: null, last_worked_on: null, last_situation: null };
 type Set = Pick<VisitVectorSummary, "city_block_id" | "risk_class">;
 
-// `householdKey`: the household's local key. `vector` absent (the gate off in the city) is no profile; null (a place
-// with no profile yet) is no profile until a bulletin of this tablet gives it a block or a risk.
-export async function readProfile(db: Db, householdKey: string): Promise<VectorProfile | null> {
-  const row = await db.get<{ body: string }>("SELECT body FROM households WHERE key = ?", [householdKey]);
-  if (!row) return null;
-  const vector = (JSON.parse(row.body) as HouseholdBody).vector;
-  if (vector === undefined) return null;
+// A bulletin of this tablet that still counts for the place: waiting in the line (pending, sending, or blocked behind
+// what it cites) or accepted (the sheet keeps today's only, src/sync/retention.ts). A refused one (needs attention) and
+// a withdrawn one are left out. `day`: the visit's city day; `liraaDrawItemId`: the LIRAa item it inspects, read from
+// the line while it waits (the sheet does not keep it, Q11).
+export interface LocalBulletin {
+  householdKey: string; day: string; state: "waiting" | "accepted"; vector: VisitVectorSummary; liraaDrawItemId: string | null;
+}
 
-  const visits = await db.all<{ summary: string; state: string; queued: string | null }>(
-    `SELECT v.summary, v.state, o.state AS queued FROM local_visits v LEFT JOIN outbox o ON o.client_uuid = v.client_uuid
+// Oldest first.
+export async function readLocalBulletins(db: Db): Promise<LocalBulletin[]> {
+  const visits = await db.all<{ city_day: string; summary: string; state: string; queued: string | null; body: string | null }>(
+    `SELECT v.city_day, v.summary, v.state, o.state AS queued, o.body FROM local_visits v LEFT JOIN outbox o ON o.client_uuid = v.client_uuid
      WHERE v.state IN ('pending', 'accepted') ORDER BY v.occurred_at, v.client_uuid`);
-  const accepted: Set[] = [];
-  const waiting: Set[] = [];
+  const bulletins: LocalBulletin[] = [];
   for (const visit of visits) {
     const summary = JSON.parse(visit.summary) as Partial<VisitSummary>;
-    const set = summary.vector;
-    if (summary.household !== householdKey || !set || (set.city_block_id === undefined && set.risk_class === undefined)) continue;
-    if (visit.state === "accepted") accepted.push(set);
-    else if (visit.queued !== null && visit.queued !== "needs_attention") waiting.push(set);
+    if (typeof summary.household !== "string" || !summary.vector) continue;
+    if (visit.state !== "accepted" && (visit.queued === null || visit.queued === "needs_attention")) continue;
+    const inspection = visit.body === null ? null : (JSON.parse(visit.body) as { vector_inspection?: { liraa_draw_item_id?: string } }).vector_inspection;
+    bulletins.push({
+      householdKey: summary.household, day: visit.city_day, state: visit.state === "accepted" ? "accepted" : "waiting", vector: summary.vector,
+      liraaDrawItemId: inspection?.liraa_draw_item_id ?? null,
+    });
   }
+  return bulletins;
+}
+
+// The profile from the downloaded `vector` and the household's own bulletins (oldest first). `vector` absent (the gate
+// off in the city) is no profile; null (a place with no profile yet) is no profile until a bulletin gives it a block or
+// a risk.
+export function overlayProfile(vector: HouseholdBody["vector"], bulletins: readonly LocalBulletin[]): VectorProfile | null {
+  if (vector === undefined) return null;
+  const sets = (state: LocalBulletin["state"]): Set[] => bulletins
+    .filter((b) => b.state === state && (b.vector.city_block_id !== undefined || b.vector.risk_class !== undefined)).map((b) => b.vector);
 
   let profile: VectorProfile | null = vector === null ? null : {
     city_block_id: vector.city_block_id, risk_class: vector.risk_class, last_worked_on: vector.last_worked_on, last_situation: vector.last_situation,
@@ -47,7 +61,7 @@ export async function readProfile(db: Db, householdKey: string): Promise<VectorP
   // Accepted, oldest first, only into what the download left null (a later acceptance over an earlier one).
   const downloadedBlock = vector?.city_block_id ?? null;
   const downloadedRisk = vector?.risk_class ?? null;
-  for (const set of accepted) {
+  for (const set of sets("accepted")) {
     const base: VectorProfile = profile ?? EMPTY;
     profile = {
       ...base,
@@ -56,11 +70,20 @@ export async function readProfile(db: Db, householdKey: string): Promise<VectorP
     };
   }
   // Waiting, oldest first, over everything.
-  for (const set of waiting) {
+  for (const set of sets("waiting")) {
     const base: VectorProfile = profile ?? EMPTY;
     profile = { ...base, city_block_id: set.city_block_id ?? base.city_block_id, risk_class: set.risk_class ?? base.risk_class };
   }
   return profile;
+}
+
+// `householdKey`: the household's local key.
+export async function readProfile(db: Db, householdKey: string): Promise<VectorProfile | null> {
+  const row = await db.get<{ body: string }>("SELECT body FROM households WHERE key = ?", [householdKey]);
+  if (!row) return null;
+  const vector = (JSON.parse(row.body) as HouseholdBody).vector;
+  if (vector === undefined) return null;
+  return overlayProfile(vector, (await readLocalBulletins(db)).filter((b) => b.householdKey === householdKey));
 }
 
 // What the bulletin's rules read of the place, from the tablet (the api reads the same from its database): the

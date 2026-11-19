@@ -10,6 +10,7 @@ import type { Db } from "../../db/types";
 import { enqueue } from "../../sync/outbox";
 import { APP_UPDATE_NOTICE } from "../../sync/reference";
 import { newUuid } from "../../sync/testing";
+import { endemicTablet } from "../testing";
 import { HomeScreen } from "./HomeScreen";
 
 const SESSION = example<SessionResponse>("session-acs.json");
@@ -27,7 +28,7 @@ async function seeded(session: SessionResponse = SESSION): Promise<Db> {
 }
 async function mount(db: Db, sync: Partial<SyncState> = {}) {
   const state: SyncState = { running: false, lastOutcome: null, run: jest.fn(), ...sync };
-  const nav = { onOpenWho: jest.fn(), onOpenToday: jest.fn(), onNewActivity: jest.fn(), onOpenHouseholds: jest.fn(), onOpenMap: jest.fn(), onOpenOutbox: jest.fn(), onOpenAbout: jest.fn() };
+  const nav = { onOpenWho: jest.fn(), onOpenToday: jest.fn(), onOpenDue: jest.fn(), onNewActivity: jest.fn(), onOpenHouseholds: jest.fn(), onOpenMap: jest.fn(), onOpenOutbox: jest.fn(), onOpenAbout: jest.fn() };
   await renderWithServices(<SyncContext.Provider value={state}><HomeScreen {...nav} /></SyncContext.Provider>, fakeServices({ db, now: () => NOW }));
   return { state, nav };
 }
@@ -133,4 +134,23 @@ test("the shortcuts open who to visit, the outbox and about", async () => {
   await fireEvent.press(screen.getByRole("button", { name: "Ver envios" }));
   await fireEvent.press(screen.getByRole("button", { name: "Sobre" }));
   expect([t.nav.onOpenWho.mock.calls.length, t.nav.onOpenOutbox.mock.calls.length, t.nav.onOpenAbout.mock.calls.length]).toEqual([1, 1, 1]);
+});
+
+// 35a: the sheet of the endemic agent, only for who records the bulletin (canRecordInspection).
+test("the endemic agent with the switch sees how many properties are due and opens the sheet", async () => {
+  const t = await mount(await endemicTablet());
+  expect(await screen.findByText("Imóveis a visitar: 1")).toBeTruthy();
+  await fireEvent.press(screen.getByRole("button", { name: "Imóveis a visitar" }));
+  expect(t.nav.onOpenDue).toHaveBeenCalledTimes(1);
+});
+
+test.each([
+  ["the ACS", () => seeded()],
+  ["the agent without the vector domains", () => endemicTablet({ domains: null })],
+  ["the agent with the visit off", () => endemicTablet({ session: { features: { home_visits: false, collective_activities: false, territory_registry: true, vector_control: true } } })],
+])("no count nor button for %s", async (_who, tablet) => {
+  await mount(await tablet());
+  await screen.findByRole("button", { name: "Sincronizar" });
+  expect(screen.queryByText(/Imóveis a visitar/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Imóveis a visitar" })).toBeNull();
 });
