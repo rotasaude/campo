@@ -1,17 +1,24 @@
 // The household's vector profile as the tablet knows it now: the `vector` the download brought (§14) with, over it, the
-// block and the risk that the bulletins of this tablet set and the download has not brought back yet — those still in
-// the line and those accepted (the sheet keeps the accepted ones of today only: src/sync/retention.ts). Without it a
-// second visit would offer the block again and the server would refuse it (block_already_set).
+// block and the risk set by the bulletins of this tablet that the download cannot have brought yet:
+// - a bulletin still waiting in the line (pending, sending, or blocked behind what it cites) sets them over the download;
+// - an accepted one only fills what the download has as null — the round downloads after it sends, so a value
+//   downloaded is newer than the acceptance (a change by the coordination is never hidden); the sheet keeps the
+//   accepted ones of today only (src/sync/retention.ts);
+// - a refused one (needs attention) counts for nothing: the server did not take its block.
+// Without this a second visit would offer the block again and the server would refuse it (block_already_set).
 // No person here: the profile is of the place.
 import type { CityBlockBody, HouseholdBody, LiraaItemBody, TransmissionBlockBody } from "../../contract";
 import { vectorRepo } from "../../db/repos/vectorRepo";
 import type { Db } from "../../db/types";
 import type { RiskClass, VectorSituation } from "../../rules/vectorDomains";
-import type { VisitSummary } from "../visits/save";
+import type { VisitSummary, VisitVectorSummary } from "../visits/save";
 
 export interface VectorProfile {
   city_block_id: string | null; risk_class: RiskClass | null; last_worked_on: string | null; last_situation: VectorSituation | null;
 }
+
+const EMPTY: VectorProfile = { city_block_id: null, risk_class: null, last_worked_on: null, last_situation: null };
+type Set = Pick<VisitVectorSummary, "city_block_id" | "risk_class">;
 
 // `householdKey`: the household's local key. `vector` absent (the gate off in the city) is no profile; null (a place
 // with no profile yet) is no profile until a bulletin of this tablet gives it a block or a risk.
@@ -21,18 +28,37 @@ export async function readProfile(db: Db, householdKey: string): Promise<VectorP
   const vector = (JSON.parse(row.body) as HouseholdBody).vector;
   if (vector === undefined) return null;
 
-  let profile: VectorProfile | null = vector === null ? null : {
-    city_block_id: vector.city_block_id, risk_class: vector.risk_class, last_worked_on: vector.last_worked_on, last_situation: vector.last_situation,
-  };
-  const visits = await db.all<{ summary: string }>(
-    "SELECT summary FROM local_visits WHERE state IN ('pending', 'accepted') ORDER BY occurred_at, client_uuid");
+  const visits = await db.all<{ summary: string; state: string; queued: string | null }>(
+    `SELECT v.summary, v.state, o.state AS queued FROM local_visits v LEFT JOIN outbox o ON o.client_uuid = v.client_uuid
+     WHERE v.state IN ('pending', 'accepted') ORDER BY v.occurred_at, v.client_uuid`);
+  const accepted: Set[] = [];
+  const waiting: Set[] = [];
   for (const visit of visits) {
     const summary = JSON.parse(visit.summary) as Partial<VisitSummary>;
     const set = summary.vector;
     if (summary.household !== householdKey || !set || (set.city_block_id === undefined && set.risk_class === undefined)) continue;
-    profile ??= { city_block_id: null, risk_class: null, last_worked_on: null, last_situation: null };
-    if (set.city_block_id !== undefined) profile = { ...profile, city_block_id: set.city_block_id };
-    if (set.risk_class !== undefined) profile = { ...profile, risk_class: set.risk_class };
+    if (visit.state === "accepted") accepted.push(set);
+    else if (visit.queued !== null && visit.queued !== "needs_attention") waiting.push(set);
+  }
+
+  let profile: VectorProfile | null = vector === null ? null : {
+    city_block_id: vector.city_block_id, risk_class: vector.risk_class, last_worked_on: vector.last_worked_on, last_situation: vector.last_situation,
+  };
+  // Accepted, oldest first, only into what the download left null (a later acceptance over an earlier one).
+  const downloadedBlock = vector?.city_block_id ?? null;
+  const downloadedRisk = vector?.risk_class ?? null;
+  for (const set of accepted) {
+    const base: VectorProfile = profile ?? EMPTY;
+    profile = {
+      ...base,
+      city_block_id: downloadedBlock ?? set.city_block_id ?? base.city_block_id,
+      risk_class: downloadedRisk ?? set.risk_class ?? base.risk_class,
+    };
+  }
+  // Waiting, oldest first, over everything.
+  for (const set of waiting) {
+    const base: VectorProfile = profile ?? EMPTY;
+    profile = { ...base, city_block_id: set.city_block_id ?? base.city_block_id, risk_class: set.risk_class ?? base.risk_class };
   }
   return profile;
 }

@@ -1,5 +1,6 @@
 // A count typed or stepped with a finger: "−" and "+" of a touch target each, and the number between them, typed as text
-// (as the dashboard's draft keeps it: blank stays blank, and the rules refuse it). Never below 0 nor above `max`.
+// (as the dashboard's draft keeps it: blank stays blank, and the rules refuse it). Never below 0 nor above `max`; the "−"
+// stops at `min` (what is typed below it is left to the rules, which refuse it on saving).
 import { Pressable, Text, TextInput, View } from "react-native";
 import { SIZES, useTheme } from "../theme/theme";
 
@@ -18,7 +19,9 @@ function Step({ label, sign, disabled, onPress }: { label: string; sign: string;
   );
 }
 
-export function Counter({ label, value, max, onChange, testID }: { label: string; value: string; max: number; onChange(value: string): void; testID?: string }) {
+export function Counter({ label, value, max, min = 0, onChange, testID }: {
+  label: string; value: string; max: number; min?: number; onChange(value: string): void; testID?: string;
+}) {
   const { colors } = useTheme();
   const n = DIGITS.test(value.trim()) ? Number(value.trim()) : null;
   const clamp = (x: number) => String(Math.min(max, Math.max(0, x)));
@@ -31,7 +34,7 @@ export function Counter({ label, value, max, onChange, testID }: { label: string
     <View testID={testID} style={{ gap: 6 }}>
       <Text style={{ fontSize: SIZES.small, color: colors.ink2 }}>{label}</Text>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-        <Step label={`Diminuir ${label}`} sign="−" disabled={n !== null && n <= 0} onPress={() => onChange(clamp((n ?? 0) - 1))} />
+        <Step label={`Diminuir ${label}`} sign="−" disabled={n !== null && n <= min} onPress={() => onChange(clamp(Math.max(min, (n ?? 0) - 1)))} />
         <TextInput accessibilityLabel={label} value={value} keyboardType="number-pad" onChangeText={typed} placeholderTextColor={colors.ink4}
           style={{
             minHeight: SIZES.touch, minWidth: 72, paddingHorizontal: 12, fontSize: SIZES.text, color: colors.ink, textAlign: "center",

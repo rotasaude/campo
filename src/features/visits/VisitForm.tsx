@@ -58,8 +58,6 @@ interface Clock { offsetMin: number; skewMs: number }
 interface Loaded {
   session: SessionResponse; reference: Reference; clock: Clock;
   households: { key: string; label: string }[];
-  // The visit's client_uuid, drawn once when the form opens.
-  clientUuid: string;
 }
 // A refusal on screen: the object of this save (FieldRefusal brings it into sight once per save).
 type Shown = VisitProblem & { message: string };
@@ -101,7 +99,11 @@ export function VisitForm({ start, onSaved }: { start?: VisitStartKeys; onSaved(
   const [bulletin, setBulletin] = useState(true);
   const [inspection, setInspection] = useState<InspectionDraft>(() => emptyInspectionDraft(start?.vector));
   const [inspCleared, setInspCleared] = useState<string | null>(null);
-  const [touched, setTouched] = useState<{ entry: boolean; exit: boolean }>({ entry: false, exit: false });
+  // The entry was typed (it no longer follows the visit's time). A blank exit is always the moment of saving.
+  const [entryTyped, setEntryTyped] = useState(false);
+  // The visit's client_uuid: drawn once, when the form opens, and never again — the sample labels shown are made from it
+  // and it is the one saved (Review Focus 1).
+  const [clientUuid] = useState(() => crypto.randomUUID().toLowerCase());
   const { colors } = useTheme();
   const [cleared, setCleared] = useState<string | null>(null);
   const [busy, setBusy] = useState<"locating" | "saving" | null>(null);
@@ -133,7 +135,7 @@ export function VisitForm({ start, onSaved }: { start?: VisitStartKeys; onSaved(
         }
       }
       if (!alive) return;
-      setLoaded({ session, reference, clock, households, clientUuid: crypto.randomUUID().toLowerCase() });
+      setLoaded({ session, reference, clock, households });
       // The entry offered is the minute of the visit's moment (Q11).
       setInspection((current) => ({ ...current, enteredAt: first.time }));
       setHousehold(detail);
@@ -141,7 +143,7 @@ export function VisitForm({ start, onSaved }: { start?: VisitStartKeys; onSaved(
       setDraft(first);
     })();
     return () => { alive = false; };
-  }, [crypto, db, now, start?.familyId, start?.householdKey, start?.patientRef]);
+  }, [db, now, start?.familyId, start?.householdKey, start?.patientRef]);
 
   const data = loaded !== null && typeof loaded === "object" ? loaded : null;
   const rules = useMemo(() => (data === null ? null : createVisitRules({
@@ -195,7 +197,7 @@ export function VisitForm({ start, onSaved }: { start?: VisitStartKeys; onSaved(
   };
   // The visit's time: the entry offered follows it while it was not typed (Q11).
   const changeTime = (time: string) => {
-    if (!touched.entry) setInspection((i) => ({ ...i, enteredAt: time }));
+    if (!entryTyped) setInspection((i) => ({ ...i, enteredAt: time }));
     change({ time });
   };
 
@@ -210,7 +212,7 @@ export function VisitForm({ start, onSaved }: { start?: VisitStartKeys; onSaved(
   // A change of the situation passes by the prune and fixes the outcome (pruning the visit for it); the rest is set as it came.
   const onInspection = (next: InspectionDraft, o: InspectionChange = {}) => {
     setProblems([]);
-    if (o.touched) setTouched((t) => ({ ...t, [o.touched as "entry" | "exit"]: true }));
+    if (o.touched === "entry") setEntryTyped(next.enteredAt.trim() !== "");
     const lost = [...(o.cleared ?? [])];
     let out = next;
     if (o.prune) {
@@ -272,8 +274,8 @@ export function VisitForm({ start, onSaved }: { start?: VisitStartKeys; onSaved(
     else {
       // The exit not typed is now, in the city's clock corrected (campo#2); always on the visit's day — a visit opened
       // before midnight and saved after it is refused here, before saving (Review Focus 2).
-      const bulletinNow = !touched.exit && inspection.enteredAt.trim() !== "" ? { ...inspection, leftAt: nowIso.slice(11, 16) } : inspection;
-      if (bulletinNow !== inspection) setInspection(bulletinNow);
+      // The screen keeps the exit blank: it stays "the moment of saving" for the next attempt too.
+      const bulletinNow = inspection.leftAt.trim() === "" && inspection.enteredAt.trim() !== "" ? { ...inspection, leftAt: nowIso.slice(11, 16) } : inspection;
       // The 24b's rules with the derived reasons (the limit counts them, path reasons); a refusal at a derived reason
       // points at `subject`, as the api's (Q10).
       const n = draft.reasons.length;
@@ -293,7 +295,7 @@ export function VisitForm({ start, onSaved }: { start?: VisitStartKeys; onSaved(
     setBusy("saving");
     try {
       await saveVisit(db, draft, {
-        clientUuid: data.clientUuid, teamId: team.id, location: fix, visitBody: rules.visitBody, newUuid: crypto.randomUUID, now, vectorInspection,
+        clientUuid, teamId: team.id, location: fix, visitBody: rules.visitBody, newUuid: crypto.randomUUID, now, vectorInspection,
       });
       onSaved();
     } catch {
@@ -389,7 +391,7 @@ export function VisitForm({ start, onSaved }: { start?: VisitStartKeys; onSaved(
       {vectorOn && household !== null && (
         <InspectionSection draft={inspection} onChange={onInspection} domains={vectorDomains} propertyType={property}
           profile={facts?.profile ?? null} neighborhoodId={facts?.neighborhoodId ?? null} blocks={facts?.blocks ?? null}
-          clientUuid={data.clientUuid} cleared={inspCleared} refusals={refusals} />
+          clientUuid={clientUuid} cleared={inspCleared} refusals={refusals} />
       )}
 
       <Title>Desfecho</Title>

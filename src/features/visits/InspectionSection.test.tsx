@@ -5,7 +5,7 @@ import type { Db } from "../../db/types";
 import { VECTOR_ERRORS } from "../../rules/vectorErrors";
 import type { VectorStart } from "../../rules/vectorInspection";
 import { HH, LIRAA_ITEM, NEIGHBORHOOD, endemicTablet, loadedTablet } from "../testing";
-import { BLOCK_FROM_PROFILE, BULLETIN_NEEDS_HOUSEHOLD, BULLETIN_UNAVAILABLE } from "./InspectionSection";
+import { BLOCK_FROM_PROFILE, BULLETIN_NEEDS_HOUSEHOLD, BULLETIN_UNAVAILABLE, EXIT_AT_SAVE } from "./InspectionSection";
 import { VisitForm } from "./VisitForm";
 
 const NOW = Date.parse("2026-11-14T15:00:30Z"); // 12:00:30 in the city (UTC−3)
@@ -121,13 +121,30 @@ test("only the last sample can be removed", async () => {
   await worked();
   await addSample();
   await addSample();
-  expect(within(screen.getByTestId("sample-1")).queryByRole("button", { name: "Apagar" })).toBeNull();
-  await fireEvent.press(within(screen.getByTestId("sample-2")).getByRole("button", { name: "Apagar" }));
+  expect(within(screen.getByTestId("sample-1")).queryByRole("button", { name: "Retirar amostra" })).toBeNull();
+  await fireEvent.press(within(screen.getByTestId("sample-2")).getByRole("button", { name: "Retirar amostra" }));
   expect(screen.queryByTestId("sample-2")).toBeNull();
   expect(within(screen.getByTestId("sample-1")).getByText("C0FFEE60-01")).toBeTruthy();
-  expect(within(screen.getByTestId("sample-1")).getByRole("button", { name: "Apagar" })).toBeTruthy();
+  expect(within(screen.getByTestId("sample-1")).getByRole("button", { name: "Retirar amostra" })).toBeTruthy();
   // A group with samples is not taken out (its samples would renumber the others).
   expect(within(screen.getByTestId("deposit-A1")).queryByRole("button", { name: "Retirar grupo" })).toBeNull();
+});
+
+test("'Com larva' does not step below the samples of its group", async () => {
+  await mount();
+  await worked();
+  await addSample();
+  await addSample();
+  const a1 = within(screen.getByTestId("deposit-A1"));
+  expect(a1.getByLabelText("Com larva").props.value).toBe("2");
+  expect(a1.getByRole("button", { name: "Diminuir Com larva" }).props.accessibilityState.disabled).toBe(true);
+  await fireEvent.press(a1.getByRole("button", { name: "Diminuir Com larva" }));
+  expect(a1.getByLabelText("Com larva").props.value).toBe("2");
+  // With the last sample gone, it steps down to the one left.
+  await fireEvent.press(within(screen.getByTestId("sample-2")).getByRole("button", { name: "Retirar amostra" }));
+  await fireEvent.press(a1.getByRole("button", { name: "Diminuir Com larva" }));
+  expect(a1.getByLabelText("Com larva").props.value).toBe("1");
+  expect(a1.getByRole("button", { name: "Diminuir Com larva" }).props.accessibilityState.disabled).toBe(true);
 });
 
 test("closed after worked: prune says what went and the outcome line becomes absent", async () => {
@@ -207,6 +224,31 @@ test("entry defaults to the minute of occurred_at, so entered_at ≤ occurred_at
   expect(item.body.occurred_at).toBe("2026-11-14T12:00:00-03:00");
   // The exit left blank is the moment of saving, in the city's clock.
   expect(item.body.vector_inspection).toMatchObject({ entered_at: "2026-11-14T12:00:00-03:00", left_at: "2026-11-14T12:00:00-03:00" });
+});
+
+test("the exit hint holds in every state; an exit typed and cleared is the moment of saving again", async () => {
+  const clock = { now: NOW };
+  const t = await mount({ clock });
+  expect(screen.getByText(EXIT_AT_SAVE)).toBeTruthy();
+  await fireEvent.changeText(screen.getByLabelText("Saída (hh:mm)"), "12:30");
+  expect(screen.queryByText(EXIT_AT_SAVE)).toBeNull();
+  await fireEvent.changeText(screen.getByLabelText("Saída (hh:mm)"), "");
+  expect(screen.getByText(EXIT_AT_SAVE)).toBeTruthy();
+  // Without an entry nothing of the times goes: the hint is not said.
+  await fireEvent.changeText(screen.getByLabelText("Entrada (hh:mm)"), "");
+  expect(screen.queryByText(EXIT_AT_SAVE)).toBeNull();
+  // Cleared, the entry follows the visit's time again.
+  await fireEvent.changeText(screen.getByLabelText("Hora (hh:mm)"), "11:45");
+  expect(screen.getByLabelText("Entrada (hh:mm)").props.value).toBe("11:45");
+  expect(screen.getByText(EXIT_AT_SAVE)).toBeTruthy();
+  await radio("subject", "Imóvel sem pessoa");
+  await radio("vector_inspection.activity", "LI — Levantamento de índice");
+  await radio("vector_inspection.situation", "Trabalhado");
+  clock.now = Date.parse("2026-11-14T15:05:00Z"); // 12:05 in the city
+  await press("Registrar visita");
+  await waitFor(() => expect(t.onSaved).toHaveBeenCalled());
+  const [item] = await outboxRepo.all(t.db);
+  expect(item.body.vector_inspection).toMatchObject({ entered_at: "2026-11-14T11:45:00-03:00", left_at: "2026-11-14T12:05:00-03:00" });
 });
 
 test("saving after midnight with entry the day before is refused on screen at vector_inspection.entered_at", async () => {

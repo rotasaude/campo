@@ -216,7 +216,7 @@ async function checked(db: Db, d: VisitDraft, b: InspectionDraft) {
   const domains = (await loadReference(db))!.vectorDomains!;
   const input = inspection.inspectionInput(b, d.day);
   const facts: InspectionCtx = {
-    visit: { outcome: 1, occurred_at: rules.occurredAt(d.day, d.time)!, reasons: d.reasons }, household: { id: HH, property_type: "1", neighborhood_id: NEIGHBORHOOD },
+    visit: { outcome: d.outcome ?? 1, occurred_at: rules.occurredAt(d.day, d.time)!, reasons: d.reasons }, household: { id: HH, property_type: "1", neighborhood_id: NEIGHBORHOOD },
     profile: null, agent: true, gateUsable: true, products: domains.products, limits: domains.limits, blocks: [{ id: BLOCK, neighborhood_id: NEIGHBORHOOD, active: true }],
   };
   const issues = inspection.checkInspection(input, facts);
@@ -269,9 +269,9 @@ test("visit body with vector_inspection validates against upload-request-v1.json
   await saveVisit(db, d, ctx({ clientUuid: VISIT_UUID, vectorInspection: await checked(db, d, bulletin({ cityBlockId: BLOCK })) }));
   const closed = aceDraft({ time: "11:30", outcome: 3 });
   const empty = bulletin({ situation: "closed", educationalAction: false, deposits: [], measures: [], samples: [], enteredAt: "", leftAt: "", riskClass: null });
-  const input = inspection.inspectionInput(empty, closed.day);
-  await saveVisit(db, closed, ctx({ vectorInspection: toUploadBody(input, []) }));
+  await saveVisit(db, closed, ctx({ vectorInspection: await checked(db, closed, empty) }));
   expectValid("upload-request", wire(await outboxRepo.all(db)));
-  // Unchecked, there is no upload body.
+  // With a refusal there is no upload body.
+  const input = inspection.inspectionInput(empty, closed.day);
   expect(() => toUploadBody(input, [{ error: "situation_outcome_mismatch", path: "vector_inspection.situation" }])).toThrow();
 });

@@ -34,8 +34,8 @@ const COUNTERS = [
 ] as const;
 
 // `prune`: the change is of the situation (the form prunes and says what went); `cleared`: what the section itself
-// took out; `touched`: the entry or the exit was typed (no longer the default).
-export type InspectionChange = { prune?: boolean; cleared?: string[]; touched?: "entry" | "exit" };
+// took out; `touched`: the entry was typed (blank again, it follows the visit's time again).
+export type InspectionChange = { prune?: boolean; cleared?: string[]; touched?: "entry" };
 
 const decimal = (s: string) => s.replace(".", ",");
 // Text → number as the draft reads it (comma accepted); anything else → null.
@@ -132,8 +132,9 @@ export function InspectionSection({ draft, onChange, domains, propertyType, prof
       {at(p("entered_at"),
         <Field label="Entrada (hh:mm)" value={draft.enteredAt} keyboardType="number-pad" onChangeText={(enteredAt) => set({ enteredAt }, { touched: "entry" })} />)}
       {at(p("left_at"),
-        <Field label="Saída (hh:mm)" value={draft.leftAt} keyboardType="number-pad" onChangeText={(leftAt) => set({ leftAt }, { touched: "exit" })} />)}
-      <Muted>{EXIT_AT_SAVE}</Muted>
+        <Field label="Saída (hh:mm)" value={draft.leftAt} keyboardType="number-pad" onChangeText={(leftAt) => set({ leftAt })} />)}
+      {/* True only when it holds: a blank exit goes as the moment of saving only with an entry. */}
+      {draft.leftAt.trim() === "" && draft.enteredAt.trim() !== "" && <Muted>{EXIT_AT_SAVE}</Muted>}
 
       {worked && at(p("deposits"), (
         <>
@@ -146,7 +147,9 @@ export function InspectionSection({ draft, onChange, domains, propertyType, prof
                 {refusals(dp)}
                 {refusals(`${dp}.group`)}
                 {COUNTERS.map(([key, label]) => at(`${dp}.${key}`,
-                  <Counter label={label} value={d[key]} max={limits.deposit_count_max} onChange={(v) => setDeposit(i, key, v)} />))}
+                  // "Com larva" does not step below the group's samples (a sample per deposit with larvae).
+                  <Counter label={label} value={d[key]} max={limits.deposit_count_max} min={key === "with_larvae" ? samplesOf(d.group) : 0}
+                    onChange={(v) => setDeposit(i, key, v)} />))}
                 {samplesOf(d.group) === 0 && (
                   <Button label="Retirar grupo" variant="secondary" onPress={() => set({ deposits: draft.deposits.filter((_, j) => j !== i) })} />
                 )}
@@ -225,7 +228,7 @@ export function InspectionSection({ draft, onChange, domains, propertyType, prof
                 {at(`${sp}.larvae_collected`,
                   <Counter label="Larvas coletadas" value={s.larvae} max={limits.larvae_collected_max}
                     onChange={(larvae) => set({ samples: draft.samples.map((x, j) => (j === i ? { ...x, larvae } : x)) })} />)}
-                {last && <Button label="Apagar" variant="danger" onPress={() => set({ samples: draft.samples.slice(0, -1) })} />}
+                {last && <Button label="Retirar amostra" variant="danger" onPress={() => set({ samples: draft.samples.slice(0, -1) })} />}
               </View>
             );
           })}
