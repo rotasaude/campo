@@ -2,6 +2,7 @@ import { expectValid } from "../../contract/validate";
 import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
 import { createVisitRules, emptyVisitDraft, type VisitDraft } from "../../rules/homeVisit";
+import { createInspectionRules, emptyInspectionDraft, type InspectionCtx, type InspectionDraft } from "../../rules/vectorInspection";
 import { createRegistryRules } from "../../rules/registry";
 import { registrationDictionaries } from "../../rules/testing/dictionaries";
 import { applyResults } from "../../sync/dispatch";
@@ -9,14 +10,17 @@ import { accepted, newUuid } from "../../sync/testing";
 import { saveFamily } from "../families/save";
 import { saveHousehold } from "../households/save";
 import { saveRegistration, type RegistrationFields } from "../registrations/save";
-import { AREA, HH, loadedTablet } from "../testing";
-import { NOT_SENT_WILL_BE_ERASED, VISIT_BEING_SENT, saveVisit, todayVisits, withdrawVisit } from "./save";
+import { loadReference } from "../../sync/reference";
+import { AREA, HH, NEIGHBORHOOD, BLOCK, endemicTablet, loadedTablet } from "../testing";
+import { NOT_SENT_WILL_BE_ERASED, VISIT_BEING_SENT, saveVisit, toUploadBody, todayVisits, withdrawVisit } from "./save";
 
 const NOW = Date.parse("2026-11-14T15:00:00Z"); // 12:00 in the city (UTC−3)
 const TEAM = "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b";
 const JOANA = "0e1f2a3b-4c5d-4e6f-8a7b-8c9d0e1f2a3b";
 const rules = createVisitRules({ offsetMin: -180, newPatientProblem: createRegistryRules(registrationDictionaries()).newPatientProblem });
-const ctx = (over: Partial<Parameters<typeof saveVisit>[2]> = {}) => ({ teamId: TEAM, location: null, visitBody: rules.visitBody, newUuid, now: () => NOW, ...over });
+const ctx = (over: Partial<Parameters<typeof saveVisit>[2]> = {}) => ({
+  clientUuid: newUuid(), teamId: TEAM, location: null, visitBody: rules.visitBody, newUuid, now: () => NOW, vectorInspection: null, ...over,
+});
 const GPS = { latitude: -25.42847123, longitude: -49.27325411, accuracy_m: 8.5, source: "gps" as const };
 const BENEDITA = { full_name: "Benedita Aparecida Rocha", birth_date: "1948-05-02", sex: "female" as const, mother_name: "Maria José Rocha", no_cpf_reason: "2" };
 const person: RegistrationFields = { is_responsible: true, refused: true, patient_demographics: { race_color: null, ethnicity: null }, identification: {}, sociodemographic: {}, health_conditions: {} };
@@ -196,4 +200,78 @@ test("a visit on its way to the server cannot be erased: the screen says to try 
   await outboxRepo.update(db, item.seq, { state: "sending" });
   await expect(withdrawVisit(db, uuid, "", { newUuid })).rejects.toThrow(VISIT_BEING_SENT);
   expect(await local(db)).toHaveLength(1);
+});
+
+// ── 35a: the bulletin inside the visit ──
+const inspection = createInspectionRules({ offsetMin: -180 });
+const VISIT_UUID = "c0ffee60-0000-4000-8000-000000000060";
+// LI+T at 10:30 in HH: A1 with a focus eliminated and treated, one sample, a focal measure, the educational action.
+const bulletin = (o: Partial<InspectionDraft> = {}): InspectionDraft => ({
+  ...emptyInspectionDraft(), activity: "li_t", situation: "worked", educationalAction: true, enteredAt: "10:20", leftAt: "10:50", riskClass: "red",
+  deposits: [{ group: "A1", existing: "3", with_water: "2", with_larvae: "1", eliminated: "1", treated: "1" }],
+  measures: [{ method: "focal", productId: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", charges: "2" }], samples: [{ group: "A1", larvae: "8" }], ...o,
+});
+// The bulletin as the form sends it: checked first, and only then the upload body (toUploadBody).
+async function checked(db: Db, d: VisitDraft, b: InspectionDraft) {
+  const domains = (await loadReference(db))!.vectorDomains!;
+  const input = inspection.inspectionInput(b, d.day);
+  const facts: InspectionCtx = {
+    visit: { outcome: 1, occurred_at: rules.occurredAt(d.day, d.time)!, reasons: d.reasons }, household: { id: HH, property_type: "1", neighborhood_id: NEIGHBORHOOD },
+    profile: null, agent: true, gateUsable: true, products: domains.products, limits: domains.limits, blocks: [{ id: BLOCK, neighborhood_id: NEIGHBORHOOD, active: true }],
+  };
+  const issues = inspection.checkInspection(input, facts);
+  expect(issues).toEqual([]);
+  return toUploadBody(input, issues);
+}
+const aceDraft = (o: Partial<VisitDraft> = {}) => draft({ subject: "none", person: null, reasons: [], ...o });
+
+test("the visit is enqueued with the client_uuid chosen when the form opened", async () => {
+  const db = await endemicTablet();
+  const uuid = await saveVisit(db, draft({ person: { kind: "new", patient: BENEDITA, duplicatesReviewed: true } }), ctx({ clientUuid: VISIT_UUID }));
+  expect(uuid).toBe(VISIT_UUID);
+  const items = await outboxRepo.all(db);
+  // The person typed in the visit takes a uuid of its own; the visit keeps the one of the form.
+  expect(items.map((i) => [i.type, i.client_uuid === VISIT_UUID])).toEqual([["patient", false], ["home_visit", true]]);
+  expect((await local(db)).map((row) => row.client_uuid)).toEqual([VISIT_UUID]);
+});
+
+test("vector_inspection goes in the body and reasons never carry 34–37", async () => {
+  const db = await endemicTablet();
+  const d = aceDraft({ reasons: [34, 35] });
+  const body = await checked(db, { ...d, reasons: [] }, bulletin());
+  await saveVisit(db, d, ctx({ clientUuid: VISIT_UUID, vectorInspection: body }));
+  const [item] = await outboxRepo.all(db);
+  expect(item.body.reasons).toEqual([]);
+  expect(item.body.vector_inspection).toEqual({
+    activity: "li_t", work_type: "routine", situation: "worked", educational_action: true,
+    entered_at: "2026-11-14T10:20:00-03:00", left_at: "2026-11-14T10:50:00-03:00", risk_class: "red",
+    deposits: [{ group: "A1", existing: 3, with_water: 2, with_larvae: 1, eliminated: 1, treated: 1 }],
+    measures: [{ method: "focal", vector_product_id: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", charges: 2 }],
+    samples: [{ number: 1, deposit_group: "A1", larvae_collected: 8 }],
+  });
+});
+
+test("summary keeps activity and situation, nothing said in the house", async () => {
+  const db = await endemicTablet();
+  const d = aceDraft();
+  await saveVisit(db, d, ctx({ clientUuid: VISIT_UUID, vectorInspection: await checked(db, d, bulletin({ cityBlockId: BLOCK })) }));
+  expect(JSON.parse((await local(db))[0].summary)).toEqual({
+    household: HH, subject: "none", outcome: 1, vector: { activity: "li_t", situation: "worked", city_block_id: BLOCK, risk_class: "red" },
+  });
+  // Without a block or a risk chosen, the keys are absent.
+  await saveVisit(db, aceDraft({ time: "11:30" }), ctx({ vectorInspection: await checked(db, aceDraft({ time: "11:30" }), bulletin({ enteredAt: "11:20", leftAt: "11:40", riskClass: null })) }));
+  expect(JSON.parse((await local(db))[1].summary).vector).toEqual({ activity: "li_t", situation: "worked" });
+});
+
+test("visit body with vector_inspection validates against upload-request-v1.json", async () => {
+  const db = await endemicTablet();
+  const d = aceDraft();
+  await saveVisit(db, d, ctx({ clientUuid: VISIT_UUID, vectorInspection: await checked(db, d, bulletin({ cityBlockId: BLOCK })) }));
+  const closed = aceDraft({ time: "11:30", outcome: 3 });
+  const empty = bulletin({ situation: "closed", educationalAction: false, deposits: [], measures: [], samples: [], enteredAt: "", leftAt: "", riskClass: null });
+  const input = inspection.inspectionInput(empty, closed.day);
+  await saveVisit(db, closed, ctx({ vectorInspection: toUploadBody(input, []) }));
+  expectValid("upload-request", wire(await outboxRepo.all(db)));
+  // Unchecked, there is no upload body.
+  expect(() => toUploadBody(input, [{ error: "situation_outcome_mismatch", path: "vector_inspection.situation" }])).toThrow();
 });

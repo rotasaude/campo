@@ -14,7 +14,8 @@ import { NO_VISITS_TODAY, TodayScreen } from "./TodayScreen";
 const NOW = Date.parse("2026-11-14T15:00:00Z");
 const TEAM = "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b";
 const rules = createVisitRules({ offsetMin: -180, newPatientProblem: createRegistryRules(registrationDictionaries()).newPatientProblem });
-const ctx = { teamId: TEAM, location: null, visitBody: rules.visitBody, newUuid, now: () => NOW };
+// The client_uuid is the form's (fixed when it opened): one per visit.
+const ctx = () => ({ clientUuid: newUuid(), teamId: TEAM, location: null, visitBody: rules.visitBody, newUuid, now: () => NOW, vectorInspection: null });
 const draft = (o: Partial<VisitDraft> = {}): VisitDraft => ({
   ...emptyVisitDraft(), day: "2026-11-14", time: "10:30", place: { kind: "household", householdId: HH, propertyType: "1", microAreaId: AREA },
   subject: "none", outcome: 3, ...o,
@@ -35,9 +36,9 @@ test("no visit today: the screen says so and offers to register one", async () =
 
 test("today's visits in order: the hour, where, the outcome and where each one stands", async () => {
   const db = await loadedTablet();
-  const first = await saveVisit(db, draft({ time: "09:00", outcome: 1, reasons: [1] }), ctx);
-  const second = await saveVisit(db, draft({ time: "11:15", place: { kind: "no_household", propertyType: "2", microAreaId: AREA, outOfArea: false } }), ctx);
-  await saveVisit(db, draft({ day: "2026-11-13" }), ctx);
+  const first = await saveVisit(db, draft({ time: "09:00", outcome: 1, reasons: [1] }), ctx());
+  const second = await saveVisit(db, draft({ time: "11:15", place: { kind: "no_household", propertyType: "2", microAreaId: AREA, outOfArea: false } }), ctx());
+  await saveVisit(db, draft({ day: "2026-11-13" }), ctx());
   const [sent] = await outboxRepo.all(db);
   await applyResults(db, [sent], [accepted(sent)], { onStale: async () => undefined });
   await mount(db);
@@ -53,7 +54,7 @@ test("today's visits in order: the hour, where, the outcome and where each one s
 
 test("withdrawing a visit never sent asks first, then erases it", async () => {
   const db = await loadedTablet();
-  const uuid = await saveVisit(db, draft(), ctx);
+  const uuid = await saveVisit(db, draft(), ctx());
   await mount(db);
   await fireEvent.press(await visit(uuid).findByRole("button", { name: "Retirar" }));
   expect(visit(uuid).getByText(NOT_SENT_WILL_BE_ERASED)).toBeTruthy();
@@ -65,7 +66,7 @@ test("withdrawing a visit never sent asks first, then erases it", async () => {
 
 test("withdrawing a visit the server has asks for the reason; a short one is refused; then it waits to be sent", async () => {
   const db = await loadedTablet();
-  const uuid = await saveVisit(db, draft(), ctx);
+  const uuid = await saveVisit(db, draft(), ctx());
   const [sent] = await outboxRepo.all(db);
   await applyResults(db, [sent], [accepted(sent)], { onStale: async () => undefined });
   await mount(db);
@@ -83,7 +84,7 @@ test("withdrawing a visit the server has asks for the reason; a short one is ref
 // Review C2: "sent" is what the server accepted — never the mere absence of the item in the line.
 test("a visit whose item is gone from the line without having been accepted is not called sent, and taking it back only erases it", async () => {
   const db = await loadedTablet();
-  const uuid = await saveVisit(db, draft(), ctx);
+  const uuid = await saveVisit(db, draft(), ctx());
   await db.run("DELETE FROM outbox WHERE client_uuid = ?", [uuid]);
   await mount(db);
   expect(await visit(uuid).findByText("Aguardando envio")).toBeTruthy();

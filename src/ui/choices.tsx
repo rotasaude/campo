@@ -93,3 +93,8 @@ export function YesNo({ label, value, onChange }: { label: string; value: boolea
       onChange={(next) => onChange(next === null ? null : next === "sim")} />
   );
 }
+
+// One box, on or off (a switch of the form, not an answer that may be left blank).
+export function Check({ label, value, onChange }: { label: string; value: boolean; onChange(value: boolean): void }) {
+  return <OptionButton role="checkbox" label={label} marked={value} onPress={() => onChange(!value)} />;
+}

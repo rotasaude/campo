@@ -17,7 +17,7 @@ import { discardImpact, removeUnsent, resend } from "../../sync/outbox";
 import { SIZES, useTheme } from "../../theme/theme";
 import { Body, Button, Muted, Notice, Screen } from "../../ui/components";
 import { pathLabel } from "../conflicts/fieldText";
-import { phraseFor } from "../messages/errorPhrases";
+import { phraseForItem } from "../messages/errorPhrases";
 import { DISCARD_WARNING, ITEM_TYPE_LABEL, dependentsWarning } from "../outbox/OutboxScreen";
 import { confirmOtherPerson, confirmSamePerson, discardForExisting } from "../registrations/duplicates";
 import { confirmOtherParticipant } from "./participants";
@@ -70,7 +70,7 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
   return (
     <Screen title="Precisa de atenção">
       <Body>{ITEM_TYPE_LABEL[item.type] ?? item.type}</Body>
-      <Notice tone="warn">{phraseFor(item.error)}</Notice>
+      <Notice tone="warn">{phraseForItem(item.error, item)}</Notice>
       {item.path !== null && <Body>{`Campo: ${pathLabel(item.type, item.path)}`}</Body>}
 
       {candidates.map((candidate) => (

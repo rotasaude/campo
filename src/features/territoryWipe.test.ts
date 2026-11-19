@@ -30,16 +30,16 @@ const person: RegistrationFields = { is_responsible: false, refused: true, patie
 const visit = (householdKey: string, time: string): VisitDraft => ({
   ...emptyVisitDraft(), day: "2026-11-14", time, place: { kind: "household", householdId: householdKey, propertyType: "1", microAreaId: AREA }, subject: "none", outcome: 3,
 });
-const visitCtx = { teamId: TEAM, location: null, visitBody: rules.visitBody, newUuid, now: () => NOW };
+const visitCtx = () => ({ clientUuid: newUuid(), teamId: TEAM, location: null, visitBody: rules.visitBody, newUuid, now: () => NOW, vectorInspection: null });
 
 test("erasing the territory keeps what was born on the tablet and is still in the line — and only that", async () => {
   const db = await loadedTablet();
   const home = await saveHousehold(db, { fields: { micro_area_id: AREA, property_type: "1" } }, deps);
   const benedita = await saveRegistration(db, { householdKey: home.key, familyId: null, person: { kind: "new", patient: BENEDITA }, fields: person }, deps);
-  const sent = await saveVisit(db, visit(HH, "09:00"), visitCtx);
+  const sent = await saveVisit(db, visit(HH, "09:00"), visitCtx());
   const [, , accepting] = await outboxRepo.all(db);
   await applyResults(db, [accepting], [accepted(accepting)], noStale);
-  const waiting = await saveVisit(db, visit(home.key, "10:30"), visitCtx);
+  const waiting = await saveVisit(db, visit(home.key, "10:30"), visitCtx());
 
   await wipeTerritory(db);
   // The server's copy is gone…

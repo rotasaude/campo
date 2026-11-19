@@ -1,6 +1,6 @@
 import { KNOWN_HTTP_ERRORS, KNOWN_ITEM_ERRORS } from "../../contract";
 import { VECTOR_ERRORS, VECTOR_ERROR_CODES, type VectorErrorCode } from "../../rules/vectorErrors";
-import { ERROR_PHRASES, SHARED_24C_CODES, phraseFor } from "./errorPhrases";
+import { ERROR_PHRASES, SHARED_24C_CODES, phraseFor, phraseForItem } from "./errorPhrases";
 
 // The 35a item codes take the dashboard's phrase as it is (lowercase, no period): the app does not write them (Q9).
 const VECTOR_ITEM_CODES = new Set<string>(VECTOR_ERROR_CODES.filter((code) => KNOWN_ITEM_ERRORS.includes(code) && !SHARED_24C_CODES.includes(code)));
@@ -45,4 +45,48 @@ test("unknown code: the fixed phrase with the code, and nothing that is not a co
   expect(phraseFor(undefined)).toContain("código desconhecido");
   expect(phraseFor("Maria das Dores, CPF 123")).toContain("código desconhecido");
   expect(phraseFor("constructor")).toContain("código constructor"); // not an inherited property of the table
+});
+
+// Review of Task 6: a code the 35a shares with the 24c reads by the item it came on. The bulletin refused by the server
+// comes on a home_visit with a `path` under vector_inspection; the 24b's own refusals of the same codes come with none.
+describe("phraseForItem", () => {
+  test("ovitrap items take VECTOR_ERRORS, shared codes included", () => {
+    for (const type of ["ovitrap_installation", "ovitrap_collection"] as const) {
+      expect(phraseForItem("cbo_not_allowed", { type, path: null })).toBe(VECTOR_ERRORS.cbo_not_allowed);
+      expect(phraseForItem("feature_disabled", { type, path: null })).toBe(VECTOR_ERRORS.feature_disabled);
+      expect(phraseForItem("ovitrap_number_taken", { type, path: "number" })).toBe(VECTOR_ERRORS.ovitrap_number_taken);
+    }
+  });
+
+  test("a home_visit refused at vector_inspection or under it takes VECTOR_ERRORS", () => {
+    expect(phraseForItem("feature_disabled", { type: "home_visit", path: "vector_inspection" })).toBe(VECTOR_ERRORS.feature_disabled);
+    expect(phraseForItem("cbo_not_allowed", { type: "home_visit", path: "vector_inspection" })).toBe(VECTOR_ERRORS.cbo_not_allowed);
+    expect(phraseForItem("product_not_allowed", { type: "home_visit", path: "vector_inspection.measures[0].vector_product_id" })).toBe(VECTOR_ERRORS.product_not_allowed);
+    expect(phraseForItem("feature_disabled", { type: "home_visit", path: "vector_inspection" })).not.toBe(ERROR_PHRASES.feature_disabled);
+  });
+
+  test("a home_visit with no path, or out of the bulletin, keeps the 24c phrase (the 24b's cbo_not_allowed)", () => {
+    expect(phraseForItem("cbo_not_allowed", { type: "home_visit", path: null })).toBe(ERROR_PHRASES.cbo_not_allowed);
+    expect(phraseForItem("feature_disabled", { type: "home_visit", path: null })).toBe(ERROR_PHRASES.feature_disabled);
+    expect(phraseForItem("reason_not_allowed", { type: "home_visit", path: "reasons[0]" })).toBe(ERROR_PHRASES.reason_not_allowed);
+    // A path that only starts with the same letters is not the bulletin.
+    expect(phraseForItem("cbo_not_allowed", { type: "home_visit", path: "vector_inspection_id" })).toBe(ERROR_PHRASES.cbo_not_allowed);
+  });
+
+  test("invalid_transition keeps the 24c phrase on any item", () => {
+    for (const [type, path] of [["ovitrap_collection", null], ["home_visit", "vector_inspection"], ["household", "status"]] as const) {
+      expect(phraseForItem("invalid_transition", { type, path })).toBe(ERROR_PHRASES.invalid_transition);
+    }
+  });
+
+  test("the 403 of the whole request keeps the 24c phrase", () => {
+    expect(phraseFor("feature_disabled")).toBe("A visita domiciliar pelo app está desligada nesta cidade. Seus registros ficam guardados no tablet.");
+  });
+
+  test("the 24c items and codes outside VECTOR_ERRORS read as phraseFor", () => {
+    expect(phraseForItem("cbo_not_allowed", { type: "household", path: null })).toBe(ERROR_PHRASES.cbo_not_allowed);
+    expect(phraseForItem("not_found", { type: "ovitrap_collection", path: "ovitrap_client_uuid" })).toBe(ERROR_PHRASES.not_found);
+    expect(phraseForItem("no_such_code", { type: "ovitrap_installation", path: null })).toBe(phraseFor("no_such_code"));
+    expect(phraseForItem(null, { type: "home_visit", path: null })).toBe(phraseFor(null));
+  });
 });

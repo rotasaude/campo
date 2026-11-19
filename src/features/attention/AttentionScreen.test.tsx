@@ -12,7 +12,8 @@ import { newUuid, rejected } from "../../sync/testing";
 import { saveActivity } from "../activities/save";
 import { pathLabel } from "../conflicts/fieldText";
 import { saveHousehold } from "../households/save";
-import { phraseFor } from "../messages/errorPhrases";
+import { VECTOR_ERRORS } from "../../rules/vectorErrors";
+import { ERROR_PHRASES, phraseFor } from "../messages/errorPhrases";
 import { saveRegistration, type RegistrationFields } from "../registrations/save";
 import { AREA, HH, loadedTablet } from "../testing";
 import { AttentionScreen, EXISTING_NOT_HERE, NOT_WAITING_FOR_YOU, NO_FORM_FOR_THIS } from "./AttentionScreen";
@@ -26,9 +27,10 @@ const BENEDITA = { full_name: "Benedita Aparecida Rocha", birth_date: "1948-05-0
 const fields: RegistrationFields = { is_responsible: false, refused: true, patient_demographics: { race_color: null, ethnicity: null }, identification: {}, sociodemographic: {}, health_conditions: {} };
 const answer = (file: string) => example<UploadResponse>(file).results[0];
 
+let view: Awaited<ReturnType<typeof renderWithServices>> | null = null;
 async function mount(db: Db, seq: number) {
   const nav = { onFix: jest.fn(), onOpenRegistration: jest.fn(), onDone: jest.fn() };
-  await renderWithServices(<AttentionScreen seq={seq} {...nav} />, fakeServices({ db, now: () => NOW }));
+  view = await renderWithServices(<AttentionScreen seq={seq} {...nav} />, fakeServices({ db, now: () => NOW }));
   return nav;
 }
 const press = (name: string) => fireEvent.press(screen.getByRole("button", { name }));
@@ -153,6 +155,23 @@ test("a refused visit has no form to go back to: the screen says to discard it a
   await press("Descartar");
   await press("Confirmar descarte");
   await waitFor(async () => expect(await outboxRepo.all(db)).toEqual([]));
+});
+
+// Review Focus 3: the bulletin the server refused waits for the person with the dashboard's phrase, the visit kept; the
+// 24b's refusal of the same code, with no path, keeps the 24c's.
+test("a visit refused at its bulletin says the VECTOR_ERRORS phrase; the same code with no path, the 24c one", async () => {
+  const db = await loadedTablet();
+  const body = { team_id: TEAM, occurred_at: "2026-11-14T10:00:00-03:00", household_id: HH, subject: "none", outcome: 3, reasons: [], shared: false };
+  const bulletin = await enqueue(db, { type: "home_visit", body: { ...body, vector_inspection: { activity: "li", work_type: "routine", situation: "closed", educational_action: false } } }, newUuid);
+  const plain = await enqueue(db, { type: "home_visit", body }, newUuid);
+  await applyResults(db, [bulletin, plain], [rejected(bulletin, "cbo_not_allowed", { path: "vector_inspection" }), rejected(plain, "cbo_not_allowed")], noStale);
+  await mount(db, bulletin.seq);
+  expect(await screen.findByText(VECTOR_ERRORS.cbo_not_allowed)).toBeTruthy();
+  expect(screen.queryByText(ERROR_PHRASES.cbo_not_allowed)).toBeNull();
+  expect((await outboxRepo.bySeq(db, bulletin.seq))!.body.vector_inspection).toBeTruthy();
+  await view?.unmount();
+  await mount(db, plain.seq);
+  expect(await screen.findByText(ERROR_PHRASES.cbo_not_allowed)).toBeTruthy();
 });
 
 test("an item that is not waiting for the person says so", async () => {

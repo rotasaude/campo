@@ -12,7 +12,7 @@ import type { Db } from "../../db/types";
 import { discardImpact, removeUnsent, resend } from "../../sync/outbox";
 import { SIZES, useTheme } from "../../theme/theme";
 import { Body, Button, Muted, Notice, Screen } from "../../ui/components";
-import { phraseFor } from "../messages/errorPhrases";
+import { phraseForItem } from "../messages/errorPhrases";
 
 export const DISCARD_WARNING = "Este registro nunca chegou ao Rota Saúde e será apagado";
 // Said with the discard warning when other records go with the one being discarded (what cites it, what waits for it).
@@ -69,7 +69,7 @@ function Item({ item, confirming, others, onFix, onResolve, onResend, onAskDisca
     <View testID={`outbox-item-${item.seq}`} style={{ gap: 8, padding: SIZES.gap, borderRadius: SIZES.radius, borderWidth: 1, borderColor: colors.rule, backgroundColor: colors.panel }}>
       <Body>{ITEM_TYPE_LABEL[item.type] ?? item.type}</Body>
       <Muted>{ITEM_STATE_LABEL[item.state] ?? item.state}</Muted>
-      {attention && <Notice tone="warn">{phraseFor(item.error)}</Notice>}
+      {attention && <Notice tone="warn">{phraseForItem(item.error, item)}</Notice>}
       {confirming ? (
         <View style={{ gap: 8 }}>
           <Notice tone="down">{DISCARD_WARNING}</Notice>

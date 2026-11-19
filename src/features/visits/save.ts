@@ -5,11 +5,15 @@
 // the visit itself becomes a patient item of its own. The position goes only
 // when it is a precise GPS reading — otherwise the key is absent, never null.
 // The sheet keeps when and where; nothing of what was said in the house.
-import type { Location } from "../../contract";
+// 35a: the endemic agent's bulletin travels in the same item, as `vector_inspection` (§3), under the client_uuid the
+// form fixed when it opened (the sample labels are made from it, §9). The reasons 34–37 never go: the api derives them.
+import type { Location, VectorInspectionBody } from "../../contract";
 import { dbEvents } from "../../db/events";
 import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
 import { textProblem, type VisitDraft, type VisitOutcome, type VisitRules, type VisitSubject } from "../../rules/homeVisit";
+import type { RiskClass, VectorActivity, VectorSituation } from "../../rules/vectorDomains";
+import { DERIVED_REASONS, type InspectionIssue, type VectorInspectionInput } from "../../rules/vectorInspection";
 import { cityToday } from "../../sync/clock";
 import { enqueue, removeUnsent, type Dep } from "../../sync/outbox";
 import type { LocalVisitSummary } from "../map/mapData";
@@ -19,15 +23,30 @@ export const VISIT_BEING_SENT = "A visita está sendo enviada agora. Tente de no
 export const WITHDRAW_REASON = { min: 10, max: 500 } as const;
 
 type Values = Record<string, unknown>;
-export interface VisitSummary extends LocalVisitSummary { subject: VisitSubject; outcome: VisitOutcome }
+// What the sheet keeps of a bulletin (Q11): the activity and the situation, and the block and the risk it sets (read by
+// src/features/vector/profile.ts until the download brings them). Never deposits, measures or samples.
+export interface VisitVectorSummary { activity: VectorActivity; situation: VectorSituation; city_block_id?: string; risk_class?: RiskClass }
+export interface VisitSummary extends LocalVisitSummary { subject: VisitSubject; outcome: VisitOutcome; vector?: VisitVectorSummary }
+
+// The bulletin as the upload carries it. The rules work on arrays (VectorInspectionInput), the generated type has tuples
+// up to maxItems; the cast is sound only once checkInspection found nothing (the sizes are among what it checks), so
+// it is made here alone, and refused with issues.
+export function toUploadBody(input: VectorInspectionInput, issues: readonly InspectionIssue[]): VectorInspectionBody {
+  if (issues.length > 0) throw new Error("boletim com recusa: confira antes de gravar");
+  return input as VectorInspectionBody;
+}
 
 export interface SaveVisitContext {
+  // The visit's client_uuid, fixed when the form opened: the one the sample labels were made from.
+  clientUuid: string;
   teamId: string;
   // A precise GPS reading taken when the visit was saved, or null.
   location: Location | null;
   visitBody: VisitRules["visitBody"];
   newUuid(): string;
   now(): number;
+  // The endemic agent's bulletin, already checked (toUploadBody), or null.
+  vectorInspection: VectorInspectionBody | null;
 }
 
 // In the draft the household is named by its local key; a person by the patient's id (for somebody registered on this
@@ -38,6 +57,11 @@ export async function saveVisit(db: Db, draft: VisitDraft, ctx: SaveVisitContext
     const queued = (uuid: string | null) => uuid !== null && queue.some((item) => item.client_uuid === uuid);
     const { household_id: householdKey, patient_id: patientRef, new_patient: typed, duplicates_reviewed: reviewed, family_id: familyRef, ...rest } = ctx.visitBody(draft) as Values;
     const body: Values = { team_id: ctx.teamId, ...rest };
+    const inspection = ctx.vectorInspection;
+    if (inspection !== null) {
+      body.reasons = ((rest.reasons ?? []) as number[]).filter((code) => !(DERIVED_REASONS as readonly number[]).includes(code));
+      body.vector_inspection = inspection;
+    }
     const depends: Dep[] = [];
 
     if (typeof householdKey === "string") {
@@ -72,8 +96,15 @@ export async function saveVisit(db: Db, draft: VisitDraft, ctx: SaveVisitContext
     }
     if (ctx.location !== null) body.location = ctx.location;
 
-    const item = await enqueue(tx, { type: "home_visit", body, deps: depends }, ctx.newUuid);
+    const item = await enqueue(tx, { type: "home_visit", body, deps: depends, clientUuid: ctx.clientUuid }, ctx.newUuid);
     const summary: VisitSummary = { household: typeof householdKey === "string" ? householdKey : null, subject: (rest.subject ?? "none") as VisitSubject, outcome: rest.outcome as VisitOutcome };
+    if (inspection !== null) {
+      summary.vector = {
+        activity: inspection.activity, situation: inspection.situation,
+        ...(inspection.city_block_id !== undefined ? { city_block_id: inspection.city_block_id } : {}),
+        ...(inspection.risk_class !== undefined ? { risk_class: inspection.risk_class } : {}),
+      };
+    }
     await tx.run("INSERT INTO local_visits (client_uuid, city_day, occurred_at, summary, state) VALUES (?, ?, ?, ?, 'pending')",
       [item.client_uuid, draft.day, String(rest.occurred_at), JSON.stringify(summary)]);
     return item.client_uuid;

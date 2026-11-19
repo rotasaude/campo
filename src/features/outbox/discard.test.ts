@@ -37,7 +37,7 @@ async function afternoon() {
   const household = await saveHousehold(db, { fields: { micro_area_id: AREA, property_type: "1", location: { latitude: -25.5, longitude: -49.3, accuracy_m: 9, source: "gps" } } }, deps);
   const benedita = await saveRegistration(db, { householdKey: household.key, familyId: null, person: { kind: "new", patient: BENEDITA }, fields: person }, deps);
   const family = await saveFamily(db, { householdKey: household.key, responsibleKey: benedita.key, fields: { income_band: null, members_count: 1, living_since: null } }, deps);
-  const visit = await saveVisit(db, visitTo(household.key, benedita.clientUuid), { teamId: TEAM, location: null, visitBody: rules.visitBody, newUuid, now: () => NOW });
+  const visit = await saveVisit(db, visitTo(household.key, benedita.clientUuid), { clientUuid: newUuid(), teamId: TEAM, location: null, visitBody: rules.visitBody, newUuid, now: () => NOW, vectorInspection: null });
   const domains = (await loadReference(db))!.collectiveDomains;
   const activity = await saveActivity(db, {
     ...emptyActivityDraft("2026-11-14"), teamId: TEAM, heldOn: "2026-11-14", shift: 2, activityType: 4, place: { kind: "text", text: "Salão" }, participantsCount: "1",

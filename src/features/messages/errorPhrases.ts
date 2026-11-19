@@ -2,6 +2,7 @@
 // domains-v1.json). A phrase never carries a value: not the name, not the
 // number typed, not a coordinate. The test fails when the contract gains a
 // code that has no phrase here.
+import type { ItemType } from "../../contract";
 import { VECTOR_ERRORS } from "../../rules/vectorErrors";
 
 const CHECK_FIELD = "Confira o campo destacado.";
@@ -104,4 +105,19 @@ export function phraseFor(code: string | null | undefined): string {
   if (code && Object.prototype.hasOwnProperty.call(ERROR_PHRASES, code)) return ERROR_PHRASES[code];
   const shown = code && CODE.test(code) ? code : "desconhecido";
   return `O Rota Saúde recusou este registro (código ${shown}). Fale com o enfermeiro da equipe.`;
+}
+
+const VECTOR_ITEMS: readonly ItemType[] = ["ovitrap_installation", "ovitrap_collection"];
+const BULLETIN = "vector_inspection";
+
+// The phrase of an item the server refused, read by the item it came on (review of Task 6). A code the 35a shares with
+// the 24c (SHARED_24C_CODES) says the dashboard's VECTOR_ERRORS phrase when it is about the 35a: on an ovitrap item, or
+// on a home_visit refused at its bulletin (`path` vector_inspection or under it). The same code on a home_visit with
+// no path is the 24b's (its own cbo_not_allowed and feature_disabled), and invalid_transition is always the 24c's
+// (the field sync sends it only for the registry). The 403 of the whole request is not an item: phraseFor.
+export function phraseForItem(code: string | null | undefined, item: { type: ItemType; path: string | null | undefined }): string {
+  if (!code || code === "invalid_transition" || !Object.prototype.hasOwnProperty.call(VECTOR_ERRORS, code)) return phraseFor(code);
+  const path = item.path ?? "";
+  const vector = VECTOR_ITEMS.includes(item.type) || (item.type === "home_visit" && (path === BULLETIN || path.startsWith(`${BULLETIN}.`)));
+  return vector ? VECTOR_ERRORS[code as keyof typeof VECTOR_ERRORS] : phraseFor(code);
 }

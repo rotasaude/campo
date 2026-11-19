@@ -8,7 +8,8 @@ import type { Db } from "../../db/types";
 import type { LocationPort } from "../../location/capture";
 import { FAMILY_NOTICE } from "../../rules/homeVisit";
 import { VISITS_OFF } from "../home/HomeScreen";
-import { AREA, HH, loadedTablet } from "../testing";
+import { AREA, HH, endemicTablet, loadedTablet } from "../testing";
+import { todayVisits } from "./save";
 import { VisitForm } from "./VisitForm";
 
 const NOW = Date.parse("2026-11-14T15:00:00Z"); // 12:00 in the city (UTC−3)
@@ -20,10 +21,12 @@ const gps = (accuracy: number | "denied"): LocationPort => ({
   current: async () => ({ latitude: -25.428471234, longitude: -49.273254112, accuracy: accuracy === "denied" ? null : accuracy }),
 });
 
-async function mount(o: { db?: Db; start?: { householdKey?: string; patientRef?: string; familyId?: string }; location?: LocationPort } = {}) {
+async function mount(o: { db?: Db; start?: { householdKey?: string; patientRef?: string; familyId?: string }; location?: LocationPort; uuid?: string } = {}) {
   const db = o.db ?? (await loadedTablet());
   const onSaved = jest.fn();
-  await renderWithServices(<VisitForm start={o.start} onSaved={onSaved} />, fakeServices({ db, now: () => NOW, location: o.location ?? gps("denied") }));
+  const services = fakeServices({ db, now: () => NOW, location: o.location ?? gps("denied") });
+  if (o.uuid !== undefined) services.crypto = { ...services.crypto, randomUUID: () => o.uuid as string };
+  await renderWithServices(<VisitForm start={o.start} onSaved={onSaved} />, services);
   return { db, onSaved };
 }
 const field = (key: string) => within(screen.getByTestId(`field-${key}`));
@@ -154,4 +157,81 @@ test("with the visit turned off by the city the form does not open", async () =>
   await mount({ db });
   expect(await screen.findByText(VISITS_OFF)).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Registrar visita" })).toBeNull();
+});
+
+// ── 35a: the endemic agent's visit ──
+const plus = async (box: ReturnType<typeof within>, label: string, times: number) => { for (let i = 0; i < times; i += 1) await fireEvent.press(box.getByRole("button", { name: `Aumentar ${label}` })); };
+
+test("ACE visit with inspection saves and shows today's sheet", async () => {
+  const uuid = "c0ffee60-0000-4000-8000-000000000060";
+  const t = await mount({ db: await endemicTablet(), start: { householdKey: HH, patientRef: JOANA }, location: gps(8.46), uuid });
+  await screen.findByRole("header", { name: "Nova visita" });
+  // The 24b part does not change: who was visited is still asked.
+  expect(field("patient").getByRole("radio", { name: "Joana Conceição" }).props.accessibilityState.checked).toBe(true);
+  await fireEvent.press(field("vector_inspection.activity").getByRole("radio", { name: "LI+T — Levantamento de índice e tratamento" }));
+  await fireEvent.press(field("vector_inspection.situation").getByRole("radio", { name: "Trabalhado" }));
+  await type("Entrada (hh:mm)", "11:40");
+  await type("Saída (hh:mm)", "12:00");
+  await fireEvent.press(field("vector_inspection.deposit_group").getByRole("radio", { name: "A2 — Depósito de armazenamento ao nível do solo" }));
+  await press("Adicionar grupo");
+  const a2 = within(screen.getByTestId("deposit-A2"));
+  await plus(a2, "Existentes", 3); await plus(a2, "Com água", 2); await plus(a2, "Com larva", 1); await plus(a2, "Eliminados", 1); await plus(a2, "Tratados", 1);
+  await fireEvent.press(field("vector_inspection.measure_method").getByRole("radio", { name: "Focal (larvicida)" }));
+  await press("Adicionar medida");
+  const measure = within(screen.getByTestId("measure-1"));
+  // The product list is the method's: the adulticide is not offered for focal.
+  expect(measure.queryByRole("radio", { name: "Clotianidina + deltametrina PM (adulticida residual)" })).toBeNull();
+  await fireEvent.press(measure.getByRole("radio", { name: "Espinosade 7,48% DT (larvicida)" }));
+  await fireEvent.changeText(measure.getByLabelText("Cargas"), "2");
+  expect(measure.getByText("= 2,00 un")).toBeTruthy();
+  await fireEvent.press(field("vector_inspection.sample_group").getByRole("radio", { name: "A2" }));
+  await press("Adicionar amostra");
+  await plus(within(screen.getByTestId("sample-1")), "Larvas coletadas", 8);
+  await fireEvent.press(screen.getByRole("checkbox", { name: "Ação educativa" }));
+  await fireEvent.press(field("vector_inspection.risk_class").getByRole("radio", { name: "Vermelho (alto)" }));
+  await press("Registrar visita");
+
+  await waitFor(() => expect(t.onSaved).toHaveBeenCalledTimes(1));
+  const item = await visitItem(t.db);
+  expect(item.client_uuid).toBe(uuid);
+  expect(item.body).toEqual({
+    team_id: TEAM, occurred_at: "2026-11-14T12:00:00-03:00", household_id: HH, subject: "resident", patient_id: JOANA, outcome: 1, reasons: [], shared: false,
+    location: { latitude: -25.42847123, longitude: -49.27325411, accuracy_m: 8.5, source: "gps" },
+    vector_inspection: {
+      activity: "li_t", work_type: "routine", situation: "worked", educational_action: true,
+      entered_at: "2026-11-14T11:40:00-03:00", left_at: "2026-11-14T12:00:00-03:00", risk_class: "red",
+      deposits: [{ group: "A2", existing: 3, with_water: 2, with_larvae: 1, eliminated: 1, treated: 1 }],
+      measures: [{ method: "focal", vector_product_id: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", charges: 2 }],
+      samples: [{ number: 1, deposit_group: "A2", larvae_collected: 8 }],
+    },
+  });
+  expectValid("upload-request", { items: [{ client_uuid: item.client_uuid, type: item.type, body: item.body }] });
+  // Today's sheet has it, with what the bulletin keeps for the screens.
+  const sheet = await todayVisits(t.db, NOW);
+  expect(sheet.map((v) => [v.clientUuid, v.time, v.state, v.householdKey, v.outcome])).toEqual([[uuid, "12:00", "pending", HH, 1]]);
+});
+
+test("reasons 34–37 are not offered while the inspection is on, and the preview lists the derived ones", async () => {
+  await mount({ db: await endemicTablet(), start: { householdKey: HH, patientRef: JOANA } });
+  await screen.findByRole("header", { name: "Nova visita" });
+  await fireEvent.press(field("vector_inspection.situation").getByRole("radio", { name: "Trabalhado" }));
+  const DERIVED = ["Ação educativa", "Imóvel com foco", "Ação mecânica", "Tratamento focal"];
+  expect(field("reasons").getByRole("checkbox", { name: "Pessoa com hipertensão" })).toBeTruthy();
+  for (const name of DERIVED) expect(field("reasons").queryByRole("checkbox", { name })).toBeNull();
+  expect(screen.queryByText(/O boletim acrescenta/)).toBeNull();
+  await fireEvent.press(screen.getByRole("checkbox", { name: "Ação educativa" }));
+  expect(screen.getByText("O boletim acrescenta: 34 Ação educativa")).toBeTruthy();
+  await fireEvent.press(field("vector_inspection.deposit_group").getByRole("radio", { name: "B — Depósito móvel" }));
+  await press("Adicionar grupo");
+  const b = within(screen.getByTestId("deposit-B"));
+  await plus(b, "Existentes", 1); await plus(b, "Com água", 1); await plus(b, "Com larva", 1);
+  expect(screen.getByText("O boletim acrescenta: 34 Ação educativa, 35 Imóvel com foco")).toBeTruthy();
+  // The derived reasons are reasons of the family (Q43): the 24b notice reads them too.
+  expect(screen.getByText(FAMILY_NOTICE)).toBeTruthy();
+
+  // Without the bulletin they are offered again, as in the 24b (the outcome stays the one the situation gave).
+  await fireEvent.press(screen.getByRole("checkbox", { name: "Registrar boletim" }));
+  expect(field("outcome").getByRole("radio", { name: "Visita realizada" }).props.accessibilityState.checked).toBe(true);
+  for (const name of DERIVED) expect(field("reasons").getByRole("checkbox", { name })).toBeTruthy();
+  expect(screen.queryByText(/O boletim acrescenta/)).toBeNull();
 });
