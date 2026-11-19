@@ -20,20 +20,24 @@ const QUEUED_ROW = "client_uuid IS NOT NULL AND key IN (SELECT target_id FROM ou
 // Keeps outbox, client_ids, reference, map_file and session — and the rows the outbox still needs (see QUEUED_ROW and
 // QUEUED_OVITRAP). In meta only the download's cursor and date go: the trusted clock (clock_skew_ms and the high water,
 // campo#2) is not territory.
-export async function wipeTerritory(db: Db): Promise<void> {
+//
+// keepLocalRecords: the visits and activities the server already accepted stay (the "Visitado hoje" mark). Used by the
+// start-over of a download without a cursor (Q42 (b)); a server reset and the 30 days take them too (24c).
+export async function wipeTerritory(db: Db, options: { keepLocalRecords?: boolean } = {}): Promise<void> {
   await db.tx(async (tx) => {
     await tx.exec("DELETE FROM micro_areas");
     await tx.exec("DELETE FROM who_to_visit");
     await tx.exec(`DELETE FROM households WHERE NOT (${QUEUED_ROW})`);
     await tx.exec("DELETE FROM families WHERE household_key NOT IN (SELECT key FROM households)");
     await tx.exec(`DELETE FROM registrations WHERE NOT (${QUEUED_ROW})`);
-    await tx.exec("DELETE FROM local_visits WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
-    await tx.exec("DELETE FROM local_activities WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
     await tx.exec("DELETE FROM city_blocks");
     await tx.exec("DELETE FROM liraa_items");
     await tx.exec("DELETE FROM transmission_blocks");
     await tx.exec(`DELETE FROM ovitraps WHERE NOT (${QUEUED_OVITRAP})`);
     await tx.run("DELETE FROM meta WHERE key IN (?, ?)", ["cursor", "last_download_ok_at"]);
+    if (options.keepLocalRecords === true) return;
+    await tx.exec("DELETE FROM local_visits WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
+    await tx.exec("DELETE FROM local_activities WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
   });
 }
 

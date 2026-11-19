@@ -1,7 +1,7 @@
 import type { ChangesResponse } from "../../contract";
 import { example } from "../../contract/fixtures";
 import { createTestDb } from "../../db/testing/sqljsDb";
-import { applyPage } from "../../sync/download";
+import { applyPage, downloadAll } from "../../sync/download";
 import { newUuid } from "../../sync/testing";
 import { saveHousehold } from "../households/save";
 import { readHousehold } from "../households/view";
@@ -53,6 +53,20 @@ test("a household somebody on the list lives in is to visit; one visited today i
     "INSERT INTO local_visits (client_uuid, city_day, occurred_at, summary, state) VALUES ('11111111-1111-4111-8111-111111111111', '2026-11-14', '2026-11-14T10:30:00-03:00', ?, 'pending')",
     [JSON.stringify({ household: HH1 })]);
   expect(await status()).toBe("visited_today");
+});
+
+// Q42 (b): the app updated to v2 lost its cursor, so its first download starts over. The visit the server already
+// accepted today keeps its mark: the territory comes back, "Visitado hoje" stays.
+test("the visited-today mark stays on the day sheet after the update", async () => {
+  const db = await territory();
+  await db.run("DELETE FROM meta WHERE key = 'cursor'"); // what the migration 1 → 2 leaves (Q6)
+  await db.run("INSERT INTO meta (key, value) VALUES ('city_offset_min', '-180') ON CONFLICT (key) DO UPDATE SET value = excluded.value");
+  await db.run(
+    "INSERT INTO local_visits (client_uuid, city_day, occurred_at, summary, state, server_id, accepted_at) VALUES ('11111111-1111-4111-8111-111111111111', '2026-11-14', '2026-11-14T10:30:00-03:00', ?, 'accepted', 's', '2026-11-14T13:31:00Z')",
+    [JSON.stringify({ household: HH1 })]);
+  const pages = [example<ChangesResponse>("changes-first-page.json"), example<ChangesResponse>("changes-last-page.json")];
+  await downloadAll({ db, client: { changes: async () => pages.shift()! }, now: () => NOW });
+  expect((await loadMapData(db, NOW)).points.features.find((f) => f.properties.key === HH1)?.properties.status).toBe("visited_today");
 });
 
 test("a visit of another day, or one withdrawn, does not paint the point", async () => {

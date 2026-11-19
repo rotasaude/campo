@@ -546,6 +546,35 @@ describe("first page of a download without a cursor", () => {
     expect([await count(db, "households"), await count(db, "registrations")]).toEqual([2, 2]);
   });
 
+  // Q42 (b): only the territory goes. What the person did today and the server already accepted keeps its mark.
+  test("the accepted visits and activities survive the start-over", async () => {
+    const db = await createTestDb();
+    await seedOldScope(db);
+    await db.run("INSERT INTO local_visits (client_uuid, city_day, occurred_at, summary, state) VALUES ('v-today', '2026-11-19', 't', '{}', 'accepted')");
+    await db.run("INSERT INTO local_activities (client_uuid, held_on, summary, state) VALUES ('a-today', '2026-11-19', '{}', 'accepted')");
+    const pages = [FIRST, LAST];
+    await downloadAll({ db, client: { changes: async () => pages.shift()! }, now: () => 0 });
+    expect(await db.all("SELECT key FROM households")).toEqual([{ key: HH.id }]);
+    expect(await db.all("SELECT client_uuid FROM local_visits")).toEqual([{ client_uuid: "v-today" }]);
+    expect(await db.all("SELECT client_uuid FROM local_activities")).toEqual([{ client_uuid: "a-today" }]);
+  });
+
+  // The 24c's scope change is unchanged: a server reset takes the accepted visits too.
+  test("server reset still wipes the accepted visits", async () => {
+    const db = await createTestDb();
+    await seedOldScope(db);
+    await territoryRepo.setMeta(db, "cursor", "from-before");
+    await db.run("INSERT INTO local_visits (client_uuid, city_day, occurred_at, summary, state) VALUES ('v-today', '2026-11-19', 't', '{}', 'accepted')");
+    await db.run("INSERT INTO local_activities (client_uuid, held_on, summary, state) VALUES ('a-today', '2026-11-19', '{}', 'accepted')");
+    const pending = await enqueue(db, { type: "home_visit", body: {} }, newUuid);
+    await db.run("INSERT INTO local_visits (client_uuid, city_day, occurred_at, summary, state) VALUES (?, '2026-11-19', 't', '{}', 'pending')", [pending.client_uuid]);
+    const pages = [RESET, LAST];
+    await downloadAll({ db, client: { changes: async () => pages.shift()! }, now: () => 0 });
+    expect(await count(db, "households")).toBe(0);
+    expect(await db.all("SELECT client_uuid FROM local_visits")).toEqual([{ client_uuid: pending.client_uuid }]);
+    expect(await count(db, "local_activities")).toBe(0);
+  });
+
   test("the queue and the trusted clock survive the reset", async () => {
     const db = await createTestDb();
     await seedOldScope(db);
