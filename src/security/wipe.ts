@@ -3,6 +3,7 @@
 // owes the server — the queue, and what the queue points to on the tablet. wipeAll is the end of this installation: manual revocation
 // (device_revoked) or a confirmed "Sair".
 import { DB_NAME } from "../db/open";
+import { QUEUED_OVITRAP } from "../db/repos/queued";
 import type { Db } from "../db/types";
 import { SECURE_KEYS, type SecureStorePort } from "./secureStore";
 
@@ -15,14 +16,6 @@ export interface FsPort {
 // queue is kept, so the row the queue edits is kept too (its form, its place in the lists). The same for a visit or an
 // activity still to be sent.
 const QUEUED_ROW = "client_uuid IS NOT NULL AND key IN (SELECT target_id FROM outbox WHERE target_id IS NOT NULL)";
-
-// An ovitrap installed on the tablet is kept while its installation is in the line, or while a collection in the line
-// names it by its client_uuid (the installation accepted, the collection not yet). The server's come back with the
-// next download.
-const QUEUED_OVITRAP = `client_uuid IS NOT NULL AND (
-  client_uuid IN (SELECT client_uuid FROM outbox)
-  OR client_uuid IN (SELECT json_extract(body, '$.ovitrap_client_uuid') FROM outbox
-                     WHERE type = 'ovitrap_collection' AND json_extract(body, '$.ovitrap_client_uuid') IS NOT NULL))`;
 
 // Keeps outbox, client_ids, reference, map_file and session — and the rows the outbox still needs (see QUEUED_ROW and
 // QUEUED_OVITRAP). In meta only the download's cursor and date go: the trusted clock (clock_skew_ms and the high water,

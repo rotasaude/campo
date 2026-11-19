@@ -264,6 +264,8 @@ test("the round measures the clock against server_time and keeps the city's offs
 
 test("accepted visits of earlier days are purged at the end of a round, by the city's day", async () => {
   const t = await setup();
+  // A tablet that has downloaded before: a download without a cursor starts over (Q42) and would take today's too.
+  await t.db.run("INSERT INTO meta (key, value) VALUES ('cursor', 'from-before')");
   for (const [uuid, day] of [["old", "2026-11-11"], ["today", "2026-11-12"]]) {
     await t.db.run("INSERT INTO local_visits (client_uuid, city_day, occurred_at, summary, state) VALUES (?, ?, 't', '{}', 'accepted')", [uuid, day]);
   }
