@@ -228,14 +228,12 @@ test("Back with the map open closes the map only: the form is there with what wa
 
 test("editing: the form opens with what the household has; untouched, the point is not in the item; taken off, it goes as null", async () => {
   const db = await loadedTablet();
-  // The example's street type is a label; the api's is the code.
+  // From field-sync-v1.3.0 the example's street type is the code the api stores ("081"): the form opens with it chosen.
   const t = await mount({ db, householdKey: HH });
   expect(screen.getByLabelText("CEP").props.value).toBe("80010000");
   expect(screen.getByLabelText("Logradouro").props.value).toBe("das Flores");
   expect(screen.getByLabelText("Telefone de contato (com DDD)").props.value).toBe("41999990000");
   expect(screen.getByText("Ponto marcado pelo GPS (precisão de 8,5 m)")).toBeTruthy();
-  await type("Buscar em Tipo de logradouro", "rua");
-  await choose("street_type", "RUA");
   await type("Bairro (se não está na lista)", "Centro");
   await fireEvent.press(field("localizacao").getByRole("radio", { name: /^Urbana/ }));
   await fireEvent.press(field("situacao_moradia_posse_terra").getByRole("radio", { name: /^Próprio/ }));
@@ -260,8 +258,6 @@ test("a round that downloads a newer version while the form is open does not mak
   const t = await mount({ db, householdKey: HH });
   // The station changes the phone and a round brings version 4 while the agent is still typing.
   await stationChanged(db, "household", HH, { contact_phone: "4130000000" });
-  await type("Buscar em Tipo de logradouro", "rua");
-  await choose("street_type", "RUA");
   await type("Complemento", "fundos");
   await press("Salvar");
   await waitFor(() => expect(t.onSaved).toHaveBeenCalled());

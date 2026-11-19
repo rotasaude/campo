@@ -1,4 +1,4 @@
-// gerado de contracts/field-sync (field-sync-v1.2.0) — não editar
+// gerado de contracts/field-sync (field-sync-v1.3.0) — não editar
 
 /**
  * GET /field/v1/changes (contrato do 24b §9.3): uma página do download incremental do escopo do aparelho, em ordem (updated_at, id). reset: true = o escopo mudou desde o cursor; o app apaga o que baixou (nunca o que falta enviar) e aplica as páginas. who_to_visit vem só na última página (has_more: false), sempre completo; nas outras, null. next_cursor é opaco e sempre vem: o app o guarda para a próxima sincronização (K-10).
@@ -22,7 +22,7 @@ export type ChangesResponse = {
  * via the `definition` "change_item".
  */
 export type ChangeItem = {
-  type: "micro_area" | "household" | "registration";
+  type: "micro_area" | "household" | "registration" | "city_block" | "ovitrap" | "liraa_item" | "transmission_block";
   id: Uuid;
   version?: number;
   body: {};
@@ -71,6 +71,11 @@ export type MicroAreaCode = string;
  * via the `definition` "property_type".
  */
 export type PropertyType = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "11" | "12" | "13" | "99";
+/**
+ * This interface was referenced by `undefined`'s JSON-Schema
+ * via the `definition` "ovitrap_number".
+ */
+export type OvitrapNumber = string;
 /**
  * This interface was referenced by `undefined`'s JSON-Schema
  * via the `definition` "who_reason".
@@ -157,6 +162,112 @@ export interface Location {
   source: "gps" | "map";
 }
 /**
+ * Quarteirão (35a, §13): número, vizinhança e situação. Sem dado de pessoa.
+ *
+ * This interface was referenced by `undefined`'s JSON-Schema
+ * via the `definition` "city_block".
+ */
+export interface CityBlock {
+  id: Uuid;
+  neighborhood_id: Uuid;
+  number: string;
+  active: boolean;
+  neighbor_ids: Uuid[];
+  version: number;
+}
+/**
+ * Ovitrampa (35a, §6, §13). Nunca leva morador; o fim vem pelo status, não por removal.
+ *
+ * This interface was referenced by `undefined`'s JSON-Schema
+ * via the `definition` "ovitrap".
+ */
+export interface Ovitrap {
+  id: Uuid;
+  number: OvitrapNumber;
+  household_id: Uuid;
+  status: "active" | "removed" | "lost";
+  open_reading: {
+    installed_on: Date;
+  } | null;
+  last_reading: {
+    collected_on: Date;
+    condition: "ok" | "damaged" | "lost" | "dry";
+    egg_count: number | null;
+  } | null;
+  version: number;
+}
+/**
+ * Item sorteado do LIRAa (35a, §7, §13). closed = o levantamento fechou.
+ *
+ * This interface was referenced by `undefined`'s JSON-Schema
+ * via the `definition` "liraa_item".
+ */
+export interface LiraaItem {
+  id: Uuid;
+  survey_id: Uuid;
+  survey_name: string;
+  household_id: Uuid;
+  city_block_id: Uuid;
+  status: "pending" | "inspected" | "substituted" | "closed";
+  version: number;
+}
+/**
+ * Bloqueio de transmissão (35a, §8, §13): quarteirões e ciclos de UBV. Nunca leva caso, notificação nem paciente (§8, §17); proposta e descarte nunca saem.
+ *
+ * This interface was referenced by `undefined`'s JSON-Schema
+ * via the `definition` "transmission_block".
+ */
+export interface TransmissionBlock {
+  id: Uuid;
+  status: "active" | "closed";
+  /**
+   * @minItems 1
+   */
+  block_ids: [Uuid, ...Uuid[]];
+  /**
+   * @maxItems 3
+   */
+  cycles:
+    | []
+    | [
+        {
+          number: number;
+          starts_on: Date;
+          ends_on: Date;
+        }
+      ]
+    | [
+        {
+          number: number;
+          starts_on: Date;
+          ends_on: Date;
+        },
+        {
+          number: number;
+          starts_on: Date;
+          ends_on: Date;
+        }
+      ]
+    | [
+        {
+          number: number;
+          starts_on: Date;
+          ends_on: Date;
+        },
+        {
+          number: number;
+          starts_on: Date;
+          ends_on: Date;
+        },
+        {
+          number: number;
+          starts_on: Date;
+          ends_on: Date;
+        }
+      ];
+  version: number;
+}
+/**
  * <household> do 24a (§2; L6, L7, L30; TerritoryRegistry::Json.household com full: true): com families e living_conditions. Responsável da família só com patient_id e display_name, nunca CPF.
  *
  * This interface was referenced by `undefined`'s JSON-Schema
@@ -182,6 +293,10 @@ export interface Household {
    * Seção do dicionário do 24a (§15): chaves e domínios do api, não deste esquema (K-2).
    */
   living_conditions: {};
+  /**
+   * Perfil de vigilância (35a), só leitura, na forma de GET /vector_control/households/:id. Acrescentado pelo FieldSync; o TerritoryRegistry::Json.household do 24a não muda (Q8). Ausente = gate vector_control não utilizável; null = sem perfil (Q6, CV-10). Nunca vai no item household.
+   */
+  vector?: HouseholdVector | null;
 }
 /**
  * This interface was referenced by `undefined`'s JSON-Schema
@@ -198,6 +313,17 @@ export interface Family {
   living_since: string | null;
   moved_out: boolean;
   responsible_exited: boolean;
+}
+/**
+ * This interface was referenced by `undefined`'s JSON-Schema
+ * via the `definition` "household_vector".
+ */
+export interface HouseholdVector {
+  city_block_id: UuidOrNull;
+  risk_class: "green" | "yellow" | "red" | "gray" | "purple" | null;
+  risk_assessed_on: DateOrNull;
+  last_worked_on: DateOrNull;
+  last_situation: "worked" | "closed" | "refused" | "vacant" | null;
 }
 /**
  * <registration> do 24a (§2; L4, L7, L9, L21, L24; TerritoryRegistry::Json.registration). CPF nunca: só has_cpf; CNS só mascarado.

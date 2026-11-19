@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Generates src/contract/generated/*.ts from the pinned copy of the contract
-// (contracts/field-sync, tag field-sync-v1.2.0). The generated files are
+// (contracts/field-sync, tag field-sync-v1.3.0). The generated files are
 // committed; `--check` recompiles in memory and fails if they differ.
 // Usage: node scripts/contract-types.mjs [--check]
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -12,7 +12,7 @@ const { compile } = jsonSchemaToTypescript;
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const contract = join(root, "contracts/field-sync");
 const out = join(root, "src/contract/generated");
-const banner = "// gerado de contracts/field-sync (field-sync-v1.2.0) — não editar";
+const banner = "// gerado de contracts/field-sync (field-sync-v1.3.0) — não editar";
 
 // [schema file, generated file, root type]
 const SCHEMAS = [

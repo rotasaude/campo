@@ -1,4 +1,4 @@
-// gerado de contracts/field-sync (field-sync-v1.2.0) — não editar
+// gerado de contracts/field-sync (field-sync-v1.3.0) — não editar
 
 /**
  * This interface was referenced by `UploadResponse`'s JSON-Schema
@@ -18,11 +18,17 @@ export type Result = {
     | "household"
     | "family"
     | "individual_registration"
+    | "ovitrap_installation"
+    | "ovitrap_collection"
     | null;
   /**
-   * accepted e duplicate: o id gravado. stale_version: o id do domicílio (também para family) ou do cadastro existente. rejected: só em already_registered (Q63), o registration_id do cadastro existente, e só quando ele está dentro do escopo do aparelho (6A); fora do escopo não há id. Proibido em qualquer outro rejected.
+   * accepted e duplicate: o id gravado. stale_version: o id do domicílio (também para family) ou do cadastro existente. rejected: só em already_registered (Q63), o registration_id do cadastro existente, e só quando ele está dentro do escopo do aparelho (6A); fora do escopo não há id. Proibido em qualquer outro rejected. Em ovitrap_installation e ovitrap_collection (35a), o id é o da ovitrampa (CV-3).
    */
   id?: string;
+  /**
+   * Só no accepted/duplicate de home_visit com boletim (opcional).
+   */
+  vector_inspection_id?: string;
   error?: ErrorCode;
   /**
    * Notação pontilhada/colchetes do contrato, relativa ao body do item para campos do body (occurred_at, reasons[0], participants[1].new_patient); chave nua para as chaves do próprio item fora do body (client_uuid, type); body quando o body não é objeto. Campo obrigatório ausente: o caminho do campo que falta (occurred_at, participants[1].patient_id). Falha do próprio objeto (pares um-ou-outro do Q27, local da atividade, par de medida): o caminho do objeto (body para o corpo, measurements, participants[i]). Nunca vazio. Nenhum *_body declara type, client_uuid ou body, para o path não ser ambíguo.
@@ -210,6 +216,10 @@ export interface Household {
    * Seção do dicionário do 24a (§15): chaves e domínios do api, não deste esquema (K-2).
    */
   living_conditions: {};
+  /**
+   * Perfil de vigilância (35a), só leitura, na forma de GET /vector_control/households/:id. Acrescentado pelo FieldSync; o TerritoryRegistry::Json.household do 24a não muda (Q8). Ausente = gate vector_control não utilizável; null = sem perfil (Q6, CV-10). Nunca vai no item household.
+   */
+  vector?: HouseholdVector | null;
 }
 /**
  * This interface was referenced by `UploadResponse`'s JSON-Schema
@@ -226,6 +236,17 @@ export interface Family {
   living_since: string | null;
   moved_out: boolean;
   responsible_exited: boolean;
+}
+/**
+ * This interface was referenced by `UploadResponse`'s JSON-Schema
+ * via the `definition` "household_vector".
+ */
+export interface HouseholdVector {
+  city_block_id: UuidOrNull;
+  risk_class: "green" | "yellow" | "red" | "gray" | "purple" | null;
+  risk_assessed_on: DateOrNull;
+  last_worked_on: DateOrNull;
+  last_situation: "worked" | "closed" | "refused" | "vacant" | null;
 }
 /**
  * <registration> do 24a (§2; L4, L7, L9, L21, L24; TerritoryRegistry::Json.registration). CPF nunca: só has_cpf; CNS só mascarado.

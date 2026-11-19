@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { KNOWN_HTTP_ERRORS, KNOWN_ITEM_ERRORS, type SessionResponse, type UploadRequest } from "./index";
+import { KNOWN_HTTP_ERRORS, KNOWN_ITEM_ERRORS, type ReferenceResponse, type SessionResponse, type UploadRequest } from "./index";
 import { example } from "./fixtures";
 import { expectValid, type SchemaName } from "./validate";
 
@@ -12,7 +12,7 @@ const cases = manifest.suites.flatMap((suite) =>
 test("the manifest covers the five schemas", () => {
   expect([...new Set(cases.map(([schema]) => schema))].sort()).toEqual(
     ["changes-response", "reference-response", "session-response", "upload-request", "upload-response"]);
-  expect(cases.length).toBeGreaterThanOrEqual(124);
+  expect(cases.length).toBeGreaterThanOrEqual(168);
 });
 
 // Same verdict as the contract's own checker (json_schemer in the api): valid passes, anything else is refused.
@@ -54,4 +54,41 @@ test("http error list carries the 24c codes (Q8)", () => {
 
 test("item error list carries the 24c codes", () => {
   expect(KNOWN_ITEM_ERRORS).toEqual(expect.arrayContaining(["invalid_location", "family_not_found", "cpf_or_reason_required"]));
+});
+
+// field-sync-v1.3.0 (35a): everything new is optional, and the boletim is closed.
+test("session without vector_control is valid (optional key)", () => {
+  const s = example<SessionResponse>("session-acs.json");
+  expect(s.features).not.toHaveProperty("vector_control");
+  expect(() => expectValid("session-response", s)).not.toThrow();
+  expect(example<SessionResponse>("session-endemic-agent.json").features.vector_control).toBe(true);
+});
+
+test("home_visit with vector_inspection, ovitrap_installation and ovitrap_collection examples validate", () => {
+  const files = ["upload-home-visit-vector-inspection.json", "upload-ovitrap-installation.json", "upload-ovitrap-collection.json"];
+  const types = files.flatMap((file) => {
+    const request = example<UploadRequest>(file);
+    expect(() => expectValid("upload-request", request)).not.toThrow();
+    return request.items.map((item) => item.type);
+  });
+  expect(types).toEqual(expect.arrayContaining(["home_visit", "ovitrap_installation", "ovitrap_collection"]));
+});
+
+test("vector_inspection is closed: an unknown key is refused", () => {
+  expect(() => expectValid("upload-request", example("invalid-vector-inspection-recovered-in-body.json")))
+    .toThrow(/\/items\/0\/body\/vector_inspection/);
+});
+
+// The brief names reference.json; in the tag the limits live in reference-vector-control.json
+// (reference.json has no vector_control_domains, which is optional).
+test("reference limits carry the Q7 keys", () => {
+  expect(Object.keys(example<ReferenceResponse>("reference-vector-control.json").vector_control_domains!.limits).sort())
+    .toEqual(["charges_max", "deposit_count_max", "larvae_collected_max", "measures_max", "samples_max"]);
+});
+
+test("the new item codes are in errors.item", () => {
+  expect(KNOWN_ITEM_ERRORS).toEqual(expect.arrayContaining(["situation_outcome_mismatch", "inspection_not_worked", "activity_property_mismatch",
+    "liraa_item_not_found", "transmission_block_not_active", "deposit_counts_inconsistent", "product_not_allowed", "samples_exceed_larvae",
+    "inspection_times_invalid", "reason_derived", "block_already_set", "household_without_block", "consent_required",
+    "ovitrap_number_taken", "collection_out_of_range", "reading_not_open", "ovitrap_not_active", "vector_inspection_invalid", "sample_label_taken"]));
 });

@@ -1,5 +1,25 @@
 # Changelog — field-sync
 
+## field-sync-v1.3.0 — 2026-11-18 — MINOR
+
+Vigilância ambiental de endemias (módulo 35a, ADR 0054). Compatível com o v1.2.0: nada do pedido v1.2.0 passa a ser recusado; o novo nas respostas é opcional.
+
+- `session-response-v1.json`: `features.vector_control` (opcional).
+- `upload-request-v1.json`: `vector_inspection` na visita (`home_visit_body`) e `$defs` novos (`vector_inspection`, `deposit_group`, `deposit_count`, `vector_deposit`, `vector_measure`, `vector_sample`, `ovitrap_number`); itens `ovitrap_installation` e `ovitrap_collection` (`ovitrap_installation_body`, `ovitrap_collection_body`).
+- `upload-response-v1.json`: os dois tipos novos; `vector_inspection_id` (só no `accepted`/`duplicate` de `home_visit`); `<household>.vector` (`household_vector` ou `null`, opcional). Sem `ovitrap_id`: o `id` do resultado é a ovitrampa (CV-3).
+- `changes-response-v1.json`: `<household>.vector` (opcional) e os tipos de download `city_block`, `ovitrap`, `liraa_item` e `transmission_block`, cada um com `version`. O app sobrescreve essas quatro entidades a cada recebimento, qualquer que seja a `version` (README, Q29).
+- `reference-response-v1.json`: `vector_control_domains` (opcional); `collective_activity_domains.rules` fechado nas sete chaves do api (a única resposta que aperta, Q3).
+- `domains-v1.json`: seção `vector_control` (listas, `limits`, `rules`) e 21 códigos novos em `errors.item`; `proof` não muda.
+- `domains-v1.json`: rótulo do grupo de depósito B é "B — Depósito móvel", como nas fontes oficiais (Manual LIRAa 2013, DN-2009, DN-2025; Q16(f)).
+- `tools/check_domains.py`: confere `vector_control` contra o esquema; novas conferências `regras-da-atividade` e `logradouro-em-codigo`.
+- `reference-response-v1.json`: `vector_control_domains.products[].charge_size` é texto `"^[0-9]{1,8}\.[0-9]{2}$"` (numeric 10,2; "> 0" fica no api; Q15); `measures[].charges` do envio segue número (2 casas, > 0, ≤ 999).
+- `tools/check_domains.py`: pares novos `vector_control.product_units`, `vector_control.risk_classes(reference)` e `vector_control.measure_methods(reference)` (métodos menos `measure_without_product` × `uses`).
+- Inválidos novos: `invalid-reference-product-charge-size-number`, `invalid-changes-ovitrap-with-resident`, `invalid-vector-inspection-sample-label-in-body`.
+- Compatibilidade: o `reference.json` da v1.2.0 deixa de passar no esquema da v1.3.0 só por `/collective_activity_domains/rules required` — é o aperto de resposta previsto na Q3 (o api já serve as regras nessa forma); nenhum outro exemplo da v1.2.0 muda de resultado.
+- Exemplos: 168 (61 válidos, 107 inválidos). `street_type` passa a `"081"` (código DNE) em todos.
+
+Pendências do contracts#2 (Q3): resolvidos o `street_type` em código e o `collective_activity.rules` no vocabulário do api; os seis itens adiados continuam adiados.
+
 ## field-sync-v1.2.0 — 2026-11-14 — MINOR
 
 App de campo offline (módulo 24c, ADR 0053). Compatível com o v1.1.0: nada do

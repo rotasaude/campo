@@ -1,6 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import type { HouseholdBody, ItemType, Location, RegistrationBody, UploadItem, UploadResult, WhoItem } from "./index";
+import type {
+  ChangeType, CityBlockBody, HouseholdBody, HouseholdVector, ItemType, LiraaItemBody, Location, OvitrapBody,
+  OvitrapCollectionItemBody, OvitrapInstallationItemBody, RegistrationBody, TransmissionBlockBody, UploadItem,
+  UploadResult, VectorControlDomainsRaw, VectorInspectionBody, WhoItem,
+} from "./index";
 
 const root = join(__dirname, "../..");
 
@@ -20,4 +24,21 @@ test("the aliases the app uses exist with the contract's shapes", () => {
   const registration: Pick<RegistrationBody, "id" | "version"> | null = null;
   const who: Pick<WhoItem, "patient_id"> | null = null;
   expect([location.source, result.status, household, registration, who]).toEqual(["gps", "accepted", null, null, null]);
+});
+
+// field-sync-v1.3.0 (35a): the names Tasks 3+ use.
+test("the 35a aliases exist with the contract's shapes", () => {
+  const types: ItemType[] = ["ovitrap_installation", "ovitrap_collection"];
+  const changes: ChangeType[] = ["city_block", "ovitrap", "liraa_item", "transmission_block"];
+  const inspection: Pick<VectorInspectionBody, "activity" | "situation"> | null = null;
+  const installation: Pick<OvitrapInstallationItemBody, "number"> | null = null;
+  const collection: Pick<OvitrapCollectionItemBody, "condition"> | null = null;
+  const block: Pick<CityBlockBody, "id" | "number"> | null = null;
+  const ovitrap: Pick<OvitrapBody, "id" | "number"> | null = null;
+  const liraa: Pick<LiraaItemBody, "id"> | null = null;
+  const transmission: Pick<TransmissionBlockBody, "id" | "status"> | null = null;
+  const vector: HouseholdVector = null;
+  const domains: Pick<VectorControlDomainsRaw, "limits"> | null = null;
+  expect([types.length, changes.length, inspection, installation, collection, block, ovitrap, liraa, transmission, vector, domains])
+    .toEqual([2, 4, null, null, null, null, null, null, null, null, null]);
 });

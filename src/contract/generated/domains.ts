@@ -1,8 +1,8 @@
-// gerado de contracts/field-sync (field-sync-v1.2.0) — não editar
+// gerado de contracts/field-sync (field-sync-v1.3.0) — não editar
 
 export const domains = {
   "schema": "rotasaude.field_sync.domains.v1",
-  "description": "Domínios e regras cruzadas da visita (contrato do 24b §3 e §10) e da atividade coletiva (§4 e §11), em dado, para o app de campo montar os formulários sem copiar regra à mão. Códigos LEDI inteiros (IDL 8.7.0); os do 24a em texto. Rótulos e ordem do dicionário oficial (Q39). Quem decide é o api: isto é o espelho. proof registra o commit do api com a prova técnica e o acréscimo do contrato (§10–§11) contra os quais os domínios foram conferidos.",
+  "description": "Domínios e regras cruzadas da visita (contrato do 24b §3 e §10) e da atividade coletiva (§4 e §11), em dado, para o app de campo montar os formulários sem copiar regra à mão. Códigos LEDI inteiros (IDL 8.7.0); os do 24a em texto. Rótulos e ordem do dicionário oficial (Q39). Controle vetorial do 35a (vector_control: listas com rótulos, limites e regras do §3 e do §6). Quem decide é o api: isto é o espelho. proof registra o commit do api com a prova técnica e o acréscimo do contrato (§10–§11) contra os quais os domínios foram conferidos.",
   "proof": {
     "api_commit": "fcf23c87",
     "date": "2026-11-12",
@@ -939,25 +939,25 @@ export const domains = {
       }
     ],
     "rules": {
-      "by_activity_type": {
+      "by_type": {
         "1": {
           "meeting_topics": "required",
           "target_audience": "forbidden",
-          "health_topics": "with_meeting_topic_6",
+          "health_topics": "forbidden",
           "health_practices": "forbidden",
           "participants": "optional"
         },
         "2": {
           "meeting_topics": "required",
           "target_audience": "forbidden",
-          "health_topics": "with_meeting_topic_6",
+          "health_topics": "forbidden",
           "health_practices": "forbidden",
           "participants": "optional"
         },
         "3": {
           "meeting_topics": "required",
           "target_audience": "forbidden",
-          "health_topics": "with_meeting_topic_6",
+          "health_topics": "forbidden",
           "health_practices": "forbidden",
           "participants": "optional"
         },
@@ -993,19 +993,26 @@ export const domains = {
       "values": {
         "required": "obrigatório",
         "forbidden": "proibido",
-        "optional": "opcional",
-        "with_meeting_topic_6": "proibido, salvo com o tema de reunião 6 (Educação permanente)"
+        "optional": "opcional"
       },
-      "practices_only_in_activity_type": {
-        "6": [
-          2,
-          9,
-          33
-        ]
-      },
-      "procedure_code_with_practice": 30,
+      "health_topics_with_meeting_topic": [
+        6
+      ],
+      "practices_only_in_type": [
+        {
+          "type": 6,
+          "practices": [
+            2,
+            9,
+            33
+          ]
+        }
+      ],
+      "procedure_practices": [
+        30
+      ],
       "procedure_code_domain": "outro_procedimento_coletivo",
-      "smoking_with_practices": [
+      "smoking_practices": [
         25,
         26,
         27,
@@ -1034,14 +1041,12 @@ export const domains = {
         "weight_kg": {
           "min": 0.5,
           "max": 500,
-          "decimals": 3,
-          "ledi": "peso"
+          "decimals": 3
         },
         "height_cm": {
           "min": 20,
           "max": 250,
-          "decimals": 1,
-          "ledi": "altura"
+          "decimals": 1
         }
       },
       "unidentified_patient": {
@@ -1149,7 +1154,28 @@ export const domains = {
       "household_changed",
       "too_many_requests",
       "invalid_location",
-      "family_not_found"
+      "family_not_found",
+      "vector_inspection_invalid",
+      "situation_outcome_mismatch",
+      "inspection_not_worked",
+      "activity_property_mismatch",
+      "liraa_item_not_found",
+      "transmission_block_not_active",
+      "deposit_counts_inconsistent",
+      "product_not_allowed",
+      "samples_exceed_larvae",
+      "inspection_times_invalid",
+      "reason_derived",
+      "block_already_set",
+      "household_without_neighborhood",
+      "block_not_in_household_neighborhood",
+      "household_without_block",
+      "consent_required",
+      "ovitrap_number_taken",
+      "collection_out_of_range",
+      "reading_not_open",
+      "ovitrap_not_active",
+      "sample_label_taken"
     ]
   },
   "location": {
@@ -1177,5 +1203,276 @@ export const domains = {
     "visit_sources": [
       "gps"
     ]
+  },
+  "vector_control": {
+    "activities": [
+      {
+        "code": "li",
+        "label": "LI — Levantamento de índice"
+      },
+      {
+        "code": "li_t",
+        "label": "LI+T — Levantamento de índice e tratamento"
+      },
+      {
+        "code": "pe",
+        "label": "PE — Ponto estratégico"
+      },
+      {
+        "code": "ie",
+        "label": "IE — Imóvel especial"
+      },
+      {
+        "code": "transmission_block",
+        "label": "Bloqueio de transmissão"
+      },
+      {
+        "code": "liraa",
+        "label": "LIRAa"
+      }
+    ],
+    "work_types": [
+      {
+        "code": "routine",
+        "label": "Rotina"
+      },
+      {
+        "code": "pending",
+        "label": "Recuperação de pendência"
+      }
+    ],
+    "situations": [
+      {
+        "code": "worked",
+        "label": "Trabalhado"
+      },
+      {
+        "code": "closed",
+        "label": "Fechado"
+      },
+      {
+        "code": "refused",
+        "label": "Recusado"
+      },
+      {
+        "code": "vacant",
+        "label": "Desocupado"
+      }
+    ],
+    "deposit_groups": [
+      {
+        "code": "A1",
+        "label": "A1 — Depósito de água elevado"
+      },
+      {
+        "code": "A2",
+        "label": "A2 — Depósito de armazenamento ao nível do solo"
+      },
+      {
+        "code": "B",
+        "label": "B — Depósito móvel"
+      },
+      {
+        "code": "C",
+        "label": "C — Depósito fixo"
+      },
+      {
+        "code": "D1",
+        "label": "D1 — Pneu e outro material rodante"
+      },
+      {
+        "code": "D2",
+        "label": "D2 — Lixo, sucata e entulho"
+      },
+      {
+        "code": "E",
+        "label": "E — Depósito natural"
+      }
+    ],
+    "measure_methods": [
+      {
+        "code": "mechanical",
+        "label": "Mecânico (eliminação)"
+      },
+      {
+        "code": "focal",
+        "label": "Focal (larvicida)"
+      },
+      {
+        "code": "perifocal",
+        "label": "Perifocal (adulticida residual)"
+      },
+      {
+        "code": "spatial",
+        "label": "Espacial (UBV)"
+      }
+    ],
+    "risk_classes": [
+      {
+        "code": "green",
+        "label": "Verde (baixo)"
+      },
+      {
+        "code": "yellow",
+        "label": "Amarelo (médio)"
+      },
+      {
+        "code": "red",
+        "label": "Vermelho (alto)"
+      },
+      {
+        "code": "gray",
+        "label": "Cinza (difícil acesso, com agendamento)"
+      },
+      {
+        "code": "purple",
+        "label": "Roxo (difícil acesso, exige intervenção legal ou VISA)"
+      }
+    ],
+    "product_units": [
+      {
+        "code": "g",
+        "label": "g"
+      },
+      {
+        "code": "ml",
+        "label": "ml"
+      },
+      {
+        "code": "un",
+        "label": "unidade"
+      }
+    ],
+    "ovitrap_conditions": [
+      {
+        "code": "ok",
+        "label": "Íntegra"
+      },
+      {
+        "code": "damaged",
+        "label": "Danificada"
+      },
+      {
+        "code": "lost",
+        "label": "Perdida"
+      },
+      {
+        "code": "dry",
+        "label": "Seca"
+      }
+    ],
+    "ovitrap_statuses": [
+      {
+        "code": "active",
+        "label": "Ativa"
+      },
+      {
+        "code": "removed",
+        "label": "Retirada"
+      },
+      {
+        "code": "lost",
+        "label": "Perdida"
+      }
+    ],
+    "liraa_item_statuses": [
+      {
+        "code": "pending",
+        "label": "Pendente"
+      },
+      {
+        "code": "inspected",
+        "label": "Inspecionado"
+      },
+      {
+        "code": "substituted",
+        "label": "Substituído"
+      },
+      {
+        "code": "closed",
+        "label": "Levantamento fechado"
+      }
+    ],
+    "transmission_block_statuses": [
+      {
+        "code": "active",
+        "label": "Ativo"
+      },
+      {
+        "code": "closed",
+        "label": "Fechado"
+      }
+    ],
+    "limits": {
+      "deposit_count_max": 999,
+      "charges_max": 999,
+      "samples_max": 99,
+      "larvae_collected_max": 10,
+      "measures_max": 20
+    },
+    "rules": {
+      "registrar_cbos": [
+        "515140"
+      ],
+      "household_required": true,
+      "situation_outcome": {
+        "worked": 1,
+        "refused": 2,
+        "closed": 3,
+        "vacant": 3
+      },
+      "not_worked_empty": [
+        "deposits",
+        "measures",
+        "samples"
+      ],
+      "not_worked_educational_action": false,
+      "activity_property_types": {
+        "pe": [
+          "4"
+        ],
+        "ie": [
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12",
+          "13"
+        ]
+      },
+      "activity_links": {
+        "liraa": "liraa_draw_item_id",
+        "transmission_block": "transmission_block_id"
+      },
+      "deposit_count_not_above": {
+        "with_water": "existing",
+        "with_larvae": "with_water",
+        "eliminated": "existing",
+        "treated": "with_water"
+      },
+      "measure_without_product": [
+        "mechanical"
+      ],
+      "charges_decimals": 2,
+      "samples_per_group_not_above": "with_larvae",
+      "times": {
+        "together": true,
+        "max_hours": 12,
+        "same_day_as_visit": true
+      },
+      "derived_reasons": {
+        "34": "educational_action",
+        "35": "with_larvae",
+        "36": "eliminated_or_mechanical",
+        "37": "focal"
+      },
+      "sample_label": "upcase(client_uuid da visita[0,8]) + \"-\" + number com 2 dígitos",
+      "sample_label_collision": "sample_label_taken",
+      "ovitrap_collection_reinstall_default": true,
+      "ovitrap_remove_ignores_reinstall": true
+    }
   }
 } as const;

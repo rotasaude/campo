@@ -1,5 +1,5 @@
 // State and rules of the fake field-sync server (module 24c, Task 24). It answers from the
-// examples of the pinned contract (contracts/field-sync, tag field-sync-v1.2.0) and keeps just
+// examples of the pinned contract (contracts/field-sync, tag field-sync-v1.3.0) and keeps just
 // enough state for the Maestro flows: the idempotency book, the version of each target and a
 // one-shot script. It is a test double: the api decides for real, this only keeps the shapes.
 import { Buffer } from "node:buffer";
@@ -11,7 +11,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 
 const SCHEMAS = ["session-response", "upload-request", "upload-response", "changes-response", "reference-response"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const TYPES = ["home_visit", "home_visit_withdrawal", "collective_activity", "patient", "household", "family", "individual_registration"];
+const TYPES = ["home_visit", "home_visit_withdrawal", "collective_activity", "patient", "household", "family", "individual_registration", "ovitrap_installation", "ovitrap_collection"];
 const VERSIONED = ["household", "family", "individual_registration"];
 // Which accepted items a citation may point to (Q26, Q27).
 const CITES = {
@@ -19,6 +19,7 @@ const CITES = {
   household_client_uuid: (receipt) => receipt.type === "household",
   family_client_uuid: (receipt) => receipt.type === "family",
   visit_client_uuid: (receipt) => receipt.type === "home_visit",
+  ovitrap_client_uuid: (receipt) => receipt.type === "ovitrap_installation",
 };
 const NAMESPACE = Buffer.from("5f1e1d5c0de04a7e9c0dfa4ef1e1d5c0", "hex");
 const DEVICE_ERRORS = ["device_revoked", "device_suspended"];
@@ -36,10 +37,9 @@ const range = ({ min, max, decimals }) => ({ min, max, decimals });
 function fullReference(example, domains, dictionaries) {
   const visit = domains.home_visit;
   const activity = domains.collective_activity;
-  const byType = Object.entries(activity.rules.by_activity_type);
-  // "with_meeting_topic_6" is the contract's wording for: forbidden, unless that meeting topic is marked.
-  const withTopic = /^with_meeting_topic_(\d+)$/;
-  const topics = new Set(byType.flatMap(([, fields]) => Object.values(fields)).flatMap((rule) => (withTopic.test(rule) ? [Number(withTopic.exec(rule)[1])] : [])));
+  // From field-sync-v1.3.0 the contract writes these rules in the api's vocabulary (Q3): the
+  // reference carries the seven keys as they are.
+  const { list_max, by_type, health_topics_with_meeting_topic, practices_only_in_type, procedure_practices, smoking_practices } = activity.rules;
   return {
     ...example,
     registration_dictionaries: { version: dictionaries.ledi_version, ...dictionaries.registration_dictionaries },
@@ -66,12 +66,7 @@ function fullReference(example, domains, dictionaries) {
       health_practices: activity.praticas_em_saude,
       procedures: activity.outro_procedimento_coletivo,
       rules: {
-        list_max: activity.rules.list_max,
-        by_type: Object.fromEntries(byType.map(([type, fields]) => [type, Object.fromEntries(Object.entries(fields).map(([field, rule]) => [field, withTopic.test(rule) ? "forbidden" : rule]))])),
-        health_topics_with_meeting_topic: [...topics].sort((a, b) => a - b),
-        practices_only_in_type: Object.entries(activity.rules.practices_only_in_activity_type).map(([type, practices]) => ({ type: Number(type), practices })),
-        procedure_practices: [activity.rules.procedure_code_with_practice],
-        smoking_practices: activity.rules.smoking_with_practices,
+        list_max, by_type, health_topics_with_meeting_topic, practices_only_in_type, procedure_practices, smoking_practices,
         participant_measurements: Object.fromEntries(Object.entries(activity.rules.participant_measurements).map(([key, row]) => [key, range(row)])),
       },
     },

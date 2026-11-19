@@ -73,7 +73,9 @@ export function referenceFixture(): ReferenceResponse {
     },
     collective_activity_domains: {
       activity_types: ca.tipo_atividade_coletiva, meeting_topics: ca.temas_para_reuniao, target_audience: ca.publico_alvo,
-      health_topics: ca.temas_para_saude, health_practices: ca.praticas_em_saude, procedures: ca.outro_procedimento_coletivo, rules: {},
+      health_topics: ca.temas_para_saude, health_practices: ca.praticas_em_saude, procedures: ca.outro_procedimento_coletivo,
+      // Closed in the seven keys of the api from field-sync-v1.3.0 (Q3); the tag's example carries them.
+      rules: base.collective_activity_domains.rules,
     },
   } as unknown as ReferenceResponse;
 }

@@ -1,4 +1,4 @@
-// gerado de contracts/field-sync (field-sync-v1.2.0) — não editar
+// gerado de contracts/field-sync (field-sync-v1.3.0) — não editar
 
 /**
  * This interface was referenced by `UploadRequest`'s JSON-Schema
@@ -16,7 +16,9 @@ export type Item = {
     | "patient"
     | "household"
     | "family"
-    | "individual_registration";
+    | "individual_registration"
+    | "ovitrap_installation"
+    | "ovitrap_collection";
   body: {};
 };
 /**
@@ -56,7 +58,7 @@ export type PropertyType = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" |
  */
 export type NoCpfReason = "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "11" | "12" | "13";
 /**
- * Corpo do POST /home_visits (§6) sem client_uuid (vai no item). shift nunca vem: o api deriva de occurred_at no fuso da cidade. patient_client_uuid cita um item patient aceito antes (C11). location é a coordenada da visita (24c): ausente = sem coordenada; null não é aceito. family_client_uuid cita um item family aceito antes; no máximo um entre family_id e family_client_uuid.
+ * Corpo do POST /home_visits (§6) sem client_uuid (vai no item). shift nunca vem: o api deriva de occurred_at no fuso da cidade. patient_client_uuid cita um item patient aceito antes (C11). location é a coordenada da visita (24c): ausente = sem coordenada; null não é aceito. family_client_uuid cita um item family aceito antes; no máximo um entre family_id e family_client_uuid. vector_inspection é o boletim do agente de endemias (35a, §3): ausente = sem boletim; null não é aceito.
  *
  * This interface was referenced by `UploadRequest`'s JSON-Schema
  * via the `definition` "home_visit_body".
@@ -82,6 +84,7 @@ export type HomeVisitBody = {
    */
   family_client_uuid?: string;
   location?: Location;
+  vector_inspection?: VectorInspection;
   duplicates_reviewed?: boolean;
   /**
    * 1 Realizada, 2 Recusada, 3 Ausente.
@@ -100,6 +103,16 @@ export type HomeVisitBody = {
    */
   note?: string;
 };
+/**
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "deposit_group".
+ */
+export type DepositGroup = "A1" | "A2" | "B" | "C" | "D1" | "D2" | "E";
+/**
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "deposit_count".
+ */
+export type DepositCount = number;
 /**
  * MotivoVisita (domains-v1.json, home_visit.motivo_visita). Não existe o 26.
  *
@@ -828,6 +841,49 @@ export type IndividualRegistrationBody = {
   street_situation?: {} | null;
   refused?: boolean;
 };
+/**
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "ovitrap_number".
+ */
+export type OvitrapNumber = string;
+/**
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "ovitrap_installation_body".
+ */
+export type OvitrapInstallationBody = {
+  household_id?: Uuid;
+  household_client_uuid?: Uuid;
+  number: OvitrapNumber;
+  /**
+   * false → rejected consent_required (regra do api, CV-9).
+   */
+  consent: boolean;
+  installed_on: Date;
+} & OvitrapInstallationBody1;
+export type OvitrapInstallationBody1 = {
+  [k: string]: unknown | undefined;
+};
+/**
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "ovitrap_collection_body".
+ */
+export type OvitrapCollectionBody = {
+  ovitrap_id?: Uuid;
+  ovitrap_client_uuid?: Uuid;
+  collected_on: Date;
+  condition: "ok" | "damaged" | "lost" | "dry";
+  /**
+   * Padrão true; com remove true, reinstall é ignorado (CV-9).
+   */
+  reinstall?: boolean;
+  /**
+   * Padrão false; true → status removed (com condition lost → lost); com remove true, reinstall é ignorado (CV-9).
+   */
+  remove?: boolean;
+} & OvitrapCollectionBody1;
+export type OvitrapCollectionBody1 = {
+  [k: string]: unknown | undefined;
+};
 
 /**
  * POST /field/v1/uploads (contrato do 24b §9.3): de 1 a 50 itens, processados em ordem, cada um na sua transação; idempotente pelo client_uuid do item. O esquema descreve o item VÁLIDO e confere a forma (tipos, domínios, faixas, objetos fechados); as relações entre campos (desfecho × motivos, imóvel × pessoa, tipo de atividade × temas, quem pode o quê) estão em dado em domains-v1.json e são decididas pelo api, que devolve o item rejected com o código. Erros de forma (Q31): envelope inválido (corpo que não é objeto; items ausente, vazio, não-lista ou com mais de 50; chave desconhecida no envelope) = 422 invalid_request para o lote inteiro, nada gravado; item fora deste esquema (campo desconhecido, tipo errado, type desconhecido, client_uuid ausente ou inválido) = só ele volta rejected com error invalid_request e o path, e os outros seguem.
@@ -882,6 +938,290 @@ export interface NewPatient {
   cpf?: string;
   no_cpf_reason?: NoCpfReason;
   cns?: string;
+}
+/**
+ * Boletim de campo na visita (35a, §3). As relações do §3 são do api (domains-v1.json, vector_control.rules); listas ausentes = vazias; erro de esquema aqui dentro → rejected vector_inspection_invalid com o mesmo path (CV-4).
+ *
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "vector_inspection".
+ */
+export interface VectorInspection {
+  activity: "li" | "li_t" | "pe" | "ie" | "transmission_block" | "liraa";
+  work_type: "routine" | "pending";
+  situation: "worked" | "closed" | "refused" | "vacant";
+  educational_action: boolean;
+  entered_at?: Datetime;
+  left_at?: Datetime;
+  city_block_id?: Uuid;
+  risk_class?: "green" | "yellow" | "red" | "gray" | "purple";
+  liraa_draw_item_id?: Uuid;
+  transmission_block_id?: Uuid;
+  /**
+   * @maxItems 7
+   */
+  deposits?:
+    | []
+    | [VectorDeposit]
+    | [VectorDeposit, VectorDeposit]
+    | [VectorDeposit, VectorDeposit, VectorDeposit]
+    | [VectorDeposit, VectorDeposit, VectorDeposit, VectorDeposit]
+    | [VectorDeposit, VectorDeposit, VectorDeposit, VectorDeposit, VectorDeposit]
+    | [VectorDeposit, VectorDeposit, VectorDeposit, VectorDeposit, VectorDeposit, VectorDeposit]
+    | [VectorDeposit, VectorDeposit, VectorDeposit, VectorDeposit, VectorDeposit, VectorDeposit, VectorDeposit];
+  /**
+   * @maxItems 20
+   */
+  measures?:
+    | []
+    | [VectorMeasure]
+    | [VectorMeasure, VectorMeasure]
+    | [VectorMeasure, VectorMeasure, VectorMeasure]
+    | [VectorMeasure, VectorMeasure, VectorMeasure, VectorMeasure]
+    | [VectorMeasure, VectorMeasure, VectorMeasure, VectorMeasure, VectorMeasure]
+    | [VectorMeasure, VectorMeasure, VectorMeasure, VectorMeasure, VectorMeasure, VectorMeasure]
+    | [VectorMeasure, VectorMeasure, VectorMeasure, VectorMeasure, VectorMeasure, VectorMeasure, VectorMeasure]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ]
+    | [
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure,
+        VectorMeasure
+      ];
+  /**
+   * @maxItems 99
+   */
+  samples?: VectorSample[];
+}
+/**
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "vector_deposit".
+ */
+export interface VectorDeposit {
+  group: DepositGroup;
+  existing: DepositCount;
+  with_water: DepositCount;
+  with_larvae: DepositCount;
+  eliminated: DepositCount;
+  treated: DepositCount;
+}
+/**
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "vector_measure".
+ */
+export interface VectorMeasure {
+  method: "mechanical" | "focal" | "perifocal" | "spatial";
+  vector_product_id?: Uuid;
+  charges?: number;
+}
+/**
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "vector_sample".
+ */
+export interface VectorSample {
+  number: number;
+  deposit_group: DepositGroup;
+  larvae_collected: number;
 }
 /**
  * Só as medidas aferidas (§3). Casas decimais e as proibições (desfecho 2 e 3, não residencial) são do api.

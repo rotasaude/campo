@@ -1,4 +1,4 @@
-// gerado de contracts/field-sync (field-sync-v1.2.0) — não editar
+// gerado de contracts/field-sync (field-sync-v1.3.0) — não editar
 
 /**
  * ISO 8601 com segundos e fuso explícito (Z ou ±hh:mm); nunca hora local sem fuso.
@@ -89,6 +89,10 @@ export interface SessionResponse {
     home_visits: boolean;
     collective_activities: boolean;
     territory_registry: boolean;
+    /**
+     * Vigilância ambiental de endemias (35a). Opcional: ausente = false (api anterior ao 35a).
+     */
+    vector_control?: boolean;
   };
   /**
    * Primeiro dia aceito pelo prazo do SIAPS (§3, C2).
