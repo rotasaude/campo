@@ -28,10 +28,13 @@ export async function installOvitrap(db: Db, input: { householdKey: string; numb
       body.household_client_uuid = household.client_uuid as string;
       if (queued(household.client_uuid)) deps.push({ client_uuid: household.client_uuid as string, kind: "cite" });
     }
-    // The bulletins still in the line that set this household's block: the api must apply them first (Q10).
+    // The bulletins still in the line that set this household's block: the api must apply them first (Q10). A refused
+    // one gave nothing (the same rule as readLocalBulletins, src/features/vector/profile.ts): citing it would hold the
+    // installation behind a refusal.
     const gave = await tx.all<{ client_uuid: string }>(
       `SELECT v.client_uuid FROM local_visits v JOIN outbox o ON o.client_uuid = v.client_uuid
-       WHERE json_extract(v.summary, '$.household') = ? AND json_extract(v.summary, '$.vector.city_block_id') IS NOT NULL ORDER BY o.seq`,
+       WHERE o.type = 'home_visit' AND o.state NOT IN ('needs_attention', 'conflict')
+         AND json_extract(v.summary, '$.household') = ? AND json_extract(v.summary, '$.vector.city_block_id') IS NOT NULL ORDER BY o.seq`,
       [input.householdKey]);
     for (const visit of gave) deps.push({ client_uuid: visit.client_uuid, kind: "cite" });
     Object.assign(body, { number: input.number, consent: true, installed_on: input.today });

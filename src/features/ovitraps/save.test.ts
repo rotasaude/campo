@@ -1,4 +1,4 @@
-import type { HouseholdItemBody, UploadRequest } from "../../contract";
+import type { ChangesResponse, HouseholdItemBody, UploadRequest } from "../../contract";
 import { example } from "../../contract/fixtures";
 import { expectValid } from "../../contract/validate";
 import { outboxRepo } from "../../db/repos/outboxRepo";
@@ -8,6 +8,7 @@ import { createVisitRules, emptyVisitDraft, type VisitDraft } from "../../rules/
 import { createRegistryRules } from "../../rules/registry";
 import { registrationDictionaries } from "../../rules/testing/dictionaries";
 import { applyResults, refreshBlocked, selectBatch } from "../../sync/dispatch";
+import { applyPage } from "../../sync/download";
 import { removeUnsent } from "../../sync/outbox";
 import { newUuid, rejected } from "../../sync/testing";
 import { saveHousehold } from "../households/save";
@@ -145,4 +146,28 @@ test("the installation in a household born on the tablet whose queued bulletin g
   expectValid("upload-request", { items: [{ client_uuid: installation.client_uuid, type: installation.type, body: installation.body }] });
   // The queue sends them in order: the household, the visit, then the installation.
   expect(selectBatch(await all(db)).map((i) => i.type)).toEqual(["household", "home_visit", "ovitrap_installation"]);
+});
+
+// Review I1: a bulletin the server refused (block_already_set: the coordination set the block meanwhile) gave nothing.
+// Once the download brings the block, a new installation must not cite it, or it would be held behind a refusal that
+// only "Descartar" ends, and the discard would take the installation with it.
+test("a refused bulletin that gave the block is no dependency of a new installation", async () => {
+  const db = await endemicTablet({ household: { vector: NO_PROFILE, address: ADDRESS } });
+  await saveVisit(db, draft(), {
+    clientUuid: newUuid(), teamId: "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b", location: null, visitBody: rules.visitBody, newUuid, now: () => NOW,
+    vectorInspection: { activity: "li", work_type: "routine", situation: "worked", educational_action: false, city_block_id: BLOCK } as never,
+  });
+  const [visit] = await all(db);
+  await applyResults(db, [visit], [rejected(visit, "block_already_set", { path: "vector_inspection.city_block_id" })], noStale);
+  // The download brings the block the coordination set.
+  const page = example<ChangesResponse>("changes-vector-page.json");
+  const item = page.items.find((i) => i.type === "household" && i.id === HH)!;
+  const version = (item.version ?? 0) + 1;
+  await applyPage(db, { ...page, items: [{ ...item, version, body: { ...(item.body as object), address: ADDRESS, vector: { ...NO_PROFILE, city_block_id: BLOCK }, version } }] } as unknown as ChangesResponse);
+
+  await installOvitrap(db, { householdKey: HH, number: "OVT-015", clientUuid: U1, today: "2026-11-14" });
+  await refreshBlocked(db);
+  const installation = (await all(db)).find((i) => i.type === "ovitrap_installation")!;
+  expect([installation.depends_on, installation.state]).toEqual([[], "pending"]);
+  expect(selectBatch(await all(db)).map((i) => i.type)).toEqual(["ovitrap_installation"]);
 });
