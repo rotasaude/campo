@@ -66,6 +66,13 @@ test("without a block the household says why and the button is off", async () =>
   expect(nav.onInstallOvitrap).not.toHaveBeenCalled();
 });
 
+// Review M4: the api installs only in an active household (not_found on household_id otherwise).
+test("an inactive household offers no \"Instalar ovitrampa\"", async () => {
+  await household(await endemicTablet({ household: { status: "inactive" } }));
+  expect(screen.queryByRole("button", { name: "Instalar ovitrampa" })).toBeNull();
+  expect(screen.queryByText(VECTOR_ERRORS.household_without_block)).toBeNull();
+});
+
 describe("InstallForm", () => {
   async function form(db: Db) {
     const onSaved = jest.fn();

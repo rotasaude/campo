@@ -37,7 +37,8 @@ interface Loaded {
   // `canEdit`: families and residents (the registry, only the ACS); `editsHousehold`: the household itself (canEditHousehold).
   // `occupied`: the endemic agent's non-residential property with an active resident — the api refuses his edit (M2).
   canEdit: boolean; editsHousehold: boolean; occupied: boolean; visitsOn: boolean; takesFamilies: boolean;
-  // 35a: the endemic agent installs an ovitrap here (canUseOvitraps); `hasBlock`: the profile as the tablet knows it.
+  // 35a: the endemic agent installs an ovitrap here (canUseOvitraps), only in an active household (the api refuses
+  // not_found on household_id otherwise); `hasBlock`: the profile as the tablet knows it.
   ovitraps: { hasBlock: boolean } | null;
   // Q59(b): the property's own visit, for who records the bulletin with the visit on, at an active property where nobody
   // lives as the tablet knows it (a visit with no person; with a resident, the visit goes through the resident, as in
@@ -76,7 +77,7 @@ async function read(db: Db, key: string, now: number): Promise<Loaded | "missing
     view, line: addressLine(view.body, dict), type: dict ? dictLabel(dict, "tipo_de_imovel", view.body.property_type) : view.body.property_type, residents,
     canEdit: canEditRegistry(session), editsHousehold: canEditHousehold(session, view.body.property_type),
     occupied: !canEditRegistry(session) && canEditHousehold(session, view.body.property_type) && await hasActiveResident(db, key), visitsOn: session?.features.home_visits === true,
-    ovitraps: canUseOvitraps(session) ? { hasBlock: !!(await readProfile(db, key))?.city_block_id } : null,
+    ovitraps: canUseOvitraps(session) && view.body.status === "active" ? { hasBlock: !!(await readProfile(db, key))?.city_block_id } : null,
     propertyVisit: await propertyVisitOf(db, view, now, session?.features.home_visits === true && canRecordInspection(session, reference)),
     takesFamilies: dict !== null && createRegistryRules(dict).allowsFamilies(view.body.property_type) && !view.body.refused,
     visitsToday: (await todayVisits(db, now)).filter((visit) => visit.householdKey === key && visit.state !== "withdrawn").map((visit) => visit.time),
