@@ -1,8 +1,8 @@
 // sample_label_taken (Q7(1)): another visit of the city already has a tube with this label. The label is made from the
 // first eight characters of the visit's client_uuid (§9, sampleLabel), so the way out is a new client_uuid — the server
 // never recorded the refused visit (the refusal undoes it whole, and leaves no receipt), so the new one is a first
-// sending, not a second visit. Only on the agent's tap, only for this refusal, and the new labels are shown at once:
-// the tubes must be labelled again before the visit goes.
+// sending, not a second visit. Only on the agent's tap, only for this refusal. The item goes back to the line at once
+// (nothing holds it until the tubes are relabelled); the new labels are shown on the attention screen right after the tap.
 //
 // One transaction: the item's client_uuid, the sheet line's key and everything in the line that names the old uuid —
 // what depends on it (an ovitrap installation waits for the bulletin that set the block) and a `<kind>_client_uuid`

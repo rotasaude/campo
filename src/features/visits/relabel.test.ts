@@ -106,3 +106,50 @@ test("a uuid that is not one, or one already in the tablet, is refused and nothi
   expect((await outboxRepo.bySeq(db, visit.seq))!.client_uuid).toBe(OLD);
   expect(await visitRow(db, OLD)).not.toBeNull();
 });
+
+test("a sheet line no longer pending is never rekeyed", async () => {
+  const { db, visit } = await refusedVisit();
+  await db.run("UPDATE local_visits SET state = 'accepted' WHERE client_uuid = ?", [OLD]);
+  await expect(relabelVisit(db, visit.seq, () => NEW)).rejects.toThrow();
+  expect(await visitRow(db, NEW)).toBeNull();
+  expect((await outboxRepo.bySeq(db, visit.seq))!).toMatchObject({ client_uuid: OLD, state: "needs_attention" });
+});
+
+test("a new uuid already on the sheet or already given an id by the server is refused", async () => {
+  const onSheet = await refusedVisit();
+  await onSheet.db.run("INSERT INTO local_visits (client_uuid, city_day, occurred_at, summary, state) VALUES (?, '2026-11-14', '2026-11-14T09:00:00-03:00', '{}', 'accepted')", [NEW]);
+  await expect(relabelVisit(onSheet.db, onSheet.visit.seq, () => NEW)).rejects.toThrow();
+  expect((await outboxRepo.bySeq(onSheet.db, onSheet.visit.seq))!.client_uuid).toBe(OLD);
+  expect(await visitRow(onSheet.db, OLD)).not.toBeNull();
+
+  const mapped = await refusedVisit();
+  await outboxRepo.mapClientId(mapped.db, NEW, "home_visit", "8c9d0e1f-2a3b-4c4d-8e5f-6a7b8c9d0e1f");
+  await expect(relabelVisit(mapped.db, mapped.visit.seq, () => NEW)).rejects.toThrow();
+  expect((await outboxRepo.bySeq(mapped.db, mapped.visit.seq))!.client_uuid).toBe(OLD);
+});
+
+test("three draws with the old eight first characters: refused, nothing changes", async () => {
+  const { db, visit } = await refusedVisit();
+  const draw = jest.fn(() => "3f2a9c1e-2222-4000-8000-0000000000d4");
+  await expect(relabelVisit(db, visit.seq, draw)).rejects.toThrow();
+  expect(draw).toHaveBeenCalledTimes(3);
+  expect((await outboxRepo.bySeq(db, visit.seq))!).toMatchObject({ client_uuid: OLD, state: "needs_attention", error: "sample_label_taken" });
+});
+
+// Q56: after the relabel the old labels (the old uuid's eight first characters) are nowhere in the tablet's database —
+// not in the line (client_uuid, bodies, dependencies), not on the sheet, not in any other table.
+test("after relabel the old uuid and its labels are gone from every table", async () => {
+  const { db, visit } = await refusedVisit();
+  await enqueue(db, { type: "home_visit_withdrawal", body: { visit_client_uuid: OLD, reason: "Visita registrada por engano." } }, newUuid);
+  const prefix = OLD.slice(0, 8);
+  const everything = async () => {
+    const tables = await db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+    const dump: string[] = [];
+    for (const { name } of tables) dump.push(JSON.stringify(await db.all(`SELECT * FROM "${name}"`)).toLowerCase());
+    return dump.join("\n");
+  };
+  expect(await everything()).toContain(prefix);
+  const { labels } = await relabelVisit(db, visit.seq, () => NEW);
+  expect(await everything()).not.toContain(prefix);
+  expect(labels.some((label) => label.toLowerCase().startsWith(prefix))).toBe(false);
+});

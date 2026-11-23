@@ -17,6 +17,7 @@ import { ERROR_PHRASES, phraseFor } from "../messages/errorPhrases";
 import { saveRegistration, type RegistrationFields } from "../registrations/save";
 import { AREA, HH, loadedTablet } from "../testing";
 import { sampleLabel } from "../../rules/vectorInspection";
+import * as relabelModule from "../visits/relabel";
 import { AttentionScreen, EXISTING_NOT_HERE, NOT_WAITING_FOR_YOU, NO_FORM_FOR_THIS } from "./AttentionScreen";
 
 const NOW = Date.parse("2026-11-14T15:00:00Z");
@@ -250,4 +251,68 @@ test("'Gerar etiquetas novas' is offered only for sample_label_taken on a visit"
   await mount(db, visit.seq);
   expect(await screen.findByText(VECTOR_ERRORS.samples_exceed_larvae)).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Gerar etiquetas novas" })).toBeNull();
+});
+
+const LABEL_OLD = "3f2a9c1e-0000-4000-8000-0000000000a1";
+const LABEL_NEW = "abcdef12-0000-4000-8000-0000000000b2";
+// A visit whose bulletin has two samples, refused with sample_label_taken, on the sheet.
+async function clashedVisit(db: Db) {
+  const body = { team_id: TEAM, occurred_at: "2026-11-14T10:00:00-03:00", household_id: HH, subject: "none", outcome: 1, reasons: [], shared: false };
+  const samples = [{ number: 1, deposit_group: "A1", larvae_collected: 3 }, { number: 2, deposit_group: "A1", larvae_collected: 1 }];
+  const visit = await enqueue(db, { type: "home_visit", clientUuid: LABEL_OLD, body: { ...body, vector_inspection: { activity: "li", work_type: "routine", situation: "worked", educational_action: true, samples } } }, newUuid);
+  await db.run("INSERT INTO local_visits (client_uuid, city_day, occurred_at, summary, state) VALUES (?, '2026-11-14', ?, '{}', 'pending')", [LABEL_OLD, body.occurred_at]);
+  await applyResults(db, [visit], [rejected(visit, "sample_label_taken", { path: "vector_inspection.samples[0]" })], noStale);
+  return visit;
+}
+
+// I1 of the Task 10 review: a second tap while the first runs never relabels again and never hides the new labels.
+test("two taps on 'Gerar etiquetas novas' relabel once and show the new labels", async () => {
+  const db = await loadedTablet();
+  const visit = await clashedVisit(db);
+  // The first relabel is held until both taps happened: the second one lands while the first still runs.
+  const real = relabelModule.relabelVisit;
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const spy = jest.spyOn(relabelModule, "relabelVisit").mockImplementation(async (...args) => { await gate; return real(...args); });
+  try {
+    const randomUUID = jest.fn(() => LABEL_NEW);
+    await mount(db, visit.seq, { crypto: { digestHex: async () => "", randomUUID } });
+    await screen.findByText(VECTOR_ERRORS.sample_label_taken);
+    await press("Gerar etiquetas novas");
+    await press("Gerar etiquetas novas");
+    release();
+    expect(await screen.findByText("Etiquete os tubitos: ABCDEF12-01, ABCDEF12-02")).toBeTruthy();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(randomUUID).toHaveBeenCalledTimes(1);
+    expect((await outboxRepo.bySeq(db, visit.seq))!.client_uuid).toBe(LABEL_NEW);
+    expect(screen.queryByText("Não foi possível concluir. Volte e tente de novo.")).toBeNull();
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+// Q56: once relabelled, the old labels are on no screen of the visit — the attention screen now, and opened again.
+test("after the relabel the old labels are on no screen", async () => {
+  const db = await loadedTablet();
+  const visit = await clashedVisit(db);
+  await mount(db, visit.seq, { crypto: { digestHex: async () => "", randomUUID: () => LABEL_NEW } });
+  expect(await screen.findByText(`${sampleLabel(LABEL_OLD, 1)}, ${sampleLabel(LABEL_OLD, 2)}`)).toBeTruthy();
+  await press("Gerar etiquetas novas");
+  await screen.findByText("Etiquete os tubitos: ABCDEF12-01, ABCDEF12-02");
+  expect(screen.queryByText(/3F2A9C1E/i)).toBeNull();
+  await view?.unmount();
+  await mount(db, visit.seq);
+  expect(await screen.findByText(NOT_WAITING_FOR_YOU)).toBeTruthy();
+  expect(screen.queryByText(/3F2A9C1E/i)).toBeNull();
+});
+
+test("a relabel that fails says so and leaves the visit waiting, with its labels", async () => {
+  const db = await loadedTablet();
+  const visit = await clashedVisit(db);
+  await mount(db, visit.seq, { crypto: { digestHex: async () => "", randomUUID: () => "not-a-uuid" } });
+  await screen.findByText(VECTOR_ERRORS.sample_label_taken);
+  await press("Gerar etiquetas novas");
+  expect(await screen.findByText("Não foi possível concluir. Volte e tente de novo.")).toBeTruthy();
+  expect(screen.queryByText(/Etiquete os tubitos/)).toBeNull();
+  expect((await outboxRepo.bySeq(db, visit.seq))!).toMatchObject({ client_uuid: LABEL_OLD, state: "needs_attention", error: "sample_label_taken" });
 });

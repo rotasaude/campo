@@ -6,7 +6,7 @@
 // (the existing one is opened), or a participant looks like a repetition.
 // 35a: a sample label already taken in the city (sample_label_taken, Q7(1)) offers new labels — only on the agent's tap,
 // and the new ones are shown at once, for the tubes to be labelled again.
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { View } from "react-native";
 import { useServices } from "../../app/services";
 import type { Candidate, ItemType } from "../../contract";
@@ -67,11 +67,14 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
   const [numberProblem, setNumberProblem] = useState<string | null>(null);
   // The labels "Gerar etiquetas novas" gave: shown until the agent leaves (the item is back in the line by then).
   const [newLabels, setNewLabels] = useState<string[] | null>(null);
+  // One relabel at a time: a second tap while the first runs does nothing (the ref holds it before the button re-renders disabled).
+  const relabeling = useRef(false);
+  const [busy, setBusy] = useState(false);
 
   if (!data) return <Screen title="Precisa de atenção"><Muted>Carregando…</Muted></Screen>;
-  if (notice !== null) return <Screen title="Precisa de atenção"><Notice>{notice}</Notice></Screen>;
-  // The dashboard's words after the 201 (InspectionSection.tubeLabelsText).
+  // The dashboard's words after the 201 (InspectionSection.tubeLabelsText). Before any notice: once the labels exist they are what the agent must see.
   if (newLabels !== null) return <Screen title="Precisa de atenção"><Notice>{`Etiquete os tubitos: ${newLabels.join(", ")}`}</Notice></Screen>;
+  if (notice !== null) return <Screen title="Precisa de atenção"><Notice>{notice}</Notice></Screen>;
   const { item } = data;
   if (item === null || item.state !== "needs_attention") return <Screen title="Precisa de atenção"><Notice>{NOT_WAITING_FOR_YOU}</Notice></Screen>;
 
@@ -139,9 +142,13 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
       {relabel && (
         <>
           <Muted>{bulletinLabels(item).join(", ")}</Muted>
-          <Button label="Gerar etiquetas novas" onPress={() => {
+          <Button label="Gerar etiquetas novas" disabled={busy} onPress={() => {
+            if (relabeling.current) return;
+            relabeling.current = true;
+            setBusy(true);
             void relabelVisit(db, seq, crypto.randomUUID).then(({ labels }) => setNewLabels(labels))
-              .catch(() => setNotice("Não foi possível concluir. Volte e tente de novo."));
+              .catch(() => setNotice("Não foi possível concluir. Volte e tente de novo."))
+              .finally(() => { relabeling.current = false; setBusy(false); });
           }} />
         </>
       )}
