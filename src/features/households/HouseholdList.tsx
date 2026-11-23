@@ -1,6 +1,7 @@
 // The households of the agent's micro-areas, by street and number, as they
 // are walked. What still waits to be sent is marked. Addresses only: who
-// lives there is one touch further, in the household itself.
+// lives there is one touch further, in the household itself. The endemic
+// agent (35a, Q13(1)) registers non-residential properties from here.
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useLive } from "../../db/events";
@@ -10,19 +11,21 @@ import { loadReference } from "../../sync/reference";
 import { normalizeText } from "../../sync/text";
 import { SIZES, useTheme } from "../../theme/theme";
 import { Body, Button, Field, Muted, Screen, Title } from "../../ui/components";
-import { canEditRegistry, loadSession } from "../session";
+import { agentRegistersNonResidential, canEditRegistry, loadSession } from "../session";
 import { HOUSEHOLD_TABLES, addressLine, listHouseholds } from "./view";
 
 export const NO_HOUSEHOLDS = "Nenhum domicílio encontrado.";
 export const WAITING = "Aguardando envio";
 export const IN_CONFLICT = "Em conflito";
+export const NEW_NON_RESIDENTIAL = "Novo imóvel não residencial";
 
 interface Row { key: string; line: string; type: string; pending: boolean; conflict: boolean; search: string; number: string }
 interface Group { id: string; title: string; rows: Row[] }
 
 const TABLES = [...HOUSEHOLD_TABLES, "micro_areas", "reference", "session"];
 
-async function read(db: Db): Promise<{ groups: Group[]; canEdit: boolean }> {
+// `creates`: what the button makes — a household of any type (the ACS), a non-residential property (the endemic agent), nothing.
+async function read(db: Db): Promise<{ groups: Group[]; creates: "household" | "non_residential" | null }> {
   const reference = await loadReference(db).catch(() => null);
   const dict = reference?.dictionaries ?? null;
   const areas = new Map((await db.all<{ id: string; body: string }>("SELECT id, body FROM micro_areas")).map((row) => [row.id, JSON.parse(row.body) as { code: string; name: string }]));
@@ -38,7 +41,9 @@ async function read(db: Db): Promise<{ groups: Group[]; canEdit: boolean }> {
       search: normalizeText(line), number: view.body.address?.number ?? "",
     });
   }
-  return { groups: [...groups.values()].sort((a, b) => a.title.localeCompare(b.title, "pt-BR")), canEdit: canEditRegistry(await loadSession(db)) };
+  const session = await loadSession(db);
+  const creates = canEditRegistry(session) ? "household" : agentRegistersNonResidential(session) ? "non_residential" : null;
+  return { groups: [...groups.values()].sort((a, b) => a.title.localeCompare(b.title, "pt-BR")), creates };
 }
 
 export function HouseholdList({ onOpen, onNew }: { onOpen(key: string): void; onNew(): void }) {
@@ -54,7 +59,8 @@ export function HouseholdList({ onOpen, onNew }: { onOpen(key: string): void; on
 
   return (
     <Screen title="Domicílios">
-      {data.canEdit && <Button label="Novo domicílio" onPress={onNew} />}
+      {data.creates === "household" && <Button label="Novo domicílio" onPress={onNew} />}
+      {data.creates === "non_residential" && <Button label={NEW_NON_RESIDENTIAL} onPress={onNew} />}
       <Field label="Buscar por rua ou número" value={query} onChangeText={setQuery} autoCorrect={false} />
       {groups.length === 0 && <Body>{NO_HOUSEHOLDS}</Body>}
       {groups.map((group) => (

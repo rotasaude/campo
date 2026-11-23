@@ -3,15 +3,19 @@
 // here (its key is the item's client_uuid) until the server gives it an id.
 // An edit of a downloaded one carries, as its base, what the row had when the
 // edit began (Q41) — the merge needs it if the station changed the record
-// meanwhile. A second edit while the first waits is the same item.
+// meanwhile. A second edit while the first waits is the same item. The
+// endemic agent saves only non-residential properties (35a, Q13(1)).
 import type { HouseholdBody, HouseholdItemBody } from "../../contract";
 import { dbEvents } from "../../db/events";
 import { outboxRepo } from "../../db/repos/outboxRepo";
 import { territoryRepo } from "../../db/repos/territoryRepo";
 import type { Db } from "../../db/types";
+import type { Problem } from "../../rules/registry";
 import { applyHouseholdFields } from "../../sync/editable";
 import { coalesceOrEnqueue, enqueue, type Dep } from "../../sync/outbox";
 import { normalizeText } from "../../sync/text";
+import { ERROR_PHRASES } from "../messages/errorPhrases";
+import { agentRegistersNonResidential, canEditHousehold, loadSession } from "../session";
 
 // What the form gives: the household item without what names the record (filled here and when it is sent).
 export type HouseholdFields = Omit<HouseholdItemBody, "household_id" | "version">;
@@ -19,6 +23,19 @@ export type HouseholdFields = Omit<HouseholdItemBody, "household_id" | "version"
 export const CONFLICT_PENDING = "Resolva o conflito deste domicílio antes de editar";
 export class HouseholdInConflictError extends Error {
   constructor() { super(CONFLICT_PENDING); }
+}
+
+// Q13(1): what the api would answer cbo_not_allowed to the endemic agent (a type out of his list, now or in the
+// household as it is), refused before anything is enqueued, under the type.
+export class HouseholdRefusedError extends Error {
+  constructor(readonly problem: Problem) { super(problem.message); }
+}
+
+async function agentRefusal(db: Db, types: (string | null)[]): Promise<HouseholdRefusedError | null> {
+  const session = await loadSession(db);
+  if (!agentRegistersNonResidential(session)) return null;
+  return types.every((type) => canEditHousehold(session, type))
+    ? null : new HouseholdRefusedError({ path: "property_type", message: ERROR_PHRASES.cbo_not_allowed });
 }
 
 export interface SaveDeps { newUuid(): string; now(): number }
@@ -33,6 +50,8 @@ export async function saveHousehold(
   const fields = input.fields as unknown as Body;
   const saved = await db.tx(async (tx) => {
     if (input.key === undefined) {
+      const refusal = await agentRefusal(tx, [input.fields.property_type]);
+      if (refusal) throw refusal;
       const clientUuid = deps.newUuid().toLowerCase();
       const area = (await territoryRepo.microAreaRef(tx, input.fields.micro_area_id)) ?? { id: input.fields.micro_area_id, code: "" };
       // The record as the screens read it, until the server's own arrives.
@@ -49,9 +68,12 @@ export async function saveHousehold(
       return { key: clientUuid, clientUuid };
     }
 
-    const row = await tx.get<{ id: string | null; client_uuid: string | null; base_version: number | null; base_body: string | null }>(
-      "SELECT id, client_uuid, base_version, base_body FROM households WHERE key = ?", [input.key]);
+    const row = await tx.get<{ id: string | null; client_uuid: string | null; base_version: number | null; base_body: string | null; body: string }>(
+      "SELECT id, client_uuid, base_version, base_body, body FROM households WHERE key = ?", [input.key]);
     if (!row) throw new Error("domicílio não encontrado");
+    // The api looks at the type typed and at the one the household has (no turning a home into a shop, nor back).
+    const refusal = await agentRefusal(tx, [input.fields.property_type, (JSON.parse(row.body) as { property_type?: string }).property_type ?? null]);
+    if (refusal) throw refusal;
     const queued = (await outboxRepo.all(tx)).filter((item) => item.target_id === input.key && (item.type === "household" || item.type === "family"));
     if (queued.some((item) => item.state === "conflict")) throw new HouseholdInConflictError();
 

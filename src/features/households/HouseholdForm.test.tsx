@@ -8,7 +8,7 @@ import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
 import type { LocationPort } from "../../location/capture";
 import type { MapCanvasProps } from "../../map/canvas";
-import { AREA, HH, NEIGHBORHOOD, loadedTablet, stationChanged } from "../testing";
+import { AREA, HH, NEIGHBORHOOD, endemicTablet, loadedTablet, stationChanged } from "../testing";
 import { scrollIntoView } from "../../ui/reveal";
 import { HouseholdForm, NO_FIX_MARK_ON_MAP, READ_ONLY } from "./HouseholdForm";
 
@@ -47,7 +47,7 @@ async function mount(o: { db?: Db; householdKey?: string; location?: LocationPor
 const field = (key: string) => within(screen.getByTestId(`field-${key}`));
 const press = (name: string) => fireEvent.press(screen.getByRole("button", { name }));
 const type = (label: string | RegExp, text: string) => fireEvent.changeText(screen.getByLabelText(label), text);
-const choose = (key: string, name: string) => fireEvent.press(field(key).getByRole("radio", { name }));
+const choose = (key: string, name: string | RegExp) => fireEvent.press(field(key).getByRole("radio", { name }));
 
 // A home at a street of the list of the city, as an agent fills it standing at the gate.
 async function fillAddress() {
@@ -277,4 +277,37 @@ test("who is not the community health agent, or a city with the registry off, on
     expect(screen.queryByLabelText("CEP")).toBeNull();
     await view.unmount();
   }
+});
+
+// ── Q13(1): the endemic agent registers the non-residential properties of the micro-areas assigned to him ──
+const AGENT_AREA = "7b8c9d0e-1f2a-4b3c-9d4e-5f6a7b8c9d0e";
+
+test("agent sees only the seven non-residential types and no living conditions", async () => {
+  const t = await mount({ db: await endemicTablet() });
+  expect(field("property_type").getAllByRole("radio")).toHaveLength(7);
+  for (const name of ["Comércio", "Terreno baldio", /^Ponto Estratégico/, "Escola", "Creche", "Estabelecimento religioso", "CASAI"]) {
+    expect(field("property_type").getByRole("radio", { name })).toBeTruthy();
+  }
+  expect(field("property_type").queryByRole("radio", { name: "Domicílio" })).toBeNull();
+  expect(field("property_type").queryByRole("radio", { name: "Abrigo" })).toBeNull();
+  expect(field("property_type").queryByRole("radio", { name: "Outros" })).toBeNull();
+
+  await choose("property_type", /^Ponto Estratégico/);
+  expect(screen.queryByText("Condições de moradia")).toBeNull();
+  expect(screen.queryByTestId("field-localizacao")).toBeNull();
+  await fillAddress();
+  await press("Salvar");
+  await waitFor(() => expect(t.onSaved).toHaveBeenCalledTimes(1));
+  const [item] = await outboxRepo.all(t.db);
+  // The micro-area is the one of his session, chosen for him when it is the only one.
+  expect([item.type, item.body.property_type, item.body.micro_area_id, item.body.living_conditions]).toEqual(["household", "4", AGENT_AREA, {}]);
+  expectValid("upload-request", { items: [{ client_uuid: item.client_uuid, type: item.type, body: item.body }] });
+});
+
+test("agent opens a residential household read-only", async () => {
+  const db = await endemicTablet();
+  await renderWithServices(<HouseholdForm householdKey={HH} map={map} back={backButton()} onSaved={jest.fn()} />, fakeServices({ db }));
+  expect(await screen.findByText(READ_ONLY)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Salvar" })).toBeNull();
+  expect(screen.queryByLabelText("CEP")).toBeNull();
 });

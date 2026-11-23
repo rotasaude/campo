@@ -1,6 +1,7 @@
 // One household: where it is, who lives there and what can be done from the
 // gate — edit it, add a family or a resident, register a visit. What is
-// still in the line is shown as it was typed, and marked.
+// still in the line is shown as it was typed, and marked. The endemic agent
+// (35a, Q13(1)) edits a non-residential property, never a family or a resident.
 import { useCallback } from "react";
 import { View } from "react-native";
 import { useServices } from "../../app/services";
@@ -13,7 +14,7 @@ import { loadReference } from "../../sync/reference";
 import { SIZES, useTheme } from "../../theme/theme";
 import { VECTOR_ERRORS } from "../../rules/vectorErrors";
 import { Body, Button, Muted, Notice, Screen, Title } from "../../ui/components";
-import { canEditRegistry, canUseOvitraps, loadSession } from "../session";
+import { canEditHousehold, canEditRegistry, canUseOvitraps, loadSession } from "../session";
 import { readProfile } from "../vector/profile";
 import { todayVisits } from "../visits/save";
 import type { VisitStart } from "../who/WhoScreen";
@@ -29,7 +30,8 @@ export const HAS_CONFLICT = "Há um conflito a resolver neste domicílio";
 interface Resident { patientId: string; registrationKey: string; name: string; familyId: string | null; responsible: boolean }
 interface Loaded {
   view: HouseholdView; line: string; type: string; residents: Resident[];
-  canEdit: boolean; visitsOn: boolean; takesFamilies: boolean;
+  // `canEdit`: families and residents (the registry, only the ACS); `editsHousehold`: the household itself (canEditHousehold).
+  canEdit: boolean; editsHousehold: boolean; visitsOn: boolean; takesFamilies: boolean;
   // 35a: the endemic agent installs an ovitrap here (canUseOvitraps); `hasBlock`: the profile as the tablet knows it.
   ovitraps: { hasBlock: boolean } | null;
   // The hours of the visits made there today on this tablet (withdrawn ones left out).
@@ -53,7 +55,7 @@ async function read(db: Db, key: string, now: number): Promise<Loaded | "missing
   });
   return {
     view, line: addressLine(view.body, dict), type: dict ? dictLabel(dict, "tipo_de_imovel", view.body.property_type) : view.body.property_type, residents,
-    canEdit: canEditRegistry(session), visitsOn: session?.features.home_visits === true,
+    canEdit: canEditRegistry(session), editsHousehold: canEditHousehold(session, view.body.property_type), visitsOn: session?.features.home_visits === true,
     ovitraps: canUseOvitraps(session) ? { hasBlock: !!(await readProfile(db, key))?.city_block_id } : null,
     takesFamilies: dict !== null && createRegistryRules(dict).allowsFamilies(view.body.property_type) && !view.body.refused,
     visitsToday: (await todayVisits(db, now)).filter((visit) => visit.householdKey === key && visit.state !== "withdrawn").map((visit) => visit.time),
@@ -83,11 +85,11 @@ export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamil
       {view.conflict && <Notice tone="down">{HAS_CONFLICT}</Notice>}
       {view.pending && !view.conflict && <Notice tone="warn">{WAITING}</Notice>}
       {body.refused && <Notice>Cadastro recusado</Notice>}
-      {!data.canEdit && <Notice>{READ_ONLY}</Notice>}
+      {!data.editsHousehold && <Notice>{READ_ONLY}</Notice>}
       <Body>{pointText(body.location ?? null)}</Body>
       {body.contact_phone !== null && body.contact_phone !== "" && <Body>{`Telefone: ${body.contact_phone}`}</Body>}
       {data.visitsToday.length > 0 && <Body>{`Visitas de hoje: ${data.visitsToday.join(", ")}`}</Body>}
-      {data.canEdit && !view.conflict && <Button label="Editar domicílio" variant="secondary" onPress={onEdit} />}
+      {data.editsHousehold && !view.conflict && <Button label="Editar domicílio" variant="secondary" onPress={onEdit} />}
       {data.ovitraps && !data.ovitraps.hasBlock && <Notice tone="warn">{VECTOR_ERRORS.household_without_block}</Notice>}
       {data.ovitraps && <Button label="Instalar ovitrampa" variant="secondary" disabled={!data.ovitraps.hasBlock} onPress={onInstallOvitrap} />}
 

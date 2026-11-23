@@ -1,4 +1,4 @@
-import type { ChangesResponse, HouseholdBody, HouseholdItemBody, UploadRequest } from "../../contract";
+import type { ChangesResponse, HouseholdBody, HouseholdItemBody, SessionResponse, UploadRequest } from "../../contract";
 import { example } from "../../contract/fixtures";
 import { expectValid } from "../../contract/validate";
 import { outboxRepo } from "../../db/repos/outboxRepo";
@@ -7,9 +7,10 @@ import type { Db } from "../../db/types";
 import { mapTapLocation } from "../../location/capture";
 import { applyResults } from "../../sync/dispatch";
 import { applyPage } from "../../sync/download";
-import { accepted, newUuid } from "../../sync/testing";
+import { accepted, newUuid, rejected } from "../../sync/testing";
+import { ERROR_PHRASES } from "../messages/errorPhrases";
 import { stationChanged } from "../testing";
-import { CONFLICT_PENDING, saveHousehold, type HouseholdFields } from "./save";
+import { CONFLICT_PENDING, HouseholdRefusedError, saveHousehold, type HouseholdFields } from "./save";
 import { listHouseholds, readHousehold } from "./view";
 
 const HH = "8c9d0e1f-2a3b-4c4d-8e5f-6a7b8c9d0e1f";
@@ -162,4 +163,49 @@ test("the edit base is what the form loaded, not what a download wrote on the ro
 test("an unknown household is refused", async () => {
   const db = await territory();
   await expect(saveHousehold(db, { key: "00000000-0000-4000-8000-00000000dead", fields: fields() }, deps)).rejects.toThrow("domicílio não encontrado");
+});
+
+// ── Q13(1): the endemic agent (515140, vector_control and territory_registry on) registers only non-residential properties ──
+const AGENT_AREA = "7b8c9d0e-1f2a-4b3c-9d4e-5f6a7b8c9d0e"; // the micro-area assigned to him in the session
+async function agentTerritory(): Promise<Db> {
+  const db = await territory();
+  await db.run("INSERT INTO session (id, body, fetched_at) VALUES (1, ?, '2026-11-14T12:00:00.000Z')", [JSON.stringify(example<SessionResponse>("session-endemic-agent.json"))]);
+  return db;
+}
+
+test("agent saving a residential type is refused on screen and nothing is enqueued", async () => {
+  const db = await agentTerritory();
+  const before = await db.all("SELECT key FROM households");
+  const refusal = saveHousehold(db, { fields: fields({ micro_area_id: AGENT_AREA, property_type: "1" }) }, deps);
+  await expect(refusal).rejects.toBeInstanceOf(HouseholdRefusedError);
+  await expect(refusal).rejects.toMatchObject({ problem: { path: "property_type", message: ERROR_PHRASES.cbo_not_allowed } });
+  // Nor a residential one turned into a shop: the api looks at the type the household has too (current_property_type).
+  await expect(saveHousehold(db, { key: HH, fields: fields({ property_type: "2", living_conditions: {} }) }, deps)).rejects.toBeInstanceOf(HouseholdRefusedError);
+  expect(await outboxRepo.all(db)).toEqual([]);
+  expect(await db.all("SELECT key FROM households")).toEqual(before);
+});
+
+test("agent creates a strategic point (type 4) in an assigned micro area: one household item, body valid for upload-request-v1.json", async () => {
+  const db = await agentTerritory();
+  const body = fields({ micro_area_id: AGENT_AREA, property_type: "4", living_conditions: {} });
+  const saved = await saveHousehold(db, { fields: body }, deps);
+  const items = await outboxRepo.all(db);
+  expect(items).toHaveLength(1);
+  expect([items[0].type, items[0].client_uuid, items[0].target_id]).toEqual(["household", saved.clientUuid, saved.key]);
+  expect(items[0].body).toEqual(body);
+  expectValid("upload-request", wire(items));
+  const view = (await readHousehold(db, saved.key))!;
+  expect([view.body.property_type, view.body.micro_area.id, view.pending]).toEqual(["4", AGENT_AREA, true]);
+
+  // An edit of his own strategic point is the same item, as for the ACS.
+  await saveHousehold(db, { key: saved.key, fields: { ...body, contact_phone: "41988887777" } }, deps);
+  expect(await outboxRepo.all(db)).toHaveLength(1);
+});
+
+test("the server's cbo_not_allowed on the agent's household goes to needs attention, as in the 24c", async () => {
+  const db = await agentTerritory();
+  await saveHousehold(db, { fields: fields({ micro_area_id: AGENT_AREA, property_type: "2", living_conditions: {} }) }, deps);
+  const [creation] = await outboxRepo.all(db);
+  await applyResults(db, [creation], [rejected(creation, "cbo_not_allowed")], { onStale: async () => undefined });
+  expect(await outboxRepo.bySeq(db, creation.seq)).toMatchObject({ state: "needs_attention", error: "cbo_not_allowed" });
 });

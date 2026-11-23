@@ -1,7 +1,7 @@
 import type { ReferenceResponse, SessionResponse } from "../contract";
 import { example } from "../contract/fixtures";
 import { parseReference } from "../sync/reference";
-import { canEditRegistry, canRecordInspection, vectorControlOn } from "./session";
+import { AGENT_PROPERTY_TYPES, agentRegistersNonResidential, canEditHousehold, canEditRegistry, canRecordInspection, vectorControlOn } from "./session";
 
 const ACE = example<SessionResponse>("session-endemic-agent.json");
 const ACS = example<SessionResponse>("session-acs.json");
@@ -40,4 +40,32 @@ test("vectorControlOn is only features.vector_control === true; the ACS sees not
   // The registry rule of the 24c does not change.
   expect(canEditRegistry(ACS)).toBe(true);
   expect(canEditRegistry(ACE)).toBe(false);
+});
+
+// ── Q13(1): the endemic agent registers the non-residential properties of the micro-areas assigned to him ──
+test("the agent's property types are the api's non-residential list (HomeVisits::Catalog::NON_RESIDENTIAL)", () => {
+  expect(AGENT_PROPERTY_TYPES).toEqual(["2", "3", "4", "5", "6", "12", "13"]);
+  expect(agentRegistersNonResidential(ACE)).toBe(true);
+});
+
+test.each([["2", true], ["4", true], ["13", true], ["1", false], ["7", false], ["99", false], [null, true]])(
+  "canEditHousehold for the endemic agent, type %s → %s", (propertyType, allowed) => {
+    expect(canEditHousehold(ACE, propertyType)).toBe(allowed);
+  });
+
+test("ACS keeps editing every type; the agent never edits families nor registrations (canEditRegistry false)", () => {
+  for (const type of ["1", "2", "4", "7", "99", null]) expect(canEditHousehold(ACS, type)).toBe(true);
+  expect(agentRegistersNonResidential(ACS)).toBe(false);
+  expect(canEditRegistry(ACE)).toBe(false);
+  // Another field CBO with the switch on (the TACS) registers nothing, as the api (cbo_not_allowed).
+  expect(canEditHousehold(sessionOf("515130", true), "4")).toBe(false);
+  expect(canEditHousehold(null, null)).toBe(false);
+});
+
+test("agent without vector_control or without territory_registry edits nothing", () => {
+  for (const session of [sessionOf("515140", false), sessionOf("515140", undefined), { ...ACE, features: { ...ACE.features, territory_registry: false } }]) {
+    expect(agentRegistersNonResidential(session)).toBe(false);
+    expect(canEditHousehold(session, "4")).toBe(false);
+    expect(canEditHousehold(session, null)).toBe(false);
+  }
 });

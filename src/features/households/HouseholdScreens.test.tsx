@@ -5,9 +5,9 @@ import { example } from "../../contract/fixtures";
 import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
 import { newUuid } from "../../sync/testing";
-import { AREA, HH, loadedTablet } from "../testing";
+import { AREA, HH, endemicTablet, loadedTablet } from "../testing";
 import { READ_ONLY } from "./HouseholdForm";
-import { HouseholdList, NO_HOUSEHOLDS } from "./HouseholdList";
+import { HouseholdList, NEW_NON_RESIDENTIAL, NO_HOUSEHOLDS } from "./HouseholdList";
 import { AT_THE_DASHBOARD, HouseholdScreen } from "./HouseholdScreen";
 import { saveHousehold } from "./save";
 
@@ -25,13 +25,13 @@ const nonAcs = (): Partial<SessionResponse> => {
 
 async function list(db: Db) {
   const nav = { onOpen: jest.fn(), onNew: jest.fn() };
-  await renderWithServices(<HouseholdList {...nav} />, fakeServices({ db, now: () => NOW }));
-  return nav;
+  const view = await renderWithServices(<HouseholdList {...nav} />, fakeServices({ db, now: () => NOW }));
+  return { ...nav, unmount: () => view.unmount() };
 }
 async function detail(db: Db, key = HH) {
   const nav = { onEdit: jest.fn(), onNewFamily: jest.fn(), onEditFamily: jest.fn(), onNewResident: jest.fn(), onStartVisit: jest.fn(), onOpenResident: jest.fn(), onInstallOvitrap: jest.fn() };
-  await renderWithServices(<HouseholdScreen householdKey={key} {...nav} />, fakeServices({ db, now: () => NOW }));
-  return nav;
+  const view = await renderWithServices(<HouseholdScreen householdKey={key} {...nav} />, fakeServices({ db, now: () => NOW }));
+  return { ...nav, unmount: () => view.unmount() };
 }
 
 test("the list: each micro-area's households by street and number, opening one by a touch", async () => {
@@ -149,4 +149,32 @@ test("an unknown household says so", async () => {
   const db = await loadedTablet();
   await detail(db, "00000000-0000-4000-8000-00000000dead");
   expect(await screen.findByText("Domicílio não encontrado neste tablet.")).toBeTruthy();
+});
+
+// ── Q13(1): the endemic agent registers non-residential properties, never a family nor a resident ──
+test("agent: 'Novo imóvel não residencial' in the list, no family or resident buttons in the detail", async () => {
+  const db = await endemicTablet();
+  const nav = await list(db);
+  await fireEvent.press(await screen.findByRole("button", { name: "Novo imóvel não residencial" }));
+  expect(NEW_NON_RESIDENTIAL).toBe("Novo imóvel não residencial");
+  expect(nav.onNew).toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Novo domicílio" })).toBeNull();
+  await nav.unmount();
+
+  // A home: he reads it (Q41 withdrawn: the residents are on screen), and edits nothing in it.
+  const home = await detail(db);
+  expect(await screen.findByText(READ_ONLY)).toBeTruthy();
+  expect(within(screen.getByTestId(`resident-${JOANA}`)).getByText("Joana Conceição")).toBeTruthy();
+  for (const name of ["Editar domicílio", "Nova família", "Novo morador", "Editar família", "Novo morador nesta família"]) {
+    expect(screen.queryByRole("button", { name })).toBeNull();
+  }
+  await home.unmount();
+
+  // His own strategic point: he edits the household, and still no family nor resident.
+  const point = await saveHousehold(db, { fields: exampleFields({ micro_area_id: "7b8c9d0e-1f2a-4b3c-9d4e-5f6a7b8c9d0e", property_type: "4", living_conditions: {} }) }, { newUuid, now: () => NOW });
+  const nav2 = await detail(db, point.key);
+  await fireEvent.press(await screen.findByRole("button", { name: "Editar domicílio" }));
+  expect(nav2.onEdit).toHaveBeenCalled();
+  expect(screen.queryByText(READ_ONLY)).toBeNull();
+  for (const name of ["Nova família", "Novo morador"]) expect(screen.queryByRole("button", { name })).toBeNull();
 });

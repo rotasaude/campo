@@ -2,7 +2,9 @@
 // conditions (only where they apply) and the point on the map. What the api
 // would refuse is refused here first, by the rules ported from the dashboard,
 // with the sentence under the field. Saving never needs the network: the
-// record goes to the outbox and is on the screens at once.
+// record goes to the outbox and is on the screens at once. The endemic agent
+// (35a, Q13(1)) is offered only the non-residential types, which have no
+// living conditions; a home opens for him only to be read.
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 import { useServices } from "../../app/services";
@@ -15,8 +17,8 @@ import { Choice, YesNo } from "../../ui/choices";
 import { Body, Button, Field, FieldRefusal, InSightAfter, Muted, Notice, Screen, Title } from "../../ui/components";
 import { SectionFields } from "../forms/SectionFields";
 import { MapScreen } from "../map/MapScreen";
-import { canEditRegistry, loadSession, myMicroAreas, type MyMicroArea } from "../session";
-import { HouseholdInConflictError, saveHousehold, type HouseholdFields } from "./save";
+import { AGENT_PROPERTY_TYPES, agentRegistersNonResidential, canEditHousehold, canEditRegistry, loadSession, myMicroAreas, type MyMicroArea } from "../session";
+import { HouseholdInConflictError, HouseholdRefusedError, saveHousehold, type HouseholdFields } from "./save";
 import { pointText, readHousehold, type HouseholdView } from "./view";
 
 export const READ_ONLY = "Só o agente comunitário de saúde edita o cadastro neste app. Aqui você consulta.";
@@ -30,7 +32,11 @@ interface Draft {
   // undefined: the point was not touched in this form (an edit then leaves it as the server has it).
   location: Location | null | undefined;
 }
-interface Loaded { reference: Reference; areas: MyMicroArea[]; view: HouseholdView | null; current: Location | null }
+interface Loaded {
+  reference: Reference; areas: MyMicroArea[]; view: HouseholdView | null; current: Location | null;
+  // The types offered: null = all of them (the ACS); the endemic agent's list otherwise.
+  types: readonly string[] | null;
+}
 
 const digits = (text: string) => text.replace(/\D/g, "");
 const text = (value: unknown) => (typeof value === "string" ? value : "");
@@ -77,13 +83,15 @@ export function HouseholdForm({ householdKey, map, back, onSaved }: HouseholdFor
     let alive = true;
     void (async () => {
       const session = await loadSession(db);
-      if (!canEditRegistry(session)) { if (alive) setLoaded("read_only"); return; }
+      if (!canEditHousehold(session, null)) { if (alive) setLoaded("read_only"); return; }
       const reference = await loadReference(db).catch(() => null);
       if (reference === null) { if (alive) setLoaded("not_ready"); return; }
       const view = householdKey === undefined ? null : await readHousehold(db, householdKey);
       if (!alive) return;
+      if (!canEditHousehold(session, view?.body.property_type ?? null)) { setLoaded("read_only"); return; }
       const areas = myMicroAreas(session);
-      setLoaded({ reference, areas, view, current: view?.body.location ?? null });
+      const types = !canEditRegistry(session) && agentRegistersNonResidential(session) ? AGENT_PROPERTY_TYPES : null;
+      setLoaded({ reference, areas, view, current: view?.body.location ?? null, types });
       setDraft(draftOf(view, areas));
     })();
     return () => { alive = false; };
@@ -146,7 +154,8 @@ export function HouseholdForm({ householdKey, map, back, onSaved }: HouseholdFor
       setDraft({ ...draft, location: undefined });
       onSaved(saved.key);
     } catch (err) {
-      setNotice(err instanceof HouseholdInConflictError ? err.message : "Não foi possível salvar. Tente de novo.");
+      if (err instanceof HouseholdRefusedError) setProblem(err.problem);
+      else setNotice(err instanceof HouseholdInConflictError ? err.message : "Não foi possível salvar. Tente de novo.");
     } finally {
       setSaving(false);
     }
@@ -173,7 +182,8 @@ export function HouseholdForm({ householdKey, map, back, onSaved }: HouseholdFor
   ]);
   const general = problem !== null && !fieldPaths.has(problem.path) && !problem.path.startsWith("living_conditions.") ? problem.message : null;
   const streetTypes = reference.dictionaries.stringDomains.tipo_logradouro;
-  const propertyTypes = (reference.dictionaries.domains.tipo_de_imovel ?? []).map((entry) => ({ code: String(entry.code), label: entry.label }));
+  const propertyTypes = (reference.dictionaries.domains.tipo_de_imovel ?? []).map((entry) => ({ code: String(entry.code), label: entry.label }))
+    .filter((entry) => loaded.types === null || loaded.types.includes(entry.code));
 
   // The map to mark the point is opened from the end of the form. It is drawn over the form, which stays where it was —
   // out of sight, out of the screen reader and out of reach of a touch — instead of taking its place: a form taken off

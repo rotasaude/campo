@@ -18,6 +18,24 @@ export function canEditRegistry(session: SessionResponse | null): boolean {
   return session !== null && session.features.territory_registry === true && session.professional.cbo === ACS_CBO;
 }
 
+// Q13(1): the property types the endemic agent registers — the api's non-residential list (HomeVisits::Catalog::
+// NON_RESIDENTIAL): shop, vacant lot, strategic point, school, day-care, religious establishment, CASAI.
+export const AGENT_PROPERTY_TYPES = ["2", "3", "4", "5", "6", "12", "13"] as const;
+
+// The endemic agent with the vector_control and the registry on: he registers the non-residential properties of the
+// micro-areas assigned to him (the session's), never a family, a resident or a home (TerritoryRegistry::Access).
+export function agentRegistersNonResidential(session: SessionResponse | null): boolean {
+  return session !== null && session.features.vector_control === true && session.features.territory_registry === true
+    && session.professional.cbo === ENDEMIC_AGENT_CBO;
+}
+
+// Who creates or edits this household here: the ACS, any type; the endemic agent, a new one (null) or a non-residential
+// one. Families and individual registrations stay with canEditRegistry.
+export function canEditHousehold(session: SessionResponse | null, propertyType: string | null): boolean {
+  if (canEditRegistry(session)) return true;
+  return agentRegistersNonResidential(session) && (propertyType === null || (AGENT_PROPERTY_TYPES as readonly string[]).includes(propertyType));
+}
+
 // The city's vector_control switch (absent = off).
 export function vectorControlOn(session: SessionResponse | null): boolean {
   return session?.features.vector_control === true;
