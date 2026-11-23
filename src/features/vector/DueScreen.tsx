@@ -14,8 +14,9 @@ import { startFor, startForProperty, type DueReason } from "../../rules/vectorDu
 import type { VectorStart } from "../../rules/vectorInspection";
 import { loadReference } from "../../sync/reference";
 import { SIZES, useTheme } from "../../theme/theme";
-import { Body, Button, Muted, Screen } from "../../ui/components";
-import { cityTodayOf } from "../session";
+import { Body, Button, Muted, Notice, Screen } from "../../ui/components";
+import { NOT_FOR_YOU } from "../ovitraps/InstallForm";
+import { canUseOvitraps, cityTodayOf, loadSession } from "../session";
 import { DUE_TABLES, loadDue, type DueEntry } from "./dueData";
 
 export const DUE_TITLE = "Imóveis a visitar";
@@ -49,7 +50,10 @@ function visitParams(householdKey: string, start: VectorStart): DueVisitParams {
 
 interface Card { entry: DueEntry; property: string; risk: string | null; dates: string }
 
-async function read(db: Db, now: number): Promise<Card[]> {
+// Opened by a link by anybody but the endemic agent with the switch on: the ovitrap screens' phrase, not an empty sheet
+// (loadDue gives them nothing).
+async function read(db: Db, now: number): Promise<Card[] | "not_for_you"> {
+  if (!canUseOvitraps(await loadSession(db))) return "not_for_you";
   const [{ items }, reference, today] = await Promise.all([loadDue(db, now), loadReference(db).catch(() => null), cityTodayOf(db, now)]);
   const dict = reference?.dictionaries ?? null;
   const risks = reference?.vectorDomains?.risk_classes ?? [];
@@ -72,6 +76,7 @@ export function DueScreen({ onStartVisit }: { onStartVisit(params: DueVisitParam
   const cards = useLive(DUE_TABLES, reader);
 
   if (!cards) return <Screen title={DUE_TITLE}><Muted>Carregando…</Muted></Screen>;
+  if (cards === "not_for_you") return <Screen title={DUE_TITLE}><Notice>{NOT_FOR_YOU}</Notice></Screen>;
   return (
     <Screen title={DUE_TITLE}>
       {cards.length === 0 && <Body>{DUE_EMPTY}</Body>}

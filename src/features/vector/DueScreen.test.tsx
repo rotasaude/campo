@@ -4,7 +4,8 @@ import type { ChangesResponse } from "../../contract";
 import { example } from "../../contract/fixtures";
 import type { Db } from "../../db/types";
 import { applyPage } from "../../sync/download";
-import { HH, LIRAA_ITEM, TRANSMISSION_BLOCK, endemicTablet } from "../testing";
+import { NOT_FOR_YOU } from "../ovitraps/InstallForm";
+import { HH, LIRAA_ITEM, TRANSMISSION_BLOCK, endemicTablet, loadedTablet } from "../testing";
 import type { DueEntry } from "./dueData";
 import { DUE_EMPTY, DueScreen, dueVisitParams } from "./DueScreen";
 
@@ -65,6 +66,19 @@ test("\"Registrar visita\" of the blockade carries its id", async () => {
 test("nothing to visit", async () => {
   await mount(await endemicTablet({ household: { status: "inactive" } }));
   expect(await screen.findByText(DUE_EMPTY)).toBeTruthy();
+});
+
+// Review M5: opened by a link by somebody else, the sheet says whose it is, as the ovitrap screens do — never "nothing to
+// visit".
+test("the ACS, or the endemic agent with the switch off, gets the screen's phrase", async () => {
+  await mount(await loadedTablet());
+  expect(await screen.findByText(NOT_FOR_YOU)).toBeTruthy();
+  expect(screen.queryByText(DUE_EMPTY)).toBeNull();
+  screen.unmount();
+  const off = { features: { home_visits: true, collective_activities: false, territory_registry: true, vector_control: false } };
+  await mount(await endemicTablet({ session: off }));
+  expect(await screen.findByText(NOT_FOR_YOU)).toBeTruthy();
+  expect(screen.queryByText(DUE_EMPTY)).toBeNull();
 });
 
 // Review M3: the route keys of the other starts.
