@@ -114,5 +114,6 @@ Duas coisas que valem para qualquer fluxo novo, aprendidas no tablet:
 
 - A barra de tarefas do Android cobre a faixa de baixo da tela, e o Maestro dá por "visível" o que está atrás dela. Antes de tocar no último botão de uma tela, role até o fim (`- scroll`); antes de tocar num campo perto do rodapé, traga-o para o meio (`scrollUntilVisible` com `centerElement: true`).
 - O texto digitado numa busca também casa com o seletor: a opção é a segunda ocorrência (`index: 1`).
+- No Android o Maestro só digita ASCII ("Unicode character input is not supported"): o texto de `inputText` vai sem acento ("das Industrias"), e a asserção que o lê de volta também.
 
 Com `FLAG_SECURE` ligada as capturas de tela saem pretas; o Maestro lê a árvore de acessibilidade e não depende delas.

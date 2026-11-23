@@ -38,7 +38,7 @@ appId: br.rotasaude.campo
     file: common/type.yaml
     env:
       LABEL: "Logradouro"
-      VALUE: "das Indústrias"
+      VALUE: "das Industrias"
 # Fields near the end of the screen sit behind the tablet's task bar: bring each one to the middle first.
 - scrollUntilVisible:
     element: "Número"
@@ -64,7 +64,7 @@ appId: br.rotasaude.campo
 - tapOn: "Salvar"
 # Saved, the form gives way to the property's detail.
 - extendedWaitUntil:
-    visible: "AVENIDA das Indústrias, 900"
+    visible: "AVENIDA das Industrias, 900"
     timeout: 30000
 - assertVisible: "Aguardando envio"
 
