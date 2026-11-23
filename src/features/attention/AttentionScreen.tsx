@@ -15,12 +15,16 @@ import type { Db } from "../../db/types";
 import { fmtDay } from "../../rules/homeVisit";
 import { discardImpact, removeUnsent, resend } from "../../sync/outbox";
 import { SIZES, useTheme } from "../../theme/theme";
-import { Body, Button, Muted, Notice, Screen } from "../../ui/components";
+import { Body, Button, Field, Muted, Notice, Screen, Title } from "../../ui/components";
 import { pathLabel } from "../conflicts/fieldText";
 import { phraseForItem } from "../messages/errorPhrases";
 import { DISCARD_WARNING, ITEM_TYPE_LABEL, dependentsWarning } from "../outbox/OutboxScreen";
 import { confirmOtherPerson, confirmSamePerson, discardForExisting } from "../registrations/duplicates";
 import { confirmOtherParticipant } from "./participants";
+import { correctNumber } from "../ovitraps/save";
+import { takenNumbers } from "../ovitraps/view";
+import { installProblems, numberTaken } from "../../rules/ovitrap";
+import { VECTOR_ERRORS } from "../../rules/vectorErrors";
 
 export const NOT_WAITING_FOR_YOU = "Este registro não está aguardando você.";
 export const NO_FORM_FOR_THIS = "Este registro não pode ser corrigido aqui. Descarte e registre de novo.";
@@ -31,6 +35,13 @@ export interface FixTarget { type: ItemType; targetId: string; familyId: string 
 const WITH_FORM: ItemType[] = ["household", "family", "individual_registration"];
 
 const TABLES = ["outbox"];
+
+// The new number of a refused installation: the shape (Q7(6)) and the numbers the tablet knows, the ovitrap itself left out.
+async function numberRefusal(db: Db, ovitrapKey: string, number: string): Promise<string | null> {
+  const shape = installProblems({ number, consent: true, installedOn: "2000-01-01", householdHasBlock: null }, "2000-01-01").find((p) => p.path === "number");
+  if (shape) return shape.text;
+  return numberTaken(number, await takenNumbers(db, ovitrapKey)) ? VECTOR_ERRORS.ovitrap_number_taken : null;
+}
 
 export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
   seq: number; onFix(target: FixTarget): void; onOpenRegistration(registrationKey: string): void; onDone(): void;
@@ -48,6 +59,9 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
   const data = useLive(TABLES, read);
   const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // "Corrigir número" (Q11): the number typed, and why the tablet refuses it.
+  const [number, setNumber] = useState<string | null>(null);
+  const [numberProblem, setNumberProblem] = useState<string | null>(null);
 
   if (!data) return <Screen title="Precisa de atenção"><Muted>Carregando…</Muted></Screen>;
   if (notice !== null) return <Screen title="Precisa de atenção"><Notice>{notice}</Notice></Screen>;
@@ -60,6 +74,7 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
   const candidates = suspected ? ((item.candidates ?? []) as Candidate[]) : [];
   const existingId = registered ? ((item.candidates?.[0] as { registration_id?: string } | undefined)?.registration_id ?? null) : null;
   const hasForm = WITH_FORM.includes(item.type) && item.target_id !== null && !suspected && !registered;
+  const renumber = item.type === "ovitrap_installation" && item.error === "ovitrap_number_taken";
   const card = { gap: 6, padding: SIZES.gap, borderRadius: SIZES.radius, borderWidth: 1, borderColor: colors.rule, backgroundColor: colors.panel } as const;
 
   const openExisting = async () => {
@@ -98,8 +113,23 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
           familyId: item.type === "family" ? (typeof item.body.family_id === "string" ? item.body.family_id : item.client_uuid) : null,
         })} />
       )}
-      {!hasForm && !suspected && !registered && <Muted>{NO_FORM_FOR_THIS}</Muted>}
-      {!suspected && !registered && <Button label="Reenviar" variant="secondary" onPress={() => run(() => resend(db, seq))} />}
+      {renumber && (
+        <>
+          <Title>Corrigir número</Title>
+          <Field label="Número" value={number ?? String(item.body.number ?? "")} maxLength={12} autoCapitalize="characters" autoCorrect={false}
+            onChangeText={(text) => { setNumber(text); setNumberProblem(null); }} />
+          {numberProblem !== null && <Notice tone="down">{numberProblem}</Notice>}
+          <Button label="Reenviar" onPress={() => {
+            const typed = number ?? String(item.body.number ?? "");
+            void numberRefusal(db, item.client_uuid, typed).then((problem) => {
+              if (problem !== null) setNumberProblem(problem);
+              else run(() => correctNumber(db, seq, typed));
+            });
+          }} />
+        </>
+      )}
+      {!hasForm && !suspected && !registered && !renumber && <Muted>{NO_FORM_FOR_THIS}</Muted>}
+      {!suspected && !registered && !renumber && <Button label="Reenviar" variant="secondary" onPress={() => run(() => resend(db, seq))} />}
       {confirming ? (
         <>
           <Notice tone="down">{DISCARD_WARNING}</Notice>

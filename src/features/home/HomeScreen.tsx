@@ -20,8 +20,8 @@ export const VISITS_OFF = "Visita desligada pela secretaria";
 // reference and the vector tables (DUE_TABLES): the endemic agent's properties due.
 const TABLES = [...new Set(["outbox", "who_to_visit", "micro_areas", "households", "meta", "session", ...DUE_TABLES])];
 
-export function HomeScreen({ onOpenWho, onOpenToday, onOpenDue, onNewActivity, onOpenHouseholds, onOpenMap, onOpenOutbox, onOpenAbout }: {
-  onOpenWho(): void; onOpenToday(): void; onOpenDue(): void; onNewActivity(): void; onOpenHouseholds(): void; onOpenMap(): void; onOpenOutbox(): void; onOpenAbout(): void;
+export function HomeScreen({ onOpenWho, onOpenToday, onOpenDue, onOpenOvitraps, onNewActivity, onOpenHouseholds, onOpenMap, onOpenOutbox, onOpenAbout }: {
+  onOpenWho(): void; onOpenToday(): void; onOpenDue(): void; onOpenOvitraps(): void; onNewActivity(): void; onOpenHouseholds(): void; onOpenMap(): void; onOpenOutbox(): void; onOpenAbout(): void;
 }) {
   const { now } = useServices();
   const sync = useSyncState();
@@ -55,6 +55,7 @@ export function HomeScreen({ onOpenWho, onOpenToday, onOpenDue, onNewActivity, o
       <Button label={sync.running ? "Sincronizando…" : "Sincronizar"} disabled={sync.running} onPress={sync.run} />
       {!home.visitsOff && <Button label="Quem visitar" variant="secondary" onPress={onOpenWho} />}
       {home.vectorDue !== null && <Button label="Imóveis a visitar" variant="secondary" onPress={onOpenDue} />}
+      {home.ovitrapsOn && <Button label="Ovitrampas" variant="secondary" onPress={onOpenOvitraps} />}
       {!home.visitsOff && <Button label="Minhas visitas de hoje" variant="secondary" onPress={onOpenToday} />}
       {home.activitiesOn && <Button label="Nova atividade coletiva" variant="secondary" onPress={onNewActivity} />}
       {home.registryOn && <Button label="Domicílios" variant="secondary" onPress={onOpenHouseholds} />}

@@ -28,7 +28,7 @@ async function seeded(session: SessionResponse = SESSION): Promise<Db> {
 }
 async function mount(db: Db, sync: Partial<SyncState> = {}) {
   const state: SyncState = { running: false, lastOutcome: null, run: jest.fn(), ...sync };
-  const nav = { onOpenWho: jest.fn(), onOpenToday: jest.fn(), onOpenDue: jest.fn(), onNewActivity: jest.fn(), onOpenHouseholds: jest.fn(), onOpenMap: jest.fn(), onOpenOutbox: jest.fn(), onOpenAbout: jest.fn() };
+  const nav = { onOpenWho: jest.fn(), onOpenToday: jest.fn(), onOpenDue: jest.fn(), onOpenOvitraps: jest.fn(), onNewActivity: jest.fn(), onOpenHouseholds: jest.fn(), onOpenMap: jest.fn(), onOpenOutbox: jest.fn(), onOpenAbout: jest.fn() };
   await renderWithServices(<SyncContext.Provider value={state}><HomeScreen {...nav} /></SyncContext.Provider>, fakeServices({ db, now: () => NOW }));
   return { state, nav };
 }

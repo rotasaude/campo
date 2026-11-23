@@ -10,6 +10,7 @@ import type { UploadItem, UploadResult } from "../contract";
 import { dbEvents } from "../db/events";
 import { outboxRepo, type OutboxItem } from "../db/repos/outboxRepo";
 import { territoryRepo } from "../db/repos/territoryRepo";
+import { vectorRepo } from "../db/repos/vectorRepo";
 import type { Db } from "../db/types";
 import { log } from "../log";
 import { FieldHttpError, type FieldClient, type HttpFailure } from "./http";
@@ -94,6 +95,13 @@ async function accept(db: Db, item: OutboxItem, result: UploadResult): Promise<v
   } else if (item.type === "collective_activity") {
     await db.run("UPDATE local_activities SET state = 'accepted', server_id = ?, accepted_at = ? WHERE client_uuid = ?", [result.id ?? null, now, item.client_uuid]);
     dbEvents.emit("local_activities");
+  } else if (item.type === "ovitrap_installation") {
+    // The result's id is the ovitrap's (Q7(2)); the row born here is under the installation's client_uuid.
+    if (typeof result.id === "string") await vectorRepo.acceptInstallation(db, item.client_uuid, result.id);
+    dbEvents.emit("ovitraps");
+  } else if (item.type === "ovitrap_collection") {
+    await vectorRepo.acceptCollection(db, item.body);
+    dbEvents.emit("ovitraps");
   }
 
   const table = targetTable(item.type);

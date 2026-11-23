@@ -29,6 +29,13 @@ export function canRecordInspection(session: SessionResponse | null, reference: 
   return vectorControlOn(session) && session?.professional.cbo === ENDEMIC_AGENT_CBO && (reference?.vectorDomains ?? null) !== null;
 }
 
+// Who installs and collects ovitraps (Task 9): the endemic agent with the switch on (the api: vector gate usable and the
+// 515140, else feature_disabled or cbo_not_allowed). The installation needs no vector domains; without them the
+// collection's window is left to the api.
+export function canUseOvitraps(session: SessionResponse | null): boolean {
+  return vectorControlOn(session) && session?.professional.cbo === ENDEMIC_AGENT_CBO;
+}
+
 export interface MyMicroArea { id: string; code: string; name: string; teamId: string }
 export function myMicroAreas(session: SessionResponse | null): MyMicroArea[] {
   return (session?.teams ?? []).flatMap((team) => team.micro_areas.map((area) => ({ id: area.id, code: area.code, name: area.name, teamId: team.id })));

@@ -11,8 +11,10 @@ import { dictLabel } from "../../rules/dictionaries";
 import { createRegistryRules } from "../../rules/registry";
 import { loadReference } from "../../sync/reference";
 import { SIZES, useTheme } from "../../theme/theme";
+import { VECTOR_ERRORS } from "../../rules/vectorErrors";
 import { Body, Button, Muted, Notice, Screen, Title } from "../../ui/components";
-import { canEditRegistry, loadSession } from "../session";
+import { canEditRegistry, canUseOvitraps, loadSession } from "../session";
+import { readProfile } from "../vector/profile";
 import { todayVisits } from "../visits/save";
 import type { VisitStart } from "../who/WhoScreen";
 import { READ_ONLY } from "./HouseholdForm";
@@ -28,11 +30,14 @@ interface Resident { patientId: string; registrationKey: string; name: string; f
 interface Loaded {
   view: HouseholdView; line: string; type: string; residents: Resident[];
   canEdit: boolean; visitsOn: boolean; takesFamilies: boolean;
+  // 35a: the endemic agent installs an ovitrap here (canUseOvitraps); `hasBlock`: the profile as the tablet knows it.
+  ovitraps: { hasBlock: boolean } | null;
   // The hours of the visits made there today on this tablet (withdrawn ones left out).
   visitsToday: string[];
 }
 
 const TABLES = [...HOUSEHOLD_TABLES, "registrations", "reference", "session", "local_visits", "meta"];
+
 const people = (n: number) => (n === 1 ? "1 pessoa" : `${n} pessoas`);
 
 async function read(db: Db, key: string, now: number): Promise<Loaded | "missing"> {
@@ -49,13 +54,14 @@ async function read(db: Db, key: string, now: number): Promise<Loaded | "missing
   return {
     view, line: addressLine(view.body, dict), type: dict ? dictLabel(dict, "tipo_de_imovel", view.body.property_type) : view.body.property_type, residents,
     canEdit: canEditRegistry(session), visitsOn: session?.features.home_visits === true,
+    ovitraps: canUseOvitraps(session) ? { hasBlock: !!(await readProfile(db, key))?.city_block_id } : null,
     takesFamilies: dict !== null && createRegistryRules(dict).allowsFamilies(view.body.property_type) && !view.body.refused,
     visitsToday: (await todayVisits(db, now)).filter((visit) => visit.householdKey === key && visit.state !== "withdrawn").map((visit) => visit.time),
   };
 }
 
-export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamily, onNewResident, onStartVisit, onOpenResident }: {
-  householdKey: string; onEdit(): void; onNewFamily(): void; onEditFamily(familyId: string): void;
+export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamily, onNewResident, onStartVisit, onOpenResident, onInstallOvitrap }: {
+  householdKey: string; onEdit(): void; onNewFamily(): void; onEditFamily(familyId: string): void; onInstallOvitrap(): void;
   // `familyId`: the family the new resident enters; null for somebody outside any family (or the head of one yet to be registered).
   onNewResident(familyId: string | null): void; onStartVisit(start: VisitStart): void; onOpenResident(registrationKey: string): void;
 }) {
@@ -82,6 +88,8 @@ export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamil
       {body.contact_phone !== null && body.contact_phone !== "" && <Body>{`Telefone: ${body.contact_phone}`}</Body>}
       {data.visitsToday.length > 0 && <Body>{`Visitas de hoje: ${data.visitsToday.join(", ")}`}</Body>}
       {data.canEdit && !view.conflict && <Button label="Editar domicílio" variant="secondary" onPress={onEdit} />}
+      {data.ovitraps && !data.ovitraps.hasBlock && <Notice tone="warn">{VECTOR_ERRORS.household_without_block}</Notice>}
+      {data.ovitraps && <Button label="Instalar ovitrampa" variant="secondary" disabled={!data.ovitraps.hasBlock} onPress={onInstallOvitrap} />}
 
       <Title>Famílias</Title>
       {families.length === 0 && <Muted>Nenhuma família</Muted>}

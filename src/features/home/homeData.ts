@@ -6,7 +6,7 @@ import { formatCityDate, formatCityDateTime, needsClockWarning } from "../../syn
 import { loadReference, referenceNeedsAppUpdate } from "../../sync/reference";
 import { TERRITORY_MAX_DAYS, territoryAge } from "../../sync/retention";
 import { HIGH_WATER_KEY, trustedTime } from "../../sync/trustedTime";
-import { canRecordInspection } from "../session";
+import { canRecordInspection, canUseOvitraps } from "../session";
 import { loadDue } from "../vector/dueData";
 
 export interface HomeData {
@@ -26,6 +26,8 @@ export interface HomeData {
   // 35a: how many properties are due for the endemic agent (src/features/vector/dueData.ts); null for whoever does not
   // record the bulletin (canRecordInspection) or with the visit off (the bulletin goes inside the visit).
   vectorDue: number | null;
+  // 35a: the ovitraps of the endemic agent with the switch on (canUseOvitraps); they are not inside the visit.
+  ovitrapsOn: boolean;
 }
 
 const DAY_MS = 86_400_000;
@@ -63,5 +65,6 @@ export async function loadHome(db: Db, now: number): Promise<HomeData> {
     activitiesOn: session !== null && session.features.collective_activities === true,
     registryOn: session !== null && session.features.territory_registry === true,
     vectorDue,
+    ovitrapsOn: canUseOvitraps(session),
   };
 }

@@ -87,6 +87,8 @@ export async function discardImpact(db: Db, clientUuid: string): Promise<number>
 async function forget(tx: Db, item: OutboxItem): Promise<void> {
   if (item.type === "home_visit") await tx.run("DELETE FROM local_visits WHERE client_uuid = ?", [item.client_uuid]);
   else if (item.type === "collective_activity") await tx.run("DELETE FROM local_activities WHERE client_uuid = ?", [item.client_uuid]);
+  // The ovitrap installed here that the server never had (35a).
+  else if (item.type === "ovitrap_installation") await tx.run("DELETE FROM ovitraps WHERE key = ? AND id IS NULL", [item.client_uuid]);
   else if (item.type === "household" && item.target_id !== null) {
     // Only the creation owns the row: an edit of a record born here is another item.
     const born = await tx.run("DELETE FROM households WHERE key = ? AND id IS NULL AND client_uuid = ?", [item.target_id, item.client_uuid]);
@@ -109,7 +111,7 @@ export async function removeUnsent(db: Db, clientUuid: string): Promise<void> {
       await forget(tx, item);
     }
   });
-  for (const table of ["households", "registrations", "local_visits", "local_activities"]) dbEvents.emit(table);
+  for (const table of ["households", "registrations", "local_visits", "local_activities", "ovitraps"]) dbEvents.emit(table);
 }
 
 // After a fix in the form: the same item goes back to the line with the new body and the same client_uuid.

@@ -47,8 +47,20 @@ const PART_LABEL: Record<string, string> = {
   reasons: "Motivos da visita", measurements: "Medidas", reason: "Motivo da retirada", responsible: "Responsável",
 };
 
+// The ovitrap items' paths (Q13(2)): household_without_block → household_id, consent_required → consent,
+// ovitrap_number_taken → number, reading_not_open and ovitrap_not_active → ovitrap_id, collection_out_of_range →
+// collected_on; not_found names the `<kind>_client_uuid` the item cited. The date and the condition with the dashboard's
+// labels (apps/dashboard src/modules/vectorControl/{InstallForm,CollectForm}.tsx).
+const OVITRAP_LABEL: Record<string, string> = {
+  household_id: "Imóvel", household_client_uuid: "Imóvel", consent: "Termo (TCLE)", number: "Número",
+  ovitrap_id: "Ovitrampa", ovitrap_client_uuid: "Ovitrampa", collected_on: "Data da coleta",
+  installed_on: "Data da instalação", condition: "Condição da palheta",
+};
+const OVITRAP_ITEMS: readonly ItemType[] = ["ovitrap_installation", "ovitrap_collection"];
+
 // The field a refusal of the server points to (its `path`), in words: "participants[1].new_patient.cpf" → "Participante 2: CPF".
 export function pathLabel(type: ItemType, path: string): string {
+  if (OVITRAP_ITEMS.includes(type)) return OVITRAP_LABEL[path] ?? path;
   const participant = /^participants\[(\d+)\](?:\.(.*))?$/.exec(path);
   if (participant) {
     const rest = participant[2] ? pathLabel(type, participant[2]) : "";

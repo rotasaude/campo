@@ -1,8 +1,12 @@
-import type { UploadItem, UploadResult } from "../contract";
+import type { ChangesResponse, UploadItem, UploadResult } from "../contract";
+import { example } from "../contract/fixtures";
+import { collectOvitrap, installOvitrap } from "../features/ovitraps/save";
+import { HH, endemicTablet } from "../features/testing";
 import { outboxRepo, type OutboxItem } from "../db/repos/outboxRepo";
 import { createTestDb } from "../db/testing/sqljsDb";
 import type { Db } from "../db/types";
 import { MAX_BATCH, applyResults, refreshBlocked, resolveVersion, selectBatch, sendQueue } from "./dispatch";
+import { applyPage } from "./download";
 import { FieldHttpError } from "./http";
 import { enqueue, recoverSending, resend } from "./outbox";
 import { SERVER_ID, accepted, exampleItems, fakeClient, insertHousehold, insertRegistration, newUuid, rejected } from "./testing";
@@ -372,3 +376,56 @@ const CURRENT = (() => {
   const response = require("../../contracts/field-sync/examples/upload-response-stale-household.json") as { results: { current: Record<string, unknown> }[] };
   return response.results[0].current;
 })();
+
+// ── 35a: the ovitrap (Task 9) ──
+describe("ovitraps", () => {
+  const OVITRAP_ID = "c3d4e5f6-a7b8-4c9d-8e0f-2a3b4c5d6e7f";
+  const U1 = "c0ffee64-0000-4000-8000-000000000064";
+  const NEW_ID = "c0ffee70-0000-4000-8000-000000000070";
+  const installed = async () => {
+    const db = await endemicTablet();
+    await installOvitrap(db, { householdKey: HH, number: "OVT-015", clientUuid: U1, today: "2026-11-08" });
+    return db;
+  };
+
+  test("accepted installation maps client_ids to result.id and the row gets it", async () => {
+    const db = await installed();
+    // The id of the installation's result is the ovitrap's (Q7(2)).
+    const { client, batches } = fakeClient((items) => items.map((i) => accepted(i, { id: NEW_ID })));
+    await sendQueue({ db, client, ...noStale });
+    expect(batches[0][0]).toEqual({ client_uuid: U1, type: "ovitrap_installation", body: { household_id: HH, number: "OVT-015", consent: true, installed_on: "2026-11-08" } });
+    expect((await outboxRepo.mappedIds(db)).get(U1)).toBe(NEW_ID);
+    expect(await db.get("SELECT key, id, client_uuid, number FROM ovitraps WHERE key = ?", [U1])).toEqual({ key: U1, id: NEW_ID, client_uuid: U1, number: "OVT-015" });
+  });
+
+  test("accepted and duplicate collections leave the line and show on the row until the download", async () => {
+    const db = await installed();
+    await collectOvitrap(db, { ovitrapKey: U1, condition: "ok", remove: false, today: "2026-11-14", newUuid });
+    await collectOvitrap(db, { ovitrapKey: OVITRAP_ID, condition: "lost", remove: true, today: "2026-11-15", newUuid });
+    // The id of a collection's result is the ovitrap's too (Q7(2)).
+    const { client, batches } = fakeClient((items) => items.map((i) => ({
+      ...accepted(i, { id: i.type === "ovitrap_installation" || "ovitrap_client_uuid" in i.body ? NEW_ID : OVITRAP_ID }),
+      status: i.type === "ovitrap_installation" ? "accepted" as const : "duplicate" as const,
+    })));
+    await sendQueue({ db, client, ...noStale });
+    expect(batches.map(byType)).toEqual([["ovitrap_installation", "ovitrap_collection", "ovitrap_collection"]]);
+    expect(await outboxRepo.count(db)).toBe(0);
+    const rows = await db.all<{ key: string; body: string }>("SELECT key, body FROM ovitraps ORDER BY key");
+    // The removed one is gone; the reinstalled one has the paddle opened on the collection's day.
+    expect(rows.map((r) => [r.key, (JSON.parse(r.body) as { open_reading: unknown }).open_reading])).toEqual([[U1, { installed_on: "2026-11-14" }]]);
+  });
+
+  test("the download of the server ovitrap replaces the tablet-born row by client_ids", async () => {
+    const db = await installed();
+    // Accepted, the receipt known by client_ids alone (the row without the id): the download still finds the row.
+    const [item] = await outboxRepo.all(db);
+    await outboxRepo.remove(db, item.seq);
+    await outboxRepo.mapClientId(db, U1, "ovitrap_installation", NEW_ID);
+    const page = example<ChangesResponse>("changes-vector-page.json");
+    const ov = page.items.find((i) => i.type === "ovitrap")!;
+    const body = { ...(ov.body as Record<string, unknown>), id: NEW_ID, number: "OVT-015", open_reading: { installed_on: "2026-11-08" }, last_reading: null, version: 1 };
+    await applyPage(db, { ...page, items: [{ ...ov, id: NEW_ID, version: 1, body }] } as unknown as ChangesResponse);
+    const rows = await db.all<{ key: string; id: string; version: number; body: string }>("SELECT key, id, version, body FROM ovitraps WHERE number = 'OVT-015'");
+    expect(rows.map((r) => [r.key, r.id, r.version, JSON.parse(r.body)])).toEqual([[U1, NEW_ID, 1, body]]);
+  });
+});

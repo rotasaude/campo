@@ -3,7 +3,7 @@
 // changed or when the entity enters the scope. The end comes by the status, never by a removal: an ovitrap that is not
 // active, a LIRAa item that is not pending and a closed blockade leave the tablet. A city block stays when inactive (it
 // is still a neighbour and history). Nothing here holds a person: a blockade never carries a case (§17).
-import type { CityBlockBody, LiraaItemBody, OvitrapBody, TransmissionBlockBody } from "../../contract";
+import type { CityBlockBody, LiraaItemBody, OvitrapBody, OvitrapCollectionItemBody, TransmissionBlockBody } from "../../contract";
 import type { Db } from "../types";
 import { territoryRepo } from "./territoryRepo";
 
@@ -28,6 +28,11 @@ async function ovitrapKey(db: Db, id: string): Promise<string | null> {
     "SELECT o.key AS key FROM client_ids c JOIN ovitraps o ON o.key = c.client_uuid WHERE c.id = ? AND c.type = ?", [id, "ovitrap_installation"]);
   return born?.key ?? null;
 }
+
+// The ovitrap a collection item names in its body: by the server's id, or by the installation's client_uuid while the
+// tablet does not know the id.
+export const collectionTarget = (body: Record<string, unknown>): string | null =>
+  typeof body.ovitrap_id === "string" ? body.ovitrap_id : typeof body.ovitrap_client_uuid === "string" ? body.ovitrap_client_uuid : null;
 
 type RawOvitrap = Omit<OvitrapRow, "body"> & { body: string };
 const toOvitrap = (row: RawOvitrap): OvitrapRow => ({ ...row, body: JSON.parse(row.body) as OvitrapBody });
@@ -100,6 +105,51 @@ export const vectorRepo = {
   async activeBlockFor(db: Db, cityBlockId: string): Promise<TransmissionBlockBody | null> {
     const rows = await db.all<{ body: string }>("SELECT body FROM transmission_blocks WHERE status = 'active' ORDER BY id");
     return rows.map((r) => JSON.parse(r.body) as TransmissionBlockBody).find((t) => t.block_ids.includes(cityBlockId)) ?? null;
+  },
+
+  // An ovitrap installed on this tablet (Task 9): its local row, under the installation's client_uuid, until the server
+  // gives it an id. The body is the download's shape, made here: `id` holds the client_uuid until the download brings
+  // the server's ovitrap, which overwrites the row by client_ids (putOvitrap).
+  async putInstalled(db: Db, row: { clientUuid: string; householdKey: string; householdId: string; number: string; installedOn: string }): Promise<void> {
+    const body: OvitrapBody = {
+      id: row.clientUuid, number: row.number, household_id: row.householdId, status: "active",
+      open_reading: { installed_on: row.installedOn }, last_reading: null, version: 0,
+    };
+    await db.run("INSERT INTO ovitraps (key, id, client_uuid, household_key, number, status, version, body) VALUES (?, NULL, ?, ?, ?, 'active', NULL, ?)",
+      [row.clientUuid, row.clientUuid, row.householdKey, row.number, JSON.stringify(body)]);
+  },
+
+  // "Corrigir número" (Q11): the number of a row born here follows its installation.
+  async renumber(db: Db, key: string, number: string): Promise<void> {
+    const row = await db.get<{ body: string }>("SELECT body FROM ovitraps WHERE key = ? AND id IS NULL", [key]);
+    if (!row) return;
+    await db.run("UPDATE ovitraps SET number = ?, body = ? WHERE key = ?", [number, JSON.stringify({ ...(JSON.parse(row.body) as OvitrapBody), number }), key]);
+  },
+
+  // The installation accepted: the row gets the server's id (the `id` of the result is the ovitrap's, Q7(2)), so the
+  // download finds it by id as well as by client_ids. A row that already has that id (a download in between) wins.
+  async acceptInstallation(db: Db, key: string, id: string): Promise<void> {
+    await db.run("UPDATE ovitraps SET id = ? WHERE key = ? AND id IS NULL AND NOT EXISTS (SELECT 1 FROM ovitraps WHERE id = ?)", [id, key, id]);
+  },
+
+  // A collection accepted: the row shows it until the download brings the ovitrap. Removed → the row goes (the api ends
+  // the ovitrap, removed or lost); otherwise the paddle read is closed and the next one opens on the collection's day
+  // (the api's reinstall, Q33). `body`: the collection item's.
+  async acceptCollection(db: Db, body: Record<string, unknown>): Promise<void> {
+    const ref = collectionTarget(body);
+    if (ref === null) return;
+    const c = body as unknown as OvitrapCollectionItemBody;
+    const row = await db.get<{ key: string; body: string }>("SELECT key, body FROM ovitraps WHERE id = ? OR key = ?", [ref, ref]);
+    if (!row) return;
+    if (c.remove === true) {
+      await db.run("DELETE FROM ovitraps WHERE key = ?", [row.key]);
+      return;
+    }
+    const next: OvitrapBody = {
+      ...(JSON.parse(row.body) as OvitrapBody),
+      open_reading: { installed_on: c.collected_on }, last_reading: { collected_on: c.collected_on, condition: c.condition, egg_count: null },
+    };
+    await db.run("UPDATE ovitraps SET body = ? WHERE key = ?", [JSON.stringify(next), row.key]);
   },
 
   // Every ovitrap the tablet has, or the household's (by its local key), by number in natural order.
