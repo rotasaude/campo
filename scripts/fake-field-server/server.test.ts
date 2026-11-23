@@ -335,6 +335,169 @@ describe("script", () => {
   });
 });
 
+// Module 35a: the endemic agent's profile, scripted once and kept until /__reset. Without it every answer is the ACS's.
+describe("the endemic agent profile (35a)", () => {
+  const ace = () => script({ profile: "ace" });
+  const state = async () => (await call("GET", "/__state", { token: null })).json();
+  const pages = async (): Promise<Json[]> => {
+    const first = (await call("GET", "/field/v1/changes?limit=200")).json();
+    const last = (await call("GET", `/field/v1/changes?limit=200&cursor=${encodeURIComponent(first.next_cursor)}`)).json();
+    return [first, last];
+  };
+  // The fake's server_time is in UTC (Z): the tablet's city day is the UTC day.
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+
+  test("the session is the contract's endemic agent, with the switch on", async () => {
+    expect((await ace()).status).toBe(204);
+    const session = (await call("GET", "/field/v1/session")).json();
+    expectValid("session-response", session);
+    const { server_time: _time, map: _map, reference_version: _version, ...rest } = example("session-endemic-agent.json");
+    expect(session).toMatchObject(rest);
+    expect(session.professional.cbo).toBe("515140");
+    expect(session.features.vector_control).toBe(true);
+    expect(session.map).toEqual({ version: expect.any(String), size_bytes: MAP.length, sha256: MAP_SHA });
+  });
+
+  test("the reference carries the vector domains of domains-v1.json and the products of the fixture, within the schema", async () => {
+    const acs = (await call("GET", "/field/v1/reference")).json();
+    await ace();
+    const reference = (await call("GET", "/field/v1/reference")).json();
+    expectValid("reference-response", reference);
+    const vector = JSON.parse(readFileSync(join(CONTRACT, "domains-v1.json"), "utf8")).vector_control;
+    const products = JSON.parse(readFileSync(join(__dirname, "fixtures/vector-products.json"), "utf8")).products;
+    const domains = reference.vector_control_domains;
+    for (const key of ["activities", "work_types", "situations", "deposit_groups", "measure_methods", "risk_classes", "limits"]) {
+      expect([key, domains[key]]).toEqual([key, vector[key]]);
+    }
+    expect(domains.products).toEqual(products);
+    for (const method of ["focal", "perifocal", "spatial"]) expect([method, products.some((p: Json) => p.uses.includes(method))]).toEqual([method, true]);
+    expect(domains.parameters).toEqual(example("reference-vector-control.json").vector_control_domains.parameters);
+    // The rest is the ACS's reference; another version, so a tablet that changes profile downloads it again.
+    const { vector_control_domains: _domains, reference_version: version, ...rest } = reference;
+    const { reference_version: acsVersion, ...acsRest } = acs;
+    expect(rest).toEqual(acsRest);
+    expect(version).not.toBe(acsVersion);
+    expect((await call("GET", "/field/v1/session")).json().reference_version).toBe(version);
+  });
+
+  test("changes serve the vector page: the four new entities, the households with their profile, the open paddle 5 days old", async () => {
+    await ace();
+    const [first, last] = await pages();
+    expectValid("changes-response", first);
+    expectValid("changes-response", last);
+    expect([first.has_more, last.has_more]).toEqual([true, false]);
+    expect(last.who_to_visit).not.toBeNull();
+    const items = [...first.items, ...last.items] as Json[];
+    const types = new Set(items.map((item) => item.type));
+    for (const type of ["micro_area", "household", "city_block", "ovitrap", "liraa_item", "transmission_block"]) expect([type, types.has(type)]).toEqual([type, true]);
+
+    const vectorPage = example("changes-vector-page.json").items as Json[];
+    for (const entity of vectorPage.filter((item) => item.type !== "ovitrap")) expect(items).toContainEqual(entity);
+    const ovitrap = items.find((item) => item.type === "ovitrap") as Json;
+    expect(ovitrap.id).toBe(vectorPage.find((item) => item.type === "ovitrap")?.id);
+    expect(ovitrap.body.open_reading).toEqual({ installed_on: daysAgo(5) });
+    expect(ovitrap.body.last_reading.collected_on).toBe(daysAgo(5));
+
+    // Gate on: every household carries the key (null = no profile yet, Q6); one of them is in the agent's own micro-area.
+    const households = items.filter((item) => item.type === "household");
+    for (const household of households) expect([household.id, "vector" in household.body]).toEqual([household.id, true]);
+    const area = example("session-endemic-agent.json").teams[0].micro_areas[0];
+    expect(households.some((h) => h.body.micro_area.id === area.id && h.body.vector === null && h.body.families.length === 0)).toBe(true);
+    expect(items.some((item) => item.type === "micro_area" && item.id === area.id)).toBe(true);
+  });
+
+  test("the ACS profile has none of it: no vector key, no vector domains, no switch", async () => {
+    const session = (await call("GET", "/field/v1/session")).json();
+    expect(session.professional.cbo).toBe("515105");
+    expect(session.features.vector_control).toBeUndefined();
+    expect((await call("GET", "/field/v1/reference")).json().vector_control_domains).toBeUndefined();
+    const items = (await pages()).flatMap((page) => page.items as Json[]);
+    expect(items.filter((item) => item.type === "household").length).toBeGreaterThan(0);
+    for (const item of items) {
+      expect(["micro_area", "household", "registration"]).toContain(item.type);
+      if (item.type === "household") expect("vector" in item.body).toBe(false);
+    }
+  });
+
+  test("/__reset brings the ACS profile back", async () => {
+    await ace();
+    expect((await state()).profile).toBe("ace");
+    await call("POST", "/__reset", { token: null });
+    expect((await state()).profile).toBe("acs");
+    expect((await call("GET", "/field/v1/session")).json().professional.cbo).toBe("515105");
+  });
+
+  test("a profile outside the list is refused", async () => {
+    for (const profile of ["acE", "agent", 1]) {
+      const reply = await script({ profile });
+      expect([profile, reply.status, reply.json().error]).toEqual([profile, 422, "invalid_script"]);
+    }
+  });
+});
+
+describe("ovitraps and the bulletin (35a)", () => {
+  const state = async () => (await call("GET", "/__state", { token: null })).json();
+
+  test("an installation and the collection that cites it in the same batch answer with the same id, the ovitrap's (Q7(2))", async () => {
+    const items = example("upload-ovitrap-same-batch.json").items as Json[];
+    const reply = (await upload(items)).json();
+    expectValid("upload-response", reply);
+    const [installation, collection] = reply.results;
+    expect(installation).toMatchObject({ client_uuid: items[0].client_uuid, status: "accepted", type: "ovitrap_installation" });
+    expect(collection).toMatchObject({ client_uuid: items[1].client_uuid, status: "accepted", type: "ovitrap_collection", id: installation.id });
+    expect(installation.id).toMatch(UUID);
+    expect((await state()).accepted).toEqual({ ovitrap_installation: 1, ovitrap_collection: 1 });
+  });
+
+  test("a collection of a downloaded ovitrap answers with the ovitrap's id", async () => {
+    const [collection] = example("upload-ovitrap-collection.json").items as Json[];
+    const result = (await upload([collection])).json().results[0];
+    expect(result).toMatchObject({ status: "accepted", type: "ovitrap_collection", id: collection.body.ovitrap_id });
+    expect((await upload([collection])).json().results[0]).toEqual({ ...result, status: "duplicate" });
+  });
+
+  test("a collection citing an installation never accepted is rejected not_found at ovitrap_client_uuid", async () => {
+    const [, collection] = example("upload-ovitrap-same-batch.json").items as Json[];
+    const result = (await upload([collection])).json().results[0];
+    expect(result).toEqual({ client_uuid: collection.client_uuid, status: "rejected", type: "ovitrap_collection", error: "not_found", path: "ovitrap_client_uuid" });
+  });
+
+  test("a visit with the bulletin is accepted with the inspection's id, and the state counts inspections, samples and derived reasons", async () => {
+    const [visit] = example("upload-home-visit-vector-inspection.json").items as Json[];
+    const [plain] = example("upload-home-visit-resident.json").items as Json[];
+    const reply = (await upload([visit, plain])).json();
+    expectValid("upload-response", reply);
+    expect(reply.results[0]).toEqual({ client_uuid: visit.client_uuid, status: "accepted", type: "home_visit", id: expect.stringMatching(UUID), vector_inspection_id: expect.stringMatching(UUID) });
+    expect(reply.results[1].vector_inspection_id).toBeUndefined();
+    expect((await state()).vector).toEqual({ inspections: 1, samples: 2, bodies_with_derived_reasons: 0 });
+
+    // The api derives 34–37 and refuses them in the body (reason_derived); the fake takes them and counts the body, so a flow sees the leak.
+    const leaked = { ...visit, client_uuid: "c0ffee35-0000-4000-8000-000000000001", body: { ...visit.body, reasons: [35] } };
+    expect((await upload([leaked])).json().results[0].status).toBe("accepted");
+    expect((await state()).vector).toEqual({ inspections: 2, samples: 4, bodies_with_derived_reasons: 1 });
+  });
+
+  test("a visit at a household of the same batch cites it by household_client_uuid", async () => {
+    const household = (example("upload-home-visit-new-household.json").items as Json[]).find((item) => item.type === "household") as Json;
+    const [visit] = example("upload-home-visit-vector-inspection-pe.json").items as Json[];
+    const body = { ...visit.body, household_client_uuid: household.client_uuid };
+    delete body.household_id;
+    const results = (await upload([household, { ...visit, body }])).json().results as Json[];
+    expect(results.map((r) => r.status)).toEqual(["accepted", "accepted"]);
+    expect((await state()).vector.inspections).toBe(1);
+  });
+
+  test("rejected:sample_label_taken refuses the next visit with samples at its first sample, once", async () => {
+    const [household] = example("upload-household-update.json").items as Json[];
+    const [visit] = example("upload-home-visit-vector-inspection.json").items as Json[];
+    await script({ next_upload: "rejected:sample_label_taken" });
+    const results = (await upload([household, visit])).json().results as Json[];
+    expect(results[0].status).toBe("accepted");
+    expect(results[1]).toEqual({ client_uuid: visit.client_uuid, status: "rejected", type: "home_visit", error: "sample_label_taken", path: "vector_inspection.samples[0]" });
+    expect((await upload([visit])).json().results[0].status).toBe("accepted");
+  });
+});
+
 describe("map", () => {
   const etag = `"${MAP_SHA}"`;
 

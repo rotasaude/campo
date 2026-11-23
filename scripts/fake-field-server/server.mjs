@@ -10,6 +10,7 @@
 //   POST /__script  { "next_upload": "stale_version" | "rejected:<code>", "current_patch": {…} }
 //                   { "next_status": 401, "error": "device_revoked" | "device_suspended" }
 //                   { "next_map": "cut:<bytes>" }   the next whole map download drops after that many bytes
+//                   { "profile": "ace" }   until /__reset, the endemic agent of 35a (session, reference and changes); "acs" is the default
 //   POST /__reset   GET /__state
 // Every 200 of the contract is validated against its schema before it leaves.
 // The emulator reaches the host's loopback at 10.0.2.2, so the default bind is 127.0.0.1.
@@ -146,7 +147,7 @@ async function field(req, res, url) {
 
   const route = `${req.method} ${url.pathname}`;
   if (route === "GET /field/v1/session") return sendContract(res, "session-response", state.session());
-  if (route === "GET /field/v1/reference") return sendContract(res, "reference-response", state.reference);
+  if (route === "GET /field/v1/reference") return sendContract(res, "reference-response", state.reference());
   if (route === "GET /field/v1/map") return sendMap(req, res);
   if (route === "GET /field/v1/changes") {
     const { page, error } = state.changes(url.searchParams.get("cursor"), url.searchParams.get("limit"));

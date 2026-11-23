@@ -1,7 +1,7 @@
 // State and rules of the fake field-sync server (module 24c, Task 24). It answers from the
 // examples of the pinned contract (contracts/field-sync, tag field-sync-v1.3.0) and keeps just
-// enough state for the Maestro flows: the idempotency book, the version of each target and a
-// one-shot script. It is a test double: the api decides for real, this only keeps the shapes.
+// enough state for the Maestro flows: the idempotency book, the version of each target, a
+// one-shot script and the profile of the tablet (the ACS of the 24c, or the endemic agent of 35a). It is a test double: the api decides for real, this only keeps the shapes.
 import { Buffer } from "node:buffer";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -23,6 +23,11 @@ const CITES = {
 };
 const NAMESPACE = Buffer.from("5f1e1d5c0de04a7e9c0dfa4ef1e1d5c0", "hex");
 const DEVICE_ERRORS = ["device_revoked", "device_suspended"];
+// Who the tablet is (35a): the ACS of the 24c (the default; every answer as before the 35a) or the endemic agent.
+const PROFILES = ["acs", "ace"];
+// The reasons the api derives from the bulletin and refuses in the visit's body (reason_derived).
+const DERIVED_REASONS = [34, 35, 36, 37];
+const DAY_MS = 86_400_000;
 
 export class ScriptError extends Error {}
 
@@ -70,6 +75,63 @@ function fullReference(example, domains, dictionaries) {
         participant_measurements: Object.fromEntries(Object.entries(activity.rules.participant_measurements).map(([key, row]) => [key, range(row)])),
       },
     },
+  };
+}
+
+// The endemic agent's reference (35a): the ACS's with the vector block the api adds when the switch is on. The lists of
+// {code, label} and the limits are the contract's domains-v1.json (vector_control), the products a fake catalogue
+// (fixtures/vector-products.json), the cadences and parameters those of the contract's example. Another version: a tablet
+// that changes profile downloads it again.
+function vectorReference(reference, vector, products, example) {
+  const { activities, work_types, situations, deposit_groups, measure_methods, risk_classes, limits } = vector;
+  const { cadences, parameters } = example.vector_control_domains;
+  const out = {
+    ...reference,
+    reference_version: "",
+    vector_control_domains: { activities, work_types, situations, deposit_groups, measure_methods, risk_classes, products, cadences, parameters, limits },
+  };
+  return { ...out, reference_version: createHash("sha256").update(JSON.stringify(out)).digest("hex") };
+}
+
+// The endemic agent's territory (35a), from the contract's pages: the first page's micro-area and the agent's own (07,
+// of the reset page), the vector page's household with its profile in place of the first page's, the first page's
+// resident, and one household of the agent's micro-area with no profile and no family — a property due with no link, so
+// a flow can open a plain LI bulletin (the vector page's household is under a transmission block). The second page
+// brings the four new entities. Fake data.
+const AGENT_SHOP_ID = "c0ffee35-0000-4000-8000-000000000035";
+function vectorPages(firstPage, lastPage, vectorPage, resetPage, agentArea) {
+  const byType = (page, type) => page.items.filter((item) => item.type === type);
+  const [household] = byType(vectorPage, "household");
+  const area = resetPage.items.find((item) => item.type === "micro_area" && item.id === agentArea.id);
+  const shop = {
+    type: "household", id: AGENT_SHOP_ID, version: 1,
+    body: {
+      ...household.body,
+      id: AGENT_SHOP_ID, micro_area: { id: agentArea.id, code: agentArea.code },
+      address: { zip: "80020000", street_type: "081", street: "das Acácias", number: "45", no_number: false, complement: null, neighborhood_id: null, district: "Jardim Esperança", reference: null },
+      property_type: "2", contact_phone: null, version: 1, registered_at: "2026-11-02T14:00:00-03:00", registered_by: { name: null },
+      location: null, families: [], living_conditions: {}, vector: null,
+    },
+  };
+  const first = {
+    ...firstPage,
+    items: [...byType(firstPage, "micro_area"), area, household, shop, ...firstPage.items.filter((item) => !["micro_area", "household"].includes(item.type))],
+  };
+  const last = { ...lastPage, items: [...lastPage.items, ...vectorPage.items.filter((item) => item.type !== "household")] };
+  return { first, last };
+}
+
+// The open paddle of the downloaded ovitraps, installed `days` before today (the fake's server_time is UTC, so the
+// tablet's city day is the UTC day): a collection on the device falls in the window of 3 to 10 days. The reading it
+// closed is of the same day (the paddle was changed then).
+function withPaddleOf(page, days) {
+  const day = new Date(Date.now() - days * DAY_MS).toISOString().slice(0, 10);
+  return {
+    ...page,
+    items: page.items.map((item) => (item.type !== "ovitrap" || !item.body.open_reading ? item : {
+      ...item,
+      body: { ...item.body, open_reading: { ...item.body.open_reading, installed_on: day }, ...(item.body.last_reading ? { last_reading: { ...item.body.last_reading, collected_on: day } } : {}) },
+    })),
   };
 }
 
@@ -126,6 +188,10 @@ export function createState({ contractDir, mapFile }) {
   const reference = fullReference(read("examples/reference.json"), read("domains-v1.json"), JSON.parse(readFileSync(join(FIXTURES, "registration-dictionaries.json"), "utf8")));
   if (!validators["reference-response"](reference)) throw new Error(`referência do servidor falso fora do esquema: ${ajv.errorsText(validators["reference-response"].errors)}`);
   const sessionExample = read("examples/session-acs.json");
+  const agentSessionExample = read("examples/session-endemic-agent.json");
+  const agentReference = vectorReference(reference, read("domains-v1.json").vector_control,
+    JSON.parse(readFileSync(join(FIXTURES, "vector-products.json"), "utf8")).products, read("examples/reference-vector-control.json"));
+  if (!validators["reference-response"](agentReference)) throw new Error(`referência do agente fora do esquema: ${ajv.errorsText(validators["reference-response"].errors)}`);
   // The contract's examples write the street type by its label ("RUA"); the api stores the code of the
   // dictionary ("081"), and the tablet refuses to save a household with anything else.
   const streetTypes = new Map(reference.string_domains.tipo_logradouro.map((row) => [row.label, row.code]));
@@ -139,6 +205,8 @@ export function createState({ contractDir, mapFile }) {
   });
   const firstPage = asServed(read("examples/changes-first-page.json"));
   const lastPage = asServed(read("examples/changes-last-page.json"));
+  const agentPages = vectorPages(firstPage, lastPage, asServed(read("examples/changes-vector-page.json")), read("examples/changes-reset.json"),
+    agentSessionExample.teams[0].micro_areas[0]);
   // Opaque cursors of the fake: after the first page, and after the last one.
   const CURSOR_FIRST = Buffer.from(JSON.stringify({ v: 1, fake: "after-first-page" })).toString("base64url");
   const CURSOR_END = Buffer.from(JSON.stringify({ v: 1, fake: "end" })).toString("base64url");
@@ -151,8 +219,10 @@ export function createState({ contractDir, mapFile }) {
   let script;
   let deadTokens;
   let mapAnswers;
+  let profile;
 
   function reset() {
+    profile = "acs";
     receipts = new Map();
     versions = new Map();
     script = { nextUpload: null, currentPatch: null, nextStatus: null, nextMapCut: null };
@@ -173,8 +243,9 @@ export function createState({ contractDir, mapFile }) {
 
   function setScript(body) {
     if (body === null || typeof body !== "object" || Array.isArray(body)) throw new ScriptError("script precisa ser um objeto");
-    const { next_upload: nextUpload = null, current_patch: currentPatch = null, next_status: nextStatus = null, error = null, next_map: nextMap = null, ...rest } = body;
+    const { next_upload: nextUpload = null, current_patch: currentPatch = null, next_status: nextStatus = null, error = null, next_map: nextMap = null, profile: nextProfile = null, ...rest } = body;
     if (Object.keys(rest).length) throw new ScriptError(`chave desconhecida: ${Object.keys(rest).join(", ")}`);
+    if (nextProfile !== null && !PROFILES.includes(nextProfile)) throw new ScriptError('profile aceita "acs" ou "ace"');
     if (nextUpload !== null && nextUpload !== "stale_version" && !/^rejected:[a-z_]+$/.test(nextUpload)) {
       throw new ScriptError('next_upload aceita "stale_version" ou "rejected:<code>"');
     }
@@ -190,6 +261,8 @@ export function createState({ contractDir, mapFile }) {
     if (cut !== null) script.nextMapCut = cut;
     if (nextUpload !== null) Object.assign(script, { nextUpload, currentPatch });
     if (nextStatus !== null) script.nextStatus = error;
+    // Unlike the others, the profile stays until /__reset.
+    if (nextProfile !== null) profile = nextProfile;
   }
 
   // The 401 a token gets, or null. A scripted revocation sticks to the token that met it.
@@ -202,20 +275,26 @@ export function createState({ contractDir, mapFile }) {
   }
 
   function session() {
+    const example = profile === "ace" ? agentSessionExample : sessionExample;
     return {
-      ...sessionExample,
+      ...example,
       server_time: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-      map: { version: sessionExample.map?.version ?? "2026-11-01", size_bytes: map.length, sha256: mapSha },
-      reference_version: reference.reference_version,
+      map: { version: example.map?.version ?? "2026-11-01", size_bytes: map.length, sha256: mapSha },
+      reference_version: currentReference().reference_version,
     };
+  }
+
+  function currentReference() {
+    return profile === "ace" ? agentReference : reference;
   }
 
   // { page } or { error } for GET /changes.
   function changes(cursor, limit) {
     if (limit !== null && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > 500)) return { error: "invalid_limit" };
-    if (cursor === null) return { page: { ...firstPage, next_cursor: CURSOR_FIRST, has_more: true } };
-    if (cursor === CURSOR_FIRST) return { page: { ...lastPage, next_cursor: CURSOR_END, has_more: false } };
-    if (cursor === CURSOR_END) return { page: { ...lastPage, reset: false, items: [], removals: [], next_cursor: CURSOR_END, has_more: false } };
+    const [first, last] = profile === "ace" ? [agentPages.first, withPaddleOf(agentPages.last, 5)] : [firstPage, lastPage];
+    if (cursor === null) return { page: { ...first, next_cursor: CURSOR_FIRST, has_more: true } };
+    if (cursor === CURSOR_FIRST) return { page: { ...last, next_cursor: CURSOR_END, has_more: false } };
+    if (cursor === CURSOR_END) return { page: { ...last, reset: false, items: [], removals: [], next_cursor: CURSOR_END, has_more: false } };
     return { error: "invalid_cursor" };
   }
 
@@ -265,8 +344,12 @@ export function createState({ contractDir, mapFile }) {
 
     if (script.nextUpload?.startsWith("rejected:")) {
       const error = script.nextUpload.slice("rejected:".length);
-      script.nextUpload = null;
-      return { ...head, error };
+      // A taken sample label waits for a visit with samples, and points at the first one (the api's path).
+      const labelTaken = error === "sample_label_taken";
+      if (!labelTaken || (item.type === "home_visit" && item.body.vector_inspection?.samples?.length > 0)) {
+        script.nextUpload = null;
+        return { ...head, error, ...(labelTaken ? { path: "vector_inspection.samples[0]" } : {}) };
+      }
     }
 
     for (const cite of citations(item.body)) {
@@ -274,11 +357,18 @@ export function createState({ contractDir, mapFile }) {
       if (!receipt || !CITES[cite.key](receipt)) return { ...head, error: "not_found", path: cite.path };
     }
 
-    const id = uuidV5(item.client_uuid);
     if (!VERSIONED.includes(item.type)) {
-      receipts.set(item.client_uuid, { type: item.type, id });
-      return { ...head, status: "accepted", id };
+      // A collection answers with the ovitrap's id, the downloaded one's or the installation's it cites (Q7(2)).
+      const id = item.type === "ovitrap_collection" ? item.body.ovitrap_id ?? receipts.get(item.body.ovitrap_client_uuid).id : uuidV5(item.client_uuid);
+      const bulletin = item.type === "home_visit" ? item.body.vector_inspection : undefined;
+      const inspection = bulletin === undefined ? undefined : {
+        samples: bulletin.samples?.length ?? 0, derivedInBody: (item.body.reasons ?? []).some((code) => DERIVED_REASONS.includes(code)),
+      };
+      receipts.set(item.client_uuid, { type: item.type, id, inspection });
+      return { ...head, status: "accepted", id, ...(inspection ? { vector_inspection_id: uuidV5(`vector_inspection:${item.client_uuid}`) } : {}) };
     }
+
+    const id = uuidV5(item.client_uuid);
 
     const where = target(item, id);
     const fixture = fixtures.get(where.row);
@@ -322,11 +412,18 @@ export function createState({ contractDir, mapFile }) {
 
   function snapshot() {
     const accepted = {};
-    for (const receipt of receipts.values()) accepted[receipt.type] = (accepted[receipt.type] ?? 0) + 1;
-    return { accepted, script: { next_upload: script.nextUpload, next_status: script.nextStatus }, dead_tokens: deadTokens.size, map: { ...mapAnswers } };
+    const vector = { inspections: 0, samples: 0, bodies_with_derived_reasons: 0 };
+    for (const receipt of receipts.values()) {
+      accepted[receipt.type] = (accepted[receipt.type] ?? 0) + 1;
+      if (!receipt.inspection) continue;
+      vector.inspections += 1;
+      vector.samples += receipt.inspection.samples;
+      if (receipt.inspection.derivedInBody) vector.bodies_with_derived_reasons += 1;
+    }
+    return { profile, accepted, vector, script: { next_upload: script.nextUpload, next_status: script.nextStatus }, dead_tokens: deadTokens.size, map: { ...mapAnswers } };
   }
 
-  return { map, mapSha, reference, problems, reset, setScript, deviceError, session, changes, upload, snapshot, mapCut, countMap };
+  return { map, mapSha, reference: currentReference, problems, reset, setScript, deviceError, session, changes, upload, snapshot, mapCut, countMap };
 }
 
 export function newToken() {
