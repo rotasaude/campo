@@ -20,6 +20,12 @@ appId: br.rotasaude.campo
 - extendedWaitUntil:
     visible: "Rua das Acácias, 45"
     timeout: 30000
+# Its card is the last of the sheet (the blockade comes first): its button sits behind the tablet's task bar until the
+# sheet is scrolled to the end.
+- scrollUntilVisible:
+    element: "Rua das Acácias, 45"
+    centerElement: true
+- scroll
 - tapOn:
     text: "Registrar visita"
     below: "Rua das Acácias, 45"
@@ -135,4 +141,4 @@ appId: br.rotasaude.campo
 - runScript:
     file: scripts/expect-vector.js
     env:
-      EXPECT: '{ "inspections": 1, "samples": 1, "bodies_with_derived_reasons": 0 }'
+      EXPECT: '{ "inspections": 1, "samples": 1, "bodies_with_derived_reasons": 0, "activities": ["li"] }'

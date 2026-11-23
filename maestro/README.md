@@ -73,9 +73,18 @@ Sem script, o servidor responde como o ACS do 24c (sessão `session-acs.json`), 
 
 - a sessão é o `session-endemic-agent.json` (CBO `515140`, `features.vector_control: true`, microárea `07 · Jardim Esperança`);
 - o `/reference` ganha `vector_control_domains`: as listas e os limites do `domains-v1.json` (`vector_control`), os produtos de `fixtures/vector-products.json` (falsos, um por método) e as cadências e parâmetros do exemplo `reference-vector-control.json`; outra `reference_version`;
-- o `/changes` serve, na primeira página, as microáreas `03` e `07`, o domicílio da página do vetor (`changes-vector-page.json`, com o perfil `vector`), o cadastro da primeira página e um comércio falso da microárea `07` sem perfil e sem família ("Rua das Acácias, 45": vencido e sem vínculo, para um boletim LI simples); na última, o quarteirão, a ovitrampa `OVT-014`, o item de LIRAa e o bloqueio do exemplo, com a palheta aberta `installed_on` = hoje − 5 dias em UTC (o `server_time` do servidor falso é UTC, e o dia da cidade no tablet também).
+- o `/changes` serve só o território da sessão, a microárea `07` (o api serve ao agente só as microáreas atribuídas e recusa `out_of_scope` fora delas). Na primeira página: a microárea `07`, o domicílio da página do vetor (`changes-vector-page.json`, "RUA das Flores, 120", com o perfil `vector`) e o cadastro da primeira página, os dois levados para a `07`, e um comércio falso da `07` sem perfil e sem família ("Rua das Acácias, 45": vencido e sem vínculo, para um boletim LI simples). Na última: o quarteirão, a ovitrampa `OVT-014`, o item de LIRAa e o bloqueio do exemplo, com a palheta aberta `installed_on` = hoje − 5 dias em UTC (o `server_time` do servidor falso é UTC, e o dia da cidade no tablet também), e o "quem visitar" do exemplo levado para a `07`.
 
-No envio, em qualquer perfil: `ovitrap_installation` volta com o id da ovitrampa e `ovitrap_collection` com o id da ovitrampa coletada (o `ovitrap_id`, ou o da instalação citada por `ovitrap_client_uuid`, Q7(2)); a visita com boletim volta com `vector_inspection_id`. `rejected:sample_label_taken` espera a próxima visita com amostra e aponta `vector_inspection.samples[0]`. O `GET /__state` traz também `profile` e `vector: { inspections, samples, bodies_with_derived_reasons }` (visitas aceitas com boletim, amostras delas, e corpos que trouxeram 34–37, que o api deriva e recusa no corpo).
+No envio, em qualquer perfil: `ovitrap_installation` volta com o id da ovitrampa e `ovitrap_collection` com o id da ovitrampa coletada (o `ovitrap_id`, ou o da instalação citada por `ovitrap_client_uuid`, Q7(2)); a visita com boletim volta com `vector_inspection_id`. A visita com boletim traz o `vector_inspection_id` também no `duplicate`, como o api. `rejected:sample_label_taken` espera a próxima visita com amostra e aponta `vector_inspection.samples[0]`.
+
+O falso espelha só as recusas do 35a que um fluxo poderia encontrar; as outras regras do boletim e da ovitrampa ele não decide (o tablet recusa antes, e quem decide é o api):
+
+- erro de esquema sob `vector_inspection` → `vector_inspection_invalid`, com o path mais fundo dali (CV-4);
+- coleta de `ovitrap_id` que o falso não tem (nem serviu nem instalou) → `not_found` em `ovitrap_id`;
+- coleta com `reinstall: false` sem `remove: true` → `invalid_request` em `reinstall` (Q33);
+- instalação com `consent: false` → `consent_required` em `consent`.
+
+O `GET /__state` traz também `profile` e `vector: { inspections, samples, bodies_with_derived_reasons, activities }`: visitas aceitas com boletim, amostras delas, corpos que trouxeram 34–37 (que o api deriva e recusa no corpo) e a atividade de cada boletim, na ordem do aceite.
 
 Os exemplos do contrato escrevem o tipo de logradouro pelo nome (`"RUA"`); o api guarda o código do dicionário (`"081"`) e o app recusa salvar outra coisa. O servidor falso serve o código.
 
@@ -96,10 +105,10 @@ Cada fluxo começa pelo `common/pair.yaml`: instalação limpa, o payload em "Co
 | `map.yaml` | mapa offline aberto do arquivo baixado, com "© OpenStreetMap" |
 | `map-resume.yaml` | download do mapa cortado no meio: a sincronização seguinte continua de onde parou (um 206) |
 | `encryption.yaml` | Diagnóstico mostra a versão da cifra e "sem chave: recusado" |
-| `vector-inspection-offline.yaml` | 35a, modo avião: em "Imóveis a visitar", boletim LI de rotina, trabalhado, A1 com 2 existentes / 1 com água / 1 com larva, uma amostra com a etiqueta na tela, medida focal com produto, ação educativa; "Etiquete os tubitos" em Hoje; "Pendentes de envio: 1"; volta a rede, sincroniza, zero; o servidor tem 1 boletim, 1 amostra e nenhum corpo com 34–37 |
+| `vector-inspection-offline.yaml` | 35a, modo avião: em "Imóveis a visitar", boletim LI de rotina, trabalhado, A1 com 2 existentes / 1 com água / 1 com larva, uma amostra com a etiqueta na tela, medida focal com produto, ação educativa; "Etiquete os tubitos" em Hoje; "Pendentes de envio: 1"; volta a rede, sincroniza, zero; o servidor tem 1 boletim `li`, 1 amostra e nenhum corpo com 34–37 |
 | `ovitrap-install.yaml` | 35a, modo avião: no domicílio com quarteirão, "Instalar ovitrampa" com número e TCLE; volta a rede, sincroniza; 1 instalação aceita |
 | `ovitrap-collect.yaml` | 35a: em "Ovitrampas", a `OVT-014` do download (palheta de 5 dias), "Coletar palheta" em bom estado, reinstalada (sem caixa: é o padrão, Q33); sincroniza; 1 coleta aceita |
-| `strategic-point-offline.yaml` | 35a, Q13(1), modo avião: "Novo imóvel não residencial" do tipo ponto estratégico na microárea do agente; pelo detalhe do imóvel (Q59(b): sem morador), visita com boletim PE, trabalhado; "Pendentes de envio: 2"; volta a rede, sincroniza, zero; 1 domicílio e 1 visita com boletim aceitos (a visita cita o domicílio pelo `client_uuid`) |
+| `strategic-point-offline.yaml` | 35a, Q13(1), modo avião: "Novo imóvel não residencial" do tipo ponto estratégico na microárea do agente; pelo detalhe do imóvel (Q59(b): sem morador), visita com boletim PE, trabalhado; "Pendentes de envio: 2"; volta a rede, sincroniza, zero; 1 domicílio e 1 visita com boletim `pe` aceitos (a visita cita o domicílio pelo `client_uuid`) |
 
 Duas coisas que valem para qualquer fluxo novo, aprendidas no tablet:
 

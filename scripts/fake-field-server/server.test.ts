@@ -392,7 +392,11 @@ describe("the endemic agent profile (35a)", () => {
     for (const type of ["micro_area", "household", "city_block", "ovitrap", "liraa_item", "transmission_block"]) expect([type, types.has(type)]).toEqual([type, true]);
 
     const vectorPage = example("changes-vector-page.json").items as Json[];
-    for (const entity of vectorPage.filter((item) => item.type !== "ovitrap")) expect(items).toContainEqual(entity);
+    for (const entity of vectorPage.filter((item) => !["ovitrap", "household"].includes(item.type))) expect(items).toContainEqual(entity);
+    // The vector page's household, moved to the agent's micro-area (I1) and otherwise as the contract wrote it.
+    const vectorHousehold = vectorPage.find((item) => item.type === "household") as Json;
+    const served = items.find((item) => item.id === vectorHousehold.id) as Json;
+    expect({ ...served.body, micro_area: null }).toEqual({ ...vectorHousehold.body, micro_area: null });
     const ovitrap = items.find((item) => item.type === "ovitrap") as Json;
     expect(ovitrap.id).toBe(vectorPage.find((item) => item.type === "ovitrap")?.id);
     expect(ovitrap.body.open_reading).toEqual({ installed_on: daysAgo(5) });
@@ -401,9 +405,36 @@ describe("the endemic agent profile (35a)", () => {
     // Gate on: every household carries the key (null = no profile yet, Q6); one of them is in the agent's own micro-area.
     const households = items.filter((item) => item.type === "household");
     for (const household of households) expect([household.id, "vector" in household.body]).toEqual([household.id, true]);
-    const area = example("session-endemic-agent.json").teams[0].micro_areas[0];
-    expect(households.some((h) => h.body.micro_area.id === area.id && h.body.vector === null && h.body.families.length === 0)).toBe(true);
-    expect(items.some((item) => item.type === "micro_area" && item.id === area.id)).toBe(true);
+    expect(households.some((h) => h.body.vector === null && h.body.families.length === 0)).toBe(true);
+  });
+
+  // The api serves the agent only the micro-areas assigned to him (FieldSync::Changes, Scope.for) and refuses out_of_scope
+  // elsewhere: a flow must not prove accepted what the api would never serve (review I1).
+  test("everything of the territory is inside the session's micro-areas: micro-areas, households, residents, ovitraps, who to visit", async () => {
+    await ace();
+    const session = (await call("GET", "/field/v1/session")).json();
+    const areas = new Set((session.teams as Json[]).flatMap((team) => (team.micro_areas as Json[]).map((area) => area.id)));
+    const [first, last] = await pages();
+    const items = [...first.items, ...last.items] as Json[];
+    const of = (type: string) => items.filter((item) => item.type === type);
+    expect(of("micro_area").map((area) => area.id)).toEqual([...areas]);
+    const households = new Set(of("household").map((household) => household.id));
+    for (const household of of("household")) expect([household.id, areas.has(household.body.micro_area.id)]).toEqual([household.id, true]);
+    expect(of("registration").length).toBeGreaterThan(0);
+    for (const registration of of("registration")) {
+      expect([registration.id, areas.has(registration.body.micro_area.id), households.has(registration.body.household_id)]).toEqual([registration.id, true, true]);
+    }
+    expect(of("ovitrap").length).toBeGreaterThan(0);
+    for (const ovitrap of of("ovitrap")) expect([ovitrap.id, households.has(ovitrap.body.household_id)]).toEqual([ovitrap.id, true]);
+    for (const item of of("liraa_item")) expect([item.id, households.has(item.body.household_id)]).toEqual([item.id, true]);
+    const who = last.who_to_visit.micro_areas as Json[];
+    expect(who.flatMap((area) => area.people as Json[]).length).toBeGreaterThan(0);
+    for (const area of who) {
+      expect(areas.has(area.micro_area_id)).toBe(true);
+      for (const person of area.people as Json[]) {
+        expect([person.patient_id, areas.has(person.micro_area.id), households.has(person.household.id)]).toEqual([person.patient_id, true, true]);
+      }
+    }
   });
 
   test("the ACS profile has none of it: no vector key, no vector domains, no switch", async () => {
@@ -456,6 +487,30 @@ describe("ovitraps and the bulletin (35a)", () => {
     expect((await upload([collection])).json().results[0]).toEqual({ ...result, status: "duplicate" });
   });
 
+  test("a collection of an ovitrap the server never had is rejected not_found at ovitrap_id", async () => {
+    const [, unknown] = example("upload-ovitrap-collection.json").items as Json[];
+    expect((await upload([unknown])).json().results[0]).toEqual({
+      client_uuid: unknown.client_uuid, status: "rejected", type: "ovitrap_collection", error: "not_found", path: "ovitrap_id",
+    });
+  });
+
+  // Q33: the collection reinstalls unless it removes; reinstall false without remove is the api's invalid_request.
+  test("a collection with reinstall false and no remove is rejected invalid_request at reinstall", async () => {
+    const [collection] = example("upload-ovitrap-collection.json").items as Json[];
+    for (const body of [{ ...collection.body, reinstall: false, remove: false }, (({ remove: _r, ...rest }) => ({ ...rest, reinstall: false }))(collection.body)]) {
+      const result = (await upload([{ ...collection, body }])).json().results[0];
+      expect(result).toEqual({ client_uuid: collection.client_uuid, status: "rejected", type: "ovitrap_collection", error: "invalid_request", path: "reinstall" });
+    }
+    expect((await upload([{ ...collection, body: { ...collection.body, reinstall: false, remove: true } }])).json().results[0].status).toBe("accepted");
+  });
+
+  test("an installation without the consent is rejected consent_required at consent", async () => {
+    const [installation] = example("upload-ovitrap-installation.json").items as Json[];
+    const result = (await upload([{ ...installation, body: { ...installation.body, consent: false } }])).json().results[0];
+    expect(result).toEqual({ client_uuid: installation.client_uuid, status: "rejected", type: "ovitrap_installation", error: "consent_required", path: "consent" });
+    expect((await upload([installation])).json().results[0].status).toBe("accepted");
+  });
+
   test("a collection citing an installation never accepted is rejected not_found at ovitrap_client_uuid", async () => {
     const [, collection] = example("upload-ovitrap-same-batch.json").items as Json[];
     const result = (await upload([collection])).json().results[0];
@@ -469,12 +524,16 @@ describe("ovitraps and the bulletin (35a)", () => {
     expectValid("upload-response", reply);
     expect(reply.results[0]).toEqual({ client_uuid: visit.client_uuid, status: "accepted", type: "home_visit", id: expect.stringMatching(UUID), vector_inspection_id: expect.stringMatching(UUID) });
     expect(reply.results[1].vector_inspection_id).toBeUndefined();
-    expect((await state()).vector).toEqual({ inspections: 1, samples: 2, bodies_with_derived_reasons: 0 });
+    expect((await state()).vector).toEqual({ inspections: 1, samples: 2, bodies_with_derived_reasons: 0, activities: ["li_t"] });
+    // The duplicate brings the inspection's id too, as the api's ledger does (Upload.ledger).
+    const again = (await upload([visit])).json();
+    expectValid("upload-response", again);
+    expect(again.results[0]).toEqual({ ...reply.results[0], status: "duplicate" });
 
     // The api derives 34–37 and refuses them in the body (reason_derived); the fake takes them and counts the body, so a flow sees the leak.
     const leaked = { ...visit, client_uuid: "c0ffee35-0000-4000-8000-000000000001", body: { ...visit.body, reasons: [35] } };
     expect((await upload([leaked])).json().results[0].status).toBe("accepted");
-    expect((await state()).vector).toEqual({ inspections: 2, samples: 4, bodies_with_derived_reasons: 1 });
+    expect((await state()).vector).toEqual({ inspections: 2, samples: 4, bodies_with_derived_reasons: 1, activities: ["li_t", "li_t"] });
   });
 
   test("a visit at a household of the same batch cites it by household_client_uuid", async () => {
@@ -484,7 +543,20 @@ describe("ovitraps and the bulletin (35a)", () => {
     delete body.household_id;
     const results = (await upload([household, { ...visit, body }])).json().results as Json[];
     expect(results.map((r) => r.status)).toEqual(["accepted", "accepted"]);
-    expect((await state()).vector.inspections).toBe(1);
+    expect((await state()).vector).toMatchObject({ inspections: 1, activities: ["pe"] });
+  });
+
+  // CV-4: a schema error under /body/vector_inspection is vector_inspection_invalid, at the deepest path there.
+  test("a bulletin outside the schema is rejected vector_inspection_invalid with the path of the contract's cases", async () => {
+    const suite = (example("manifest.json").suites as Json[]).find((s) => s.schema === "upload-request-v1.json");
+    const cases = (suite?.cases as Json[]).filter((c) => c.file.startsWith("invalid-vector-inspection-"));
+    expect(cases.length).toBeGreaterThan(10);
+    for (const { file, expect: wanted } of cases) {
+      const pointer = (wanted as string).split(" ")[0].slice("/items/0/body/".length);
+      const path = pointer.split("/").map((part, i) => (/^\d+$/.test(part) ? `[${part}]` : (i ? "." : "") + part)).join("");
+      const result = (await upload(example(file).items)).json().results[0];
+      expect([file, result.error, result.path]).toEqual([file, "vector_inspection_invalid", path]);
+    }
   });
 
   test("rejected:sample_label_taken refuses the next visit with samples at its first sample, once", async () => {

@@ -119,4 +119,4 @@ appId: br.rotasaude.campo
 - runScript:
     file: scripts/expect-vector.js
     env:
-      EXPECT: '{ "inspections": 1, "samples": 0, "bodies_with_derived_reasons": 0 }'
+      EXPECT: '{ "inspections": 1, "samples": 0, "bodies_with_derived_reasons": 0, "activities": ["pe"] }'

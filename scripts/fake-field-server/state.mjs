@@ -93,15 +93,19 @@ function vectorReference(reference, vector, products, example) {
   return { ...out, reference_version: createHash("sha256").update(JSON.stringify(out)).digest("hex") };
 }
 
-// The endemic agent's territory (35a), from the contract's pages: the first page's micro-area and the agent's own (07,
-// of the reset page), the vector page's household with its profile in place of the first page's, the first page's
-// resident, and one household of the agent's micro-area with no profile and no family — a property due with no link, so
-// a flow can open a plain LI bulletin (the vector page's household is under a transmission block). The second page
-// brings the four new entities. Fake data.
+// The endemic agent's territory (35a), from the contract's pages, all of it inside the session's micro-area (07, of the
+// reset page): the api serves the agent only the micro-areas assigned to him and refuses out_of_scope elsewhere (review
+// I1). The first page: the agent's micro-area, the vector page's household with its profile (in place of the first
+// page's) and the first page's resident, both moved to 07, and one household of 07 with no profile and no family — a
+// property due with no link, so a flow can open a plain LI bulletin (the vector page's household is under a
+// transmission block). The second page: the four new entities, and the last page's who-to-visit moved to 07 (its
+// people live in that household). Fake data.
 const AGENT_SHOP_ID = "c0ffee35-0000-4000-8000-000000000035";
 function vectorPages(firstPage, lastPage, vectorPage, resetPage, agentArea) {
   const byType = (page, type) => page.items.filter((item) => item.type === type);
-  const [household] = byType(vectorPage, "household");
+  const ref = { id: agentArea.id, code: agentArea.code };
+  const moved = (item) => ({ ...item, body: { ...item.body, micro_area: ref } });
+  const [household] = byType(vectorPage, "household").map(moved);
   const area = resetPage.items.find((item) => item.type === "micro_area" && item.id === agentArea.id);
   const shop = {
     type: "household", id: AGENT_SHOP_ID, version: 1,
@@ -115,9 +119,17 @@ function vectorPages(firstPage, lastPage, vectorPage, resetPage, agentArea) {
   };
   const first = {
     ...firstPage,
-    items: [...byType(firstPage, "micro_area"), area, household, shop, ...firstPage.items.filter((item) => !["micro_area", "household"].includes(item.type))],
+    items: [area, household, shop, ...byType(firstPage, "registration").filter((item) => item.body.household_id === household.id).map(moved)],
   };
-  const last = { ...lastPage, items: [...lastPage.items, ...vectorPage.items.filter((item) => item.type !== "household")] };
+  const who = lastPage.who_to_visit;
+  const last = {
+    ...lastPage,
+    items: [...lastPage.items, ...vectorPage.items.filter((item) => item.type !== "household")],
+    who_to_visit: {
+      ...who,
+      micro_areas: [{ micro_area_id: ref.id, people: who.micro_areas.flatMap((group) => group.people).filter((person) => person.household.id === household.id).map((person) => ({ ...person, micro_area: ref })) }],
+    },
+  };
   return { first, last };
 }
 
@@ -205,6 +217,8 @@ export function createState({ contractDir, mapFile }) {
   });
   const firstPage = asServed(read("examples/changes-first-page.json"));
   const lastPage = asServed(read("examples/changes-last-page.json"));
+  // The ovitraps the fake's city has: the ones the vector page serves; the installations accepted add theirs.
+  const servedOvitraps = new Set(read("examples/changes-vector-page.json").items.filter((item) => item.type === "ovitrap").map((item) => item.id));
   const agentPages = vectorPages(firstPage, lastPage, asServed(read("examples/changes-vector-page.json")), read("examples/changes-reset.json"),
     agentSessionExample.teams[0].micro_areas[0]);
   // Opaque cursors of the fake: after the first page, and after the last one.
@@ -312,7 +326,9 @@ export function createState({ contractDir, mapFile }) {
     if (deepest.keyword === "additionalProperties") pointer += `/${deepest.params.additionalProperty}`;
     const inBody = pointer.startsWith("/body/");
     const path = inBody ? contractPath(pointer.slice("/body".length)) : contractPath(pointer) || "body";
-    return { error: inBody && /^location\b/.test(path) ? "invalid_location" : "invalid_request", path };
+    // Q2 and CV-4: under location, invalid_location; under vector_inspection, vector_inspection_invalid.
+    const error = !inBody ? "invalid_request" : /^location\b/.test(path) ? "invalid_location" : /^vector_inspection\b/.test(path) ? "vector_inspection_invalid" : "invalid_request";
+    return { error, path };
   }
 
   // What the item changes: the row whose version it carries, and the id the result reports.
@@ -327,6 +343,21 @@ export function createState({ contractDir, mapFile }) {
     return { row: body.registration_id ?? id, id: body.registration_id ?? id, isNew: !body.registration_id };
   }
 
+  // The api's refusals of the ovitrap items a flow could meet (review M1), in its order; not the whole rule set — the
+  // tablet refuses the rest before saving, and the api stays the authority.
+  // - an ovitrap_id the city does not have → not_found at ovitrap_id (Upload.ovitrap_collection);
+  // - reinstall false without remove → invalid_request at reinstall (Q33, CollectOvitrap);
+  // - consent false → consent_required at consent (InstallOvitrap).
+  function ovitrapRefusal(item) {
+    const { body } = item;
+    if (item.type === "ovitrap_installation" && body.consent === false) return { error: "consent_required", path: "consent" };
+    if (item.type !== "ovitrap_collection") return null;
+    const installed = [...receipts.values()].some((receipt) => receipt.type === "ovitrap_installation" && receipt.id === body.ovitrap_id);
+    if (body.ovitrap_id !== undefined && !servedOvitraps.has(body.ovitrap_id) && !installed) return { error: "not_found", path: "ovitrap_id" };
+    if (body.reinstall === false && body.remove !== true) return { error: "invalid_request", path: "reinstall" };
+    return null;
+  }
+
   function processItem(item) {
     const head = {
       ...(item && typeof item === "object" && typeof item.client_uuid === "string" && UUID.test(item.client_uuid) ? { client_uuid: item.client_uuid } : {}),
@@ -339,7 +370,11 @@ export function createState({ contractDir, mapFile }) {
     const known = receipts.get(item.client_uuid);
     if (known) {
       if (known.type !== item.type) return { ...head, error: "client_uuid_conflict" };
-      return { ...head, status: "duplicate", id: known.id, ...(known.version === undefined ? {} : { version: known.version }) };
+      return {
+        ...head, status: "duplicate", id: known.id, ...(known.version === undefined ? {} : { version: known.version }),
+        // The api's ledger brings the inspection's id on the duplicate too.
+        ...(known.inspection ? { vector_inspection_id: known.inspection.id } : {}),
+      };
     }
 
     if (script.nextUpload?.startsWith("rejected:")) {
@@ -358,14 +393,17 @@ export function createState({ contractDir, mapFile }) {
     }
 
     if (!VERSIONED.includes(item.type)) {
+      const refusal = ovitrapRefusal(item);
+      if (refusal) return { ...head, ...refusal };
       // A collection answers with the ovitrap's id, the downloaded one's or the installation's it cites (Q7(2)).
       const id = item.type === "ovitrap_collection" ? item.body.ovitrap_id ?? receipts.get(item.body.ovitrap_client_uuid).id : uuidV5(item.client_uuid);
       const bulletin = item.type === "home_visit" ? item.body.vector_inspection : undefined;
       const inspection = bulletin === undefined ? undefined : {
-        samples: bulletin.samples?.length ?? 0, derivedInBody: (item.body.reasons ?? []).some((code) => DERIVED_REASONS.includes(code)),
+        id: uuidV5(`vector_inspection:${item.client_uuid}`), activity: bulletin.activity, samples: bulletin.samples?.length ?? 0,
+        derivedInBody: (item.body.reasons ?? []).some((code) => DERIVED_REASONS.includes(code)),
       };
       receipts.set(item.client_uuid, { type: item.type, id, inspection });
-      return { ...head, status: "accepted", id, ...(inspection ? { vector_inspection_id: uuidV5(`vector_inspection:${item.client_uuid}`) } : {}) };
+      return { ...head, status: "accepted", id, ...(inspection ? { vector_inspection_id: inspection.id } : {}) };
     }
 
     const id = uuidV5(item.client_uuid);
@@ -412,12 +450,13 @@ export function createState({ contractDir, mapFile }) {
 
   function snapshot() {
     const accepted = {};
-    const vector = { inspections: 0, samples: 0, bodies_with_derived_reasons: 0 };
+    const vector = { inspections: 0, samples: 0, bodies_with_derived_reasons: 0, activities: [] };
     for (const receipt of receipts.values()) {
       accepted[receipt.type] = (accepted[receipt.type] ?? 0) + 1;
       if (!receipt.inspection) continue;
       vector.inspections += 1;
       vector.samples += receipt.inspection.samples;
+      vector.activities.push(receipt.inspection.activity);
       if (receipt.inspection.derivedInBody) vector.bodies_with_derived_reasons += 1;
     }
     return { profile, accepted, vector, script: { next_upload: script.nextUpload, next_status: script.nextStatus }, dead_tokens: deadTokens.size, map: { ...mapAnswers } };
