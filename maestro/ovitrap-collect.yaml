@@ -1,0 +1,50 @@
+# The paddle of the downloaded ovitrap OVT-014 (installed 5 days ago, in the window of 3 to 10): collected in good shape.
+# There is no box to reinstall: the paddle is reinstalled unless the ovitrap is taken out (Q33), and the screen says so.
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "profile": "ace" }'
+- runFlow: common/pair-ace.yaml
+- scrollUntilVisible:
+    element: "Ovitrampas"
+- tapOn: "Ovitrampas"
+- extendedWaitUntil:
+    visible: "Ovitrampa OVT-014"
+    timeout: 30000
+- assertVisible: "palheta desde .*"
+- tapOn: "Coletar palheta"
+- extendedWaitUntil:
+    visible: "Coletar palheta — ovitrampa OVT-014"
+    timeout: 30000
+- tapOn: "em bom estado"
+- assertVisible: "a palheta é reinstalada na coleta"
+# To the end of the form: the last button sits behind the tablet's task bar until then.
+- scroll
+- tapOn: "Registrar coleta"
+# Back on the list: the collection waits to be sent.
+- extendedWaitUntil:
+    visible: "Ovitrampa OVT-014"
+    timeout: 30000
+- assertVisible: "Aguardando envio"
+- repeat:
+    while:
+      notVisible: "Sincronizar"
+    times: 3
+    commands:
+      - back
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 0"
+    timeout: 60000
+- assertVisible: "Precisam de atenção: 0"
+- runScript:
+    file: scripts/expect-accepted.js
+    env:
+      EXPECT: '{ "ovitrap_collection": 1 }'

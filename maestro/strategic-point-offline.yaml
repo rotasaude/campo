@@ -1,0 +1,130 @@
+# Q13(1), offline: the endemic agent registers a strategic point (a non-residential property of his micro-area) and,
+# from "Imóveis a visitar", visits it with a PE bulletin, worked. Both wait on the tablet; one sync sends them, the visit
+# citing the new household by its client_uuid.
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "profile": "ace" }'
+- runFlow: common/pair-ace.yaml
+- setAirplaneMode: enabled
+- scrollUntilVisible:
+    element: "Domicílios"
+- tapOn: "Domicílios"
+- tapOn: "Novo imóvel não residencial"
+# The micro-area is the agent's only one (07), chosen already.
+- assertVisible: "Novo domicílio"
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "CEP"
+      VALUE: "80020000"
+- tapOn:
+    text: "Buscar em Tipo de logradouro"
+    index: 1
+- inputText: "AVENIDA"
+- hideKeyboard
+# The typed text is in the search box too: the option is the second match.
+- tapOn:
+    text: "AVENIDA"
+    index: 1
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Logradouro"
+      VALUE: "das Indústrias"
+# Fields near the end of the screen sit behind the tablet's task bar: bring each one to the middle first.
+- scrollUntilVisible:
+    element: "Número"
+    centerElement: true
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Número"
+      VALUE: "900"
+- scrollUntilVisible:
+    element: "Vila Nova"
+    centerElement: true
+- tapOn: "Vila Nova"
+- scrollUntilVisible:
+    element: "Ponto Estratégico.*"
+    centerElement: true
+- tapOn: "Ponto Estratégico.*"
+- scrollUntilVisible:
+    element: "Salvar"
+    timeout: 60000
+# To the end of the form: the last button sits behind the tablet's task bar until then.
+- scroll
+- tapOn: "Salvar"
+- extendedWaitUntil:
+    visible: "AVENIDA das Indústrias, 900"
+    timeout: 30000
+- assertVisible: "Aguardando envio"
+- repeat:
+    while:
+      notVisible: "Sincronizar"
+    times: 3
+    commands:
+      - back
+
+# The visit: the new strategic point is due (never worked), and its card opens a PE bulletin.
+- tapOn: "Imóveis a visitar"
+- extendedWaitUntil:
+    visible: "Avenida das Indústrias, 900"
+    timeout: 30000
+- tapOn:
+    text: "Registrar visita"
+    below: "Avenida das Indústrias, 900"
+- extendedWaitUntil:
+    visible: "Nova visita"
+    timeout: 30000
+- scrollUntilVisible:
+    element: "PE — Ponto estratégico"
+    centerElement: true
+- scrollUntilVisible:
+    element: "Trabalhado"
+    centerElement: true
+- tapOn: "Trabalhado"
+# To the end of the form: the last button sits behind the tablet's task bar until then.
+- scrollUntilVisible:
+    element: "Registrar visita"
+    timeout: 60000
+- scroll
+- scroll
+- tapOn: "Registrar visita"
+- extendedWaitUntil:
+    visible: "Minhas visitas de hoje"
+    timeout: 60000
+- assertVisible: "Aguardando envio"
+- repeat:
+    while:
+      notVisible: "Sincronizar"
+    times: 3
+    commands:
+      - back
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 2"
+    timeout: 30000
+- setAirplaneMode: disabled
+- extendedWaitUntil:
+    visible: "Sincronizar"
+    timeout: 30000
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 0"
+    timeout: 60000
+- assertVisible: "Precisam de atenção: 0"
+- runScript:
+    file: scripts/expect-accepted.js
+    env:
+      EXPECT: '{ "household": 1, "home_visit": 1 }'
+- runScript:
+    file: scripts/expect-vector.js
+    env:
+      EXPECT: '{ "inspections": 1, "samples": 0, "bodies_with_derived_reasons": 0 }'

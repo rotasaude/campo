@@ -50,7 +50,7 @@ A senha da chave descartável aparece na linha de comando de propósito: ela só
 
 ## Servidor falso
 
-`scripts/fake-field-server/server.mjs` responde as cinco rotas do `field-sync` v1.2.0 a partir dos exemplos do contrato (`contracts/field-sync`), valida cada resposta contra o esquema antes de enviar e escuta só em `127.0.0.1` (que o emulador alcança por `10.0.2.2`). Aceita qualquer token com a forma `rsf_…`; `qr.mjs <host>` gera um QR com token novo.
+`scripts/fake-field-server/server.mjs` responde as cinco rotas do `field-sync` v1.3.0 a partir dos exemplos do contrato (`contracts/field-sync`), valida cada resposta contra o esquema antes de enviar e escuta só em `127.0.0.1` (que o emulador alcança por `10.0.2.2`). Aceita qualquer token com a forma `rsf_…`; `qr.mjs <host>` gera um QR com token novo.
 
 O `/reference` não é o exemplo do contrato cru (que traz só um recorte e deixaria os formulários sem opções): os domínios da visita e da atividade coletiva são montados do `contracts/field-sync/domains-v1.json` na forma em que o api os serve, e os dicionários do cadastro vêm de `fixtures/registration-dictionaries.json`, cópia do YAML do api (LEDI 8.7.0). Se o api mudar um dicionário, a cópia precisa ser refeita.
 
@@ -63,14 +63,25 @@ Os fluxos mudam o comportamento por `POST /__script` (uma vez só cada):
 | `{ "next_status": 401, "error": "device_revoked" }` | a próxima requisição recebe 401 e aquele token segue recusado; um QR novo funciona |
 | `{ "next_status": 401, "error": "device_suspended" }` | idem, com a fila preservada no app (Q17) |
 | `{ "next_map": "cut:<bytes>" }` | o próximo download inteiro do mapa anuncia o arquivo todo e derruba a conexão depois desses bytes; a continuação com `Range` responde 206 |
+| `{ "profile": "ace" }` | até o `__reset` (não é de uma vez só), o tablet é o agente de endemias do 35a; `"acs"` volta ao padrão. Ver abaixo |
 
 `POST /__reset` zera o estado; `GET /__state` conta os itens aceitos por tipo e as respostas do mapa (`whole`, `partial`, `cut`). Os fluxos falam com essas rotas por `maestro/scripts/*.js`, do lado da máquina que roda o Maestro (`http://127.0.0.1:8787`, ou a variável `SERVER`).
+
+### Perfil do agente de endemias (35a)
+
+Sem script, o servidor responde como o ACS do 24c (sessão `session-acs.json`), e as respostas desse perfil são as mesmas de antes do 35a. Com `POST /__script { "profile": "ace" }`, até o `__reset`:
+
+- a sessão é o `session-endemic-agent.json` (CBO `515140`, `features.vector_control: true`, microárea `07 · Jardim Esperança`);
+- o `/reference` ganha `vector_control_domains`: as listas e os limites do `domains-v1.json` (`vector_control`), os produtos de `fixtures/vector-products.json` (falsos, um por método) e as cadências e parâmetros do exemplo `reference-vector-control.json`; outra `reference_version`;
+- o `/changes` serve, na primeira página, as microáreas `03` e `07`, o domicílio da página do vetor (`changes-vector-page.json`, com o perfil `vector`), o cadastro da primeira página e um comércio falso da microárea `07` sem perfil e sem família ("Rua das Acácias, 45": vencido e sem vínculo, para um boletim LI simples); na última, o quarteirão, a ovitrampa `OVT-014`, o item de LIRAa e o bloqueio do exemplo, com a palheta aberta `installed_on` = hoje − 5 dias em UTC (o `server_time` do servidor falso é UTC, e o dia da cidade no tablet também).
+
+No envio, em qualquer perfil: `ovitrap_installation` volta com o id da ovitrampa e `ovitrap_collection` com o id da ovitrampa coletada (o `ovitrap_id`, ou o da instalação citada por `ovitrap_client_uuid`, Q7(2)); a visita com boletim volta com `vector_inspection_id`. `rejected:sample_label_taken` espera a próxima visita com amostra e aponta `vector_inspection.samples[0]`. O `GET /__state` traz também `profile` e `vector: { inspections, samples, bodies_with_derived_reasons }` (visitas aceitas com boletim, amostras delas, e corpos que trouxeram 34–37, que o api deriva e recusa no corpo).
 
 Os exemplos do contrato escrevem o tipo de logradouro pelo nome (`"RUA"`); o api guarda o código do dicionário (`"081"`) e o app recusa salvar outra coisa. O servidor falso serve o código.
 
 ## Fluxos
 
-Cada fluxo começa pelo `common/pair.yaml`: instalação limpa, o payload em "Colar código" (`${QR_PAYLOAD}`), o PIN duas vezes e a primeira carga.
+Cada fluxo começa pelo `common/pair.yaml`: instalação limpa, o payload em "Colar código" (`${QR_PAYLOAD}`), o PIN duas vezes e a primeira carga. Os do 35a põem antes o perfil do agente (`scripts/server.js` com `BODY: '{ "profile": "ace" }'`) e usam o `common/pair-ace.yaml`, que é o mesmo pareamento conferindo a microárea do agente e "Imóveis a visitar" no Início. `scripts/expect-vector.js` confere o `vector` do `__state`.
 
 | Arquivo | O que prova |
 |---|---|
@@ -85,6 +96,10 @@ Cada fluxo começa pelo `common/pair.yaml`: instalação limpa, o payload em "Co
 | `map.yaml` | mapa offline aberto do arquivo baixado, com "© OpenStreetMap" |
 | `map-resume.yaml` | download do mapa cortado no meio: a sincronização seguinte continua de onde parou (um 206) |
 | `encryption.yaml` | Diagnóstico mostra a versão da cifra e "sem chave: recusado" |
+| `vector-inspection-offline.yaml` | 35a, modo avião: em "Imóveis a visitar", boletim LI de rotina, trabalhado, A1 com 2 existentes / 1 com água / 1 com larva, uma amostra com a etiqueta na tela, medida focal com produto, ação educativa; "Etiquete os tubitos" em Hoje; "Pendentes de envio: 1"; volta a rede, sincroniza, zero; o servidor tem 1 boletim, 1 amostra e nenhum corpo com 34–37 |
+| `ovitrap-install.yaml` | 35a, modo avião: no domicílio com quarteirão, "Instalar ovitrampa" com número e TCLE; volta a rede, sincroniza; 1 instalação aceita |
+| `ovitrap-collect.yaml` | 35a: em "Ovitrampas", a `OVT-014` do download (palheta de 5 dias), "Coletar palheta" em bom estado, reinstalada (sem caixa: é o padrão, Q33); sincroniza; 1 coleta aceita |
+| `strategic-point-offline.yaml` | 35a, Q13(1), modo avião: "Novo imóvel não residencial" do tipo ponto estratégico na microárea do agente; pela folha "Imóveis a visitar", visita com boletim PE, trabalhado; "Pendentes de envio: 2"; volta a rede, sincroniza, zero; 1 domicílio e 1 visita com boletim aceitos (a visita cita o domicílio pelo `client_uuid`) |
 
 Duas coisas que valem para qualquer fluxo novo, aprendidas no tablet:
 

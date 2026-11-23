@@ -1,0 +1,8 @@
+# Fresh install → paired as the endemic agent (CBO 515140, vector_control on), PIN created, first load done, the Home
+# screen up with the agent's micro-area and the sheet of properties due. The flow scripts the profile first:
+#   runScript scripts/server.js with ACTION: script, BODY: '{ "profile": "ace" }' (it stays until the reset).
+appId: br.rotasaude.campo
+---
+- runFlow: pair.yaml
+- assertVisible: "07 · Jardim Esperança"
+- assertVisible: "Imóveis a visitar: [0-9]+"

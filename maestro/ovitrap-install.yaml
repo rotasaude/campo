@@ -1,0 +1,63 @@
+# An ovitrap installed offline by the endemic agent (35a) at a household that has a block in its profile: the number and
+# the consent (TCLE) on the tablet; when the network comes back, one sync sends the installation.
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "profile": "ace" }'
+- runFlow: common/pair-ace.yaml
+- setAirplaneMode: enabled
+- scrollUntilVisible:
+    element: "Domicílios"
+- tapOn: "Domicílios"
+# The household of the contract's vector page: block 12A in its profile, ovitrap OVT-014 already there.
+- tapOn: "Abrir RUA das Flores, 120"
+- scrollUntilVisible:
+    element: "Instalar ovitrampa"
+    centerElement: true
+- tapOn: "Instalar ovitrampa"
+- extendedWaitUntil:
+    visible: "O morador assinou o termo de consentimento \\(TCLE\\)"
+    timeout: 30000
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Número"
+      VALUE: "OVT-015"
+- tapOn: "O morador assinou o termo de consentimento \\(TCLE\\)"
+# To the end of the form: the last button sits behind the tablet's task bar until then.
+- scroll
+- tapOn: "Instalar"
+# Saved on the tablet: the list of ovitraps shows it waiting.
+- extendedWaitUntil:
+    visible: "Ovitrampa OVT-015"
+    timeout: 30000
+- assertVisible: "Aguardando envio"
+- repeat:
+    while:
+      notVisible: "Sincronizar"
+    times: 4
+    commands:
+      - back
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 1"
+    timeout: 30000
+- setAirplaneMode: disabled
+- extendedWaitUntil:
+    visible: "Sincronizar"
+    timeout: 30000
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 0"
+    timeout: 60000
+- assertVisible: "Precisam de atenção: 0"
+- runScript:
+    file: scripts/expect-accepted.js
+    env:
+      EXPECT: '{ "ovitrap_installation": 1 }'

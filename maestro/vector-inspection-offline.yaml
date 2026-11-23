@@ -1,0 +1,138 @@
+# The endemic agent's bulletin (35a), offline: from "Imóveis a visitar", an LI of routine at a property due with no
+# link, worked, with one deposit of A1 (2 existing, 1 with water, 1 with larvae), one sample whose label shows on the
+# screen, a focal measure with its product and the educational action. The visit waits on the tablet; one sync sends
+# it, and the server got the bulletin with its sample and without the reasons the api derives (34–37).
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "profile": "ace" }'
+- runFlow: common/pair-ace.yaml
+- setAirplaneMode: enabled
+- tapOn: "Imóveis a visitar"
+# The property of the agent's micro-area with no profile: "nunca trabalhado", no LIRAa nor blockade to link.
+- extendedWaitUntil:
+    visible: "Rua das Acácias, 45"
+    timeout: 30000
+- tapOn:
+    text: "Registrar visita"
+    below: "Rua das Acácias, 45"
+- extendedWaitUntil:
+    visible: "Nova visita"
+    timeout: 30000
+- scrollUntilVisible:
+    element: "Boletim do agente de endemias"
+    centerElement: true
+- scrollUntilVisible:
+    element: "LI — Levantamento de índice"
+    centerElement: true
+- tapOn: "LI — Levantamento de índice"
+# The work type starts as routine ("Rotina" marked): touching it again would not change it.
+- assertVisible: "Rotina"
+- scrollUntilVisible:
+    element: "Trabalhado"
+    centerElement: true
+- tapOn: "Trabalhado"
+
+# The deposit.
+- scrollUntilVisible:
+    element: "A1 — Depósito de água elevado"
+    centerElement: true
+- tapOn: "A1 — Depósito de água elevado"
+- tapOn: "Adicionar grupo"
+- scrollUntilVisible:
+    element: "Aumentar Existentes"
+    centerElement: true
+- tapOn: "Aumentar Existentes"
+- tapOn: "Aumentar Existentes"
+- scrollUntilVisible:
+    element: "Aumentar Com água"
+    centerElement: true
+- tapOn: "Aumentar Com água"
+- scrollUntilVisible:
+    element: "Aumentar Com larva"
+    centerElement: true
+- tapOn: "Aumentar Com larva"
+
+# The focal measure, with the larvicide.
+- scrollUntilVisible:
+    element: "Focal \\(larvicida\\)"
+    centerElement: true
+- tapOn: "Focal \\(larvicida\\)"
+- tapOn: "Adicionar medida"
+- scrollUntilVisible:
+    element: "Espinosade 7,48% DT \\(larvicida\\)"
+    centerElement: true
+- tapOn: "Espinosade 7,48% DT \\(larvicida\\)"
+- scrollUntilVisible:
+    element: "Cargas"
+    centerElement: true
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Cargas"
+      VALUE: "1"
+
+# The sample: its label is final as soon as the line is born (the first 8 of the visit's client_uuid, then the number).
+- scrollUntilVisible:
+    element: "Grupo da amostra"
+    centerElement: true
+- tapOn: "A1"
+- tapOn: "Adicionar amostra"
+- scrollUntilVisible:
+    element: "[0-9A-F]{8}-01"
+    centerElement: true
+- scrollUntilVisible:
+    element: "Aumentar Larvas coletadas"
+    centerElement: true
+- tapOn: "Aumentar Larvas coletadas"
+
+- scrollUntilVisible:
+    element: "Ação educativa"
+    centerElement: true
+- tapOn: "Ação educativa"
+# To the end of the form: the last button sits behind the tablet's task bar until then.
+- scrollUntilVisible:
+    element: "Registrar visita"
+    timeout: 60000
+- scroll
+- scroll
+- tapOn: "Registrar visita"
+# Saved on the tablet: the day's list shows it waiting, with the label to write on the tube (Q58).
+- extendedWaitUntil:
+    visible: "Minhas visitas de hoje"
+    timeout: 60000
+- assertVisible: "Aguardando envio"
+- assertVisible: "Etiquete os tubitos: [0-9A-F]{8}-01"
+- repeat:
+    while:
+      notVisible: "Sincronizar"
+    times: 3
+    commands:
+      - back
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 1"
+    timeout: 30000
+- setAirplaneMode: disabled
+- extendedWaitUntil:
+    visible: "Sincronizar"
+    timeout: 30000
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 0"
+    timeout: 60000
+- assertVisible: "Precisam de atenção: 0"
+- runScript:
+    file: scripts/expect-accepted.js
+    env:
+      EXPECT: '{ "home_visit": 1 }'
+- runScript:
+    file: scripts/expect-vector.js
+    env:
+      EXPECT: '{ "inspections": 1, "samples": 1, "bodies_with_derived_reasons": 0 }'
