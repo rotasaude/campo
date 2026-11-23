@@ -13,6 +13,7 @@ import { collectionTarget, vectorRepo } from "../../db/repos/vectorRepo";
 import type { Db } from "../../db/types";
 import type { ReadingCondition } from "../../rules/ovitrap";
 import { enqueue, resend, type Dep } from "../../sync/outbox";
+import { AWAITING_LABELS } from "../vector/profile";
 
 // One transaction: the item and the local row go together or not at all.
 export async function installOvitrap(db: Db, input: { householdKey: string; number: string; clientUuid: string; today: string }): Promise<string> {
@@ -30,12 +31,13 @@ export async function installOvitrap(db: Db, input: { householdKey: string; numb
     }
     // The bulletins still in the line that set this household's block: the api must apply them first (Q10). A refused
     // one gave nothing (the same rule as readLocalBulletins, src/features/vector/profile.ts): citing it would hold the
-    // installation behind a refusal.
+    // installation behind a refusal. One waiting for new labels (sample_label_taken, Q62(a)) still gives the block: it
+    // goes again with it, the relabel moves the dependency to its new uuid, and a discard takes this installation along.
     const gave = await tx.all<{ client_uuid: string }>(
       `SELECT v.client_uuid FROM local_visits v JOIN outbox o ON o.client_uuid = v.client_uuid
-       WHERE o.type = 'home_visit' AND o.state NOT IN ('needs_attention', 'conflict')
+       WHERE o.type = 'home_visit' AND (o.state NOT IN ('needs_attention', 'conflict') OR (o.state = 'needs_attention' AND o.error = ?))
          AND json_extract(v.summary, '$.household') = ? AND json_extract(v.summary, '$.vector.city_block_id') IS NOT NULL ORDER BY o.seq`,
-      [input.householdKey]);
+      [AWAITING_LABELS, input.householdKey]);
     for (const visit of gave) deps.push({ client_uuid: visit.client_uuid, kind: "cite" });
     Object.assign(body, { number: input.number, consent: true, installed_on: input.today });
 

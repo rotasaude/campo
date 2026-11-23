@@ -94,3 +94,13 @@ test("an accepted bulletin does not override a newer download; it only fills wha
   await downloaded(db, { ...NO_PROFILE, risk_class: "green" });
   expect(await readProfile(db, HH)).toMatchObject({ city_block_id: BLOCK, risk_class: "green" });
 });
+
+// Q62(a): waiting for new labels is not a refusal of the block: the bulletin goes again with the same block.
+test("a bulletin refused with sample_label_taken still sets the block and the risk", async () => {
+  const db = await endemicTablet({ household: WITH_NEIGHBORHOOD });
+  await save(db, { city_block_id: BLOCK, risk_class: "red" });
+  const [item] = await outboxRepo.all(db);
+  await applyResults(db, [item], [rejected(item, "sample_label_taken", { path: "vector_inspection.samples[0]" })], { onStale: async () => undefined });
+  expect(await readProfile(db, HH)).toMatchObject({ city_block_id: BLOCK, risk_class: "red" });
+  expect((await readInspectionFacts(db, HH)).blocks).toBeNull();
+});

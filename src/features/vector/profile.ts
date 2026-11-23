@@ -21,24 +21,31 @@ const EMPTY: VectorProfile = { city_block_id: null, risk_class: null, last_worke
 type Set = Pick<VisitVectorSummary, "city_block_id" | "risk_class">;
 
 // A bulletin of this tablet that still counts for the place: waiting in the line (pending, sending, or blocked behind
-// what it cites) or accepted (the sheet keeps today's only, src/sync/retention.ts). A refused one (needs attention) and
-// a withdrawn one are left out. `day`: the visit's city day; `acceptedAt`: when the acceptance came back (the device's
+// what it cites, or refused with sample_label_taken: it waits only for "Gerar etiquetas novas" and goes again as it is,
+// Q62(a)) or accepted (the sheet keeps today's only, src/sync/retention.ts). Any other refusal (needs attention) and a
+// withdrawn one are left out. `day`: the visit's city day; `acceptedAt`: when the acceptance came back (the device's
 // clock, src/sync/dispatch.ts); `liraaDrawItemId`: the LIRAa item it inspects, from the sheet (Q47(b)) or, for a visit
 // saved before the sheet kept it, from the line while it waits.
+// Refused, but only for the labels of its tubes: the same bulletin goes again under a new client_uuid (relabel.ts).
+export const AWAITING_LABELS = "sample_label_taken";
+const refused = (state: string | null, error: string | null): boolean => state === "needs_attention" && error !== AWAITING_LABELS;
+
 export interface LocalBulletin {
   householdKey: string; day: string; state: "waiting" | "accepted"; acceptedAt: string | null; vector: VisitVectorSummary; liraaDrawItemId: string | null;
 }
 
 // Oldest first.
 export async function readLocalBulletins(db: Db): Promise<LocalBulletin[]> {
-  const visits = await db.all<{ city_day: string; summary: string; state: string; accepted_at: string | null; queued: string | null; body: string | null }>(
-    `SELECT v.city_day, v.summary, v.state, v.accepted_at, o.state AS queued, o.body FROM local_visits v LEFT JOIN outbox o ON o.client_uuid = v.client_uuid
+  const visits = await db.all<{
+    city_day: string; summary: string; state: string; accepted_at: string | null; queued: string | null; error: string | null; body: string | null;
+  }>(
+    `SELECT v.city_day, v.summary, v.state, v.accepted_at, o.state AS queued, o.error, o.body FROM local_visits v LEFT JOIN outbox o ON o.client_uuid = v.client_uuid
      WHERE v.state IN ('pending', 'accepted') ORDER BY v.occurred_at, v.client_uuid`);
   const bulletins: LocalBulletin[] = [];
   for (const visit of visits) {
     const summary = JSON.parse(visit.summary) as Partial<VisitSummary>;
     if (typeof summary.household !== "string" || !summary.vector) continue;
-    if (visit.state !== "accepted" && (visit.queued === null || visit.queued === "needs_attention")) continue;
+    if (visit.state !== "accepted" && (visit.queued === null || refused(visit.queued, visit.error))) continue;
     const inspection = visit.body === null ? null : (JSON.parse(visit.body) as { vector_inspection?: { liraa_draw_item_id?: string } }).vector_inspection;
     bulletins.push({
       householdKey: summary.household, day: visit.city_day, state: visit.state === "accepted" ? "accepted" : "waiting",

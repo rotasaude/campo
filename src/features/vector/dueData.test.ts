@@ -9,7 +9,9 @@ import { applyResults } from "../../sync/dispatch";
 import { applyPage } from "../../sync/download";
 import { accepted, newUuid, rejected } from "../../sync/testing";
 import { AREA, BLOCK, HH, LIRAA_ITEM, NEIGHBORHOOD, TRANSMISSION_BLOCK, endemicTablet, loadedTablet } from "../testing";
+import { relabelVisit } from "../visits/relabel";
 import { saveVisit } from "../visits/save";
+import { removeUnsent } from "../../sync/outbox";
 import { loadDue } from "./dueData";
 
 const NOW = Date.parse("2026-11-14T15:00:00Z"); // 12:00 of 2026-11-14 in the city (-180)
@@ -230,4 +232,45 @@ test("Q61: no horizon recorded yet → the old rule, against last_download_ok_at
   expect((await reasons(db))[0]).toEqual([HH, "liraa", "2027-01-02"]);
   await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T12:00:00.000Z");
   expect((await reasons(db))[0]).toEqual([HH, "pending", "2027-01-02"]);
+});
+
+// Q62(a): a bulletin refused with sample_label_taken waits for "Gerar etiquetas novas": it counts as queued — the LIRAa
+// item stays consumed, the situation holds. Every other refusal still counts for nothing.
+async function waitingForLabels(db: Db): Promise<number> {
+  await closeBlockade(db);
+  await save(db, HH, { activity: "liraa", liraa_draw_item_id: LIRAA_ITEM, situation: "closed" });
+  const item = (await outboxRepo.all(db)).find((i) => i.type === "home_visit")!;
+  await applyResults(db, [item], [rejected(item, "sample_label_taken", { path: "vector_inspection.samples[0]" })], { onStale: async () => undefined });
+  return item.seq;
+}
+
+test("Q62: refused with sample_label_taken → no LIRAa card for its item, the situation held", async () => {
+  const db = await sheet();
+  await waitingForLabels(db);
+  expect((await reasons(db)).filter(([key]) => key === HH)).toEqual([[HH, "pending", "2027-01-02"]]);
+});
+
+test("Q62: relabelled → back in the line, still consumed", async () => {
+  const db = await sheet();
+  const seq = await waitingForLabels(db);
+  // A new uuid whose first eight characters differ (the labels are made from them).
+  await relabelVisit(db, seq, () => "abcdef01-0000-4000-8000-000000000062");
+  expect((await outboxRepo.bySeq(db, seq))!.state).toBe("pending");
+  expect((await reasons(db)).filter(([key]) => key === HH)).toEqual([[HH, "pending", "2027-01-02"]]);
+});
+
+test("Q62: discarded → the household is back on the sheet as LIRAa", async () => {
+  const db = await sheet();
+  const seq = await waitingForLabels(db);
+  await removeUnsent(db, (await outboxRepo.bySeq(db, seq))!.client_uuid);
+  expect((await reasons(db)).filter(([key]) => key === HH)).toEqual([[HH, "liraa", "2027-01-02"]]);
+});
+
+test("Q62: another refusal of the bulletin still counts for nothing", async () => {
+  const db = await sheet();
+  await closeBlockade(db);
+  await save(db, HH, { activity: "liraa", liraa_draw_item_id: LIRAA_ITEM, situation: "closed" });
+  const item = (await outboxRepo.all(db)).find((i) => i.type === "home_visit")!;
+  await applyResults(db, [item], [rejected(item, "vector_inspection_invalid", { path: "vector_inspection.situation" })], { onStale: async () => undefined });
+  expect((await reasons(db)).filter(([key]) => key === HH)).toEqual([[HH, "liraa", "2027-01-02"]]);
 });

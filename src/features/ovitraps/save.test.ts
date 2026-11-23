@@ -171,3 +171,21 @@ test("a refused bulletin that gave the block is no dependency of a new installat
   expect([installation.depends_on, installation.state]).toEqual([[], "pending"]);
   expect(selectBatch(await all(db)).map((i) => i.type)).toEqual(["ovitrap_installation"]);
 });
+
+// Q62(a): a bulletin waiting for new labels still gives the block (readProfile), so the installation the form now allows
+// must wait for it — sent first, the api would refuse household_without_block. A relabel moves the dependency to the new
+// uuid (relabel.ts), and a discard takes the installation with the bulletin that gave its block.
+test("a bulletin waiting for new labels that set the block is a dependency of a new installation", async () => {
+  const db = await endemicTablet({ household: { vector: NO_PROFILE, address: ADDRESS } });
+  const visit = newUuid();
+  await saveVisit(db, draft(), {
+    clientUuid: visit, teamId: "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b", location: null, visitBody: rules.visitBody, newUuid, now: () => NOW,
+    vectorInspection: { activity: "li", work_type: "routine", situation: "worked", educational_action: false, city_block_id: BLOCK } as never,
+  });
+  const [item] = await all(db);
+  await applyResults(db, [item], [rejected(item, "sample_label_taken", { path: "vector_inspection.samples[0]" })], noStale);
+  await installOvitrap(db, { householdKey: HH, number: "OVT-015", clientUuid: U1, today: "2026-11-14" });
+  await refreshBlocked(db);
+  const installation = (await all(db)).find((i) => i.type === "ovitrap_installation")!;
+  expect([installation.depends_on, installation.state]).toEqual([[{ client_uuid: visit, kind: "cite" }], "blocked"]);
+});
