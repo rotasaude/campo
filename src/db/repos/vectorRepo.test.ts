@@ -85,3 +85,29 @@ test("an ovitrap that is not active, a LIRAa item that is not pending and a clos
   await vectorRepo.putTransmissionBlock(db, { ...TB, status: "closed" });
   for (const table of ["ovitraps", "liraa_items", "transmission_blocks"]) expect([table, await count(db, table)]).toEqual([table, 0]);
 });
+
+// ── Task 9: the ovitrap installed on the tablet ──
+const U1 = "c0ffee64-0000-4000-8000-000000000064";
+const installed = (db: Db) => vectorRepo.putInstalled(db, { clientUuid: U1, householdKey: OV.household_id, householdId: OV.household_id, number: "OVT-015", installedOn: "2026-11-08" });
+const rowsOf = (db: Db) => db.all<{ key: string; id: string | null; client_uuid: string | null; body: string }>("SELECT key, id, client_uuid, body FROM ovitraps ORDER BY key");
+
+test("acceptInstallation: the row takes the server id in the column and in the body (review M6)", async () => {
+  const db = await createTestDb();
+  await installed(db);
+  expect(JSON.parse((await rowsOf(db))[0].body).id).toBe(U1);
+  await vectorRepo.acceptInstallation(db, U1, uuid(70));
+  const [row] = await rowsOf(db);
+  expect([row.key, row.id, row.client_uuid, (JSON.parse(row.body) as OvitrapBody).id]).toEqual([U1, uuid(70), U1, uuid(70)]);
+});
+
+test("acceptInstallation after a download already brought the ovitrap: the tablet-born row goes, the server's keeps the client_uuid (review M1)", async () => {
+  const db = await createTestDb();
+  await installed(db);
+  await vectorRepo.putOvitrap(db, { ...OV, id: uuid(70), number: "OVT-015" });
+  expect((await rowsOf(db)).map((r) => r.key)).toEqual([uuid(70), U1]);
+  await vectorRepo.acceptInstallation(db, U1, uuid(70));
+  expect((await rowsOf(db)).map((r) => [r.key, r.id, r.client_uuid])).toEqual([[uuid(70), uuid(70), U1]]);
+  // A collection still naming it by the installation's client_uuid finds the server's row.
+  await vectorRepo.acceptCollection(db, { ovitrap_client_uuid: U1, collected_on: "2026-11-14", condition: "ok", reinstall: true, remove: false });
+  expect((JSON.parse((await rowsOf(db))[0].body) as OvitrapBody).open_reading).toEqual({ installed_on: "2026-11-14" });
+});

@@ -10,21 +10,26 @@ import type { Db } from "../../db/types";
 import { paddleWindowText } from "../../rules/ovitrap";
 import { loadReference } from "../../sync/reference";
 import { SIZES, useTheme } from "../../theme/theme";
-import { Body, Button, Muted, Screen, Title } from "../../ui/components";
+import { Body, Button, Muted, Notice, Screen, Title } from "../../ui/components";
 import { WAITING } from "../households/HouseholdList";
 import { addressShort } from "../households/view";
-import { OVITRAP_TABLES, readOvitraps } from "./view";
+import { ITEM_STATE_LABEL } from "../outbox/OutboxScreen";
+import { canUseOvitraps, loadSession } from "../session";
+import { NOT_FOR_YOU } from "./InstallForm";
+import { OVITRAP_TABLES, readOvitraps, type OvitrapView } from "./view";
 
 export const OVITRAPS_TITLE = "Ovitrampas";
 // The dashboard's OVITRAPS_EMPTY.
 export const OVITRAPS_EMPTY = "nenhuma ovitrampa ativa nesta microárea";
 
-interface Card { key: string; number: string; address: string; paddle: string | null; waiting: boolean }
+interface Card { key: string; number: string; address: string; paddle: string | null; waiting: boolean; held: OvitrapView["held"] }
 interface Group { id: string; title: string; cards: Card[] }
 
-const TABLES = [...OVITRAP_TABLES, "households", "micro_areas", "reference"];
+const TABLES = [...OVITRAP_TABLES, "households", "micro_areas", "reference", "session"];
 
-async function read(db: Db): Promise<Group[]> {
+// The same access as the forms (review M3): the download brings the ovitraps to whoever has the switch on.
+async function read(db: Db): Promise<Group[] | "not_for_you"> {
+  if (!canUseOvitraps(await loadSession(db))) return "not_for_you";
   const reference = await loadReference(db).catch(() => null);
   const params = reference?.vectorDomains?.parameters ?? null;
   const dict = reference?.dictionaries ?? null;
@@ -39,7 +44,7 @@ async function read(db: Db): Promise<Group[]> {
     if (!row || !area) continue;
     area.cards.push({
       key: o.key, number: o.number, address: addressShort(JSON.parse(row.body) as HouseholdBody, dict),
-      paddle: o.installedOn === null ? null : paddleWindowText(o.installedOn, params), waiting: o.waiting,
+      paddle: o.installedOn === null ? null : paddleWindowText(o.installedOn, params), waiting: o.waiting, held: o.held,
     });
   }
   return areas;
@@ -50,6 +55,7 @@ export function OvitrapList({ onCollect }: { onCollect(ovitrapKey: string): void
   const groups = useLive(TABLES, useCallback((db: Db) => read(db), []));
 
   if (!groups) return <Screen title={OVITRAPS_TITLE}><Muted>Carregando…</Muted></Screen>;
+  if (groups === "not_for_you") return <Screen title={OVITRAPS_TITLE}><Notice>{NOT_FOR_YOU}</Notice></Screen>;
   return (
     <Screen title={OVITRAPS_TITLE}>
       {groups.map((group) => (
@@ -62,8 +68,8 @@ export function OvitrapList({ onCollect }: { onCollect(ovitrapKey: string): void
               <Body>{`Ovitrampa ${card.number}`}</Body>
               <Body>{card.address}</Body>
               <Muted>{card.paddle ?? "sem palheta instalada"}</Muted>
-              {card.waiting && <Muted>{WAITING}</Muted>}
-              {card.paddle !== null && <Button label="Coletar palheta" variant="secondary" onPress={() => onCollect(card.key)} />}
+              {card.held !== null ? <Notice tone="warn">{ITEM_STATE_LABEL[card.held]}</Notice> : card.waiting && <Muted>{WAITING}</Muted>}
+              {card.paddle !== null && card.held === null && <Button label="Coletar palheta" variant="secondary" onPress={() => onCollect(card.key)} />}
             </View>
           ))}
         </View>

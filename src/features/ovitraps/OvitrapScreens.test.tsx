@@ -5,6 +5,7 @@ import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
 import { VECTOR_ERRORS } from "../../rules/vectorErrors";
 import { applyResults } from "../../sync/dispatch";
+import { ITEM_STATE_LABEL } from "../outbox/OutboxScreen";
 import { newUuid, rejected } from "../../sync/testing";
 import { AttentionScreen } from "../attention/AttentionScreen";
 import { pathLabel } from "../conflicts/fieldText";
@@ -12,7 +13,7 @@ import { HomeScreen } from "../home/HomeScreen";
 import { HouseholdScreen } from "../households/HouseholdScreen";
 import { HH, endemicTablet, loadedTablet } from "../testing";
 import { CollectForm, LOST_ON_REMOVE, REINSTALL_NOTE } from "./CollectForm";
-import { InstallForm, TCLE_LABEL } from "./InstallForm";
+import { InstallForm, NOT_FOR_YOU, TCLE_LABEL } from "./InstallForm";
 import { OvitrapList } from "./OvitrapList";
 import { collectOvitrap, installOvitrap } from "./save";
 
@@ -212,4 +213,44 @@ describe("precisa de atenção", () => {
       expect(pathLabel(item.type, path)).toBe(label);
       expect(screen.getByText(`Campo: ${label}`)).toBeTruthy();
     });
+});
+
+// Review M3 and M5(c): the list checks access as the forms do; the agent with the switch off gets nothing.
+describe("access", () => {
+  const OFF = { features: { home_visits: true, collective_activities: false, territory_registry: true, vector_control: false } };
+  async function list(db: Db) {
+    await renderWithServices(<OvitrapList onCollect={jest.fn()} />, services(db));
+  }
+
+  test("the ACS opening the list by a link gets the screen's phrase and no ovitrap", async () => {
+    await list(await loadedTablet());
+    expect(await screen.findByText(NOT_FOR_YOU)).toBeTruthy();
+    expect(screen.queryByText(/Ovitrampa /)).toBeNull();
+  });
+
+  test("the endemic agent with the switch off: no button on the household or the home, and the list refuses", async () => {
+    const db = await endemicTablet({ session: OFF });
+    const view = await household(db);
+    expect(screen.queryByRole("button", { name: "Instalar ovitrampa" })).toBeNull();
+    await view.unmount();
+    const homeView = await home(db);
+    expect(screen.queryByRole("button", { name: "Ovitrampas" })).toBeNull();
+    await homeView.unmount();
+    await list(db);
+    expect(await screen.findByText(NOT_FOR_YOU)).toBeTruthy();
+    expect(screen.queryByText("Ovitrampa OVT-014")).toBeNull();
+  });
+});
+
+// Review M2: an ovitrap waiting for the person says so and offers no collection.
+test("a refused collection: the card says it needs attention and offers no collection", async () => {
+  const db = await endemicTablet();
+  await collectOvitrap(db, { ovitrapKey: OV, condition: "ok", remove: false, today: "2026-11-16", newUuid });
+  const [item] = await items(db);
+  await applyResults(db, [item], [rejected(item, "collection_out_of_range", { path: "collected_on" })], { onStale: async () => undefined });
+  await renderWithServices(<OvitrapList onCollect={jest.fn()} />, services(db));
+  const card = within(await screen.findByTestId(`ovitrap-${OV}`));
+  expect(card.getByText(ITEM_STATE_LABEL.needs_attention)).toBeTruthy();
+  expect(card.queryByText("Aguardando envio")).toBeNull();
+  expect(card.queryByRole("button", { name: "Coletar palheta" })).toBeNull();
 });

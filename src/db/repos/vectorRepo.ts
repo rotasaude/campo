@@ -108,8 +108,8 @@ export const vectorRepo = {
   },
 
   // An ovitrap installed on this tablet (Task 9): its local row, under the installation's client_uuid, until the server
-  // gives it an id. The body is the download's shape, made here: `id` holds the client_uuid until the download brings
-  // the server's ovitrap, which overwrites the row by client_ids (putOvitrap).
+  // gives it an id. The body is the download's shape, made here: `id` holds the client_uuid until the acceptance gives
+  // the server's (acceptInstallation); the download then overwrites the row by id or client_ids (putOvitrap).
   async putInstalled(db: Db, row: { clientUuid: string; householdKey: string; householdId: string; number: string; installedOn: string }): Promise<void> {
     const body: OvitrapBody = {
       id: row.clientUuid, number: row.number, household_id: row.householdId, status: "active",
@@ -126,10 +126,20 @@ export const vectorRepo = {
     await db.run("UPDATE ovitraps SET number = ?, body = ? WHERE key = ?", [number, JSON.stringify({ ...(JSON.parse(row.body) as OvitrapBody), number }), key]);
   },
 
-  // The installation accepted: the row gets the server's id (the `id` of the result is the ovitrap's, Q7(2)), so the
-  // download finds it by id as well as by client_ids. A row that already has that id (a download in between) wins.
+  // The installation accepted: the row gets the server's id (the `id` of the result is the ovitrap's, Q7(2)), in the
+  // column and in the body, so the download finds it by id as well as by client_ids and a reader of the body sees the
+  // server's id. A row that already has that id (a download in between) wins: the tablet-born row goes, and the winner
+  // takes the installation's client_uuid, so what the line still names by it (a collection) keeps finding the ovitrap.
   async acceptInstallation(db: Db, key: string, id: string): Promise<void> {
-    await db.run("UPDATE ovitraps SET id = ? WHERE key = ? AND id IS NULL AND NOT EXISTS (SELECT 1 FROM ovitraps WHERE id = ?)", [id, key, id]);
+    const born = await db.get<{ client_uuid: string | null; body: string }>("SELECT client_uuid, body FROM ovitraps WHERE key = ? AND id IS NULL", [key]);
+    if (!born) return;
+    const winner = await db.get<{ key: string }>("SELECT key FROM ovitraps WHERE id = ?", [id]);
+    if (winner) {
+      await db.run("DELETE FROM ovitraps WHERE key = ?", [key]);
+      await db.run("UPDATE ovitraps SET client_uuid = ? WHERE key = ? AND client_uuid IS NULL", [born.client_uuid, winner.key]);
+      return;
+    }
+    await db.run("UPDATE ovitraps SET id = ?, body = ? WHERE key = ?", [id, JSON.stringify({ ...(JSON.parse(born.body) as OvitrapBody), id }), key]);
   },
 
   // A collection accepted: the row shows it until the download brings the ovitrap. Removed → the row goes (the api ends
@@ -139,7 +149,7 @@ export const vectorRepo = {
     const ref = collectionTarget(body);
     if (ref === null) return;
     const c = body as unknown as OvitrapCollectionItemBody;
-    const row = await db.get<{ key: string; body: string }>("SELECT key, body FROM ovitraps WHERE id = ? OR key = ?", [ref, ref]);
+    const row = await db.get<{ key: string; body: string }>("SELECT key, body FROM ovitraps WHERE id = ? OR key = ? OR client_uuid = ?", [ref, ref, ref]);
     if (!row) return;
     if (c.remove === true) {
       await db.run("DELETE FROM ovitraps WHERE key = ?", [row.key]);

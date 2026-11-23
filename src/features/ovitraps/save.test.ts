@@ -126,3 +126,20 @@ test("correctNumber: the same client_uuid back in the line with the new number, 
   expect([again.client_uuid, again.state, again.error, again.body.number]).toEqual([U1, "pending", null, "OVT-016"]);
   expect((await readOvitraps(db)).find((o) => o.key === U1)?.number).toBe("OVT-016");
 });
+
+// Review M5(b, d): both cites on one item, and the household_client_uuid variant against the schema.
+test("the installation in a household born on the tablet whose queued bulletin gave the block cites both, and is valid", async () => {
+  const db = await endemicTablet();
+  const { household_id: _id, version: _version, ...fields } = example<UploadRequest>("upload-household-location.json").items[0].body as HouseholdItemBody;
+  const born = await saveHousehold(db, { fields: fields as never }, { newUuid, now: () => NOW });
+  const visit = await saveVisit(db, draft({ place: { kind: "household", householdId: born.key, propertyType: "1", microAreaId: AREA } }), {
+    clientUuid: newUuid(), teamId: "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b", location: null, visitBody: rules.visitBody, newUuid, now: () => NOW,
+    vectorInspection: { activity: "li", work_type: "routine", situation: "worked", educational_action: false, city_block_id: BLOCK } as never,
+  });
+  await installOvitrap(db, { householdKey: born.key, number: "OVT-015", clientUuid: U1, today: "2026-11-14" });
+  const installation = (await all(db)).find((i) => i.type === "ovitrap_installation")!;
+  expect(installation.depends_on).toEqual([{ client_uuid: born.clientUuid, kind: "cite" }, { client_uuid: visit, kind: "cite" }]);
+  expectValid("upload-request", { items: [{ client_uuid: installation.client_uuid, type: installation.type, body: installation.body }] });
+  // The queue sends them in order: the household, the visit, then the installation.
+  expect(selectBatch(await all(db)).map((i) => i.type)).toEqual(["household", "home_visit", "ovitrap_installation"]);
+});

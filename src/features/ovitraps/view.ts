@@ -13,6 +13,9 @@ export interface OvitrapView {
   installedOn: string | null;
   // Its installation or a collection still waits in the line.
   waiting: boolean;
+  // One of them waits for the person (refused) or is held behind one that does (review M2): the screen points to
+  // "precisa de atenção" and offers no collection.
+  held: "needs_attention" | "blocked" | null;
 }
 
 export const OVITRAP_TABLES = ["ovitraps", "outbox"];
@@ -25,15 +28,15 @@ export async function readOvitraps(db: Db, householdKey?: string): Promise<Ovitr
     const refs = new Set([row.id, row.client_uuid].filter((ref): ref is string => ref !== null));
     let installedOn = row.body.open_reading?.installed_on ?? null;
     let removed = false;
-    let waiting = row.client_uuid !== null && queue.some((item) => item.client_uuid === row.client_uuid);
-    for (const item of queue) {
-      const target = item.type === "ovitrap_collection" ? collectionTarget(item.body) : null;
-      if (target === null || !refs.has(target)) continue;
-      waiting = true;
+    const mine = queue.filter((item) => (row.client_uuid !== null && item.client_uuid === row.client_uuid)
+      || (item.type === "ovitrap_collection" && refs.has(collectionTarget(item.body) ?? "")));
+    for (const item of mine) {
+      if (item.type !== "ovitrap_collection") continue;
       if (item.body.remove === true) removed = true;
       else installedOn = String(item.body.collected_on);
     }
-    if (!removed) views.push({ key: row.key, id: row.id, number: row.number, householdKey: row.household_key, installedOn, waiting });
+    const held = mine.some((item) => item.state === "needs_attention") ? "needs_attention" : mine.some((item) => item.state === "blocked") ? "blocked" : null;
+    if (!removed) views.push({ key: row.key, id: row.id, number: row.number, householdKey: row.household_key, installedOn, waiting: mine.length > 0, held });
   }
   return views;
 }
