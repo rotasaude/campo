@@ -90,6 +90,24 @@ test("a complete download tells the screens about meta once the moment of the la
   expect(seen.at(-1)).toBe("2026-11-16T12:00:00.000Z");
 });
 
+// Q61: the api serves up to its now − 2 s (field_sync/changes.rb), so what the download covers is what was written before
+// the first page's request less 2 s — not the end of the download.
+test("a complete download records its horizon: the first page's request time in the server's clock, less 2 s", async () => {
+  const db = await createTestDb();
+  let clock = Date.parse("2026-11-14T18:00:00Z");
+  const pages = [FIRST, LAST];
+  const client = { changes: jest.fn(async () => { clock += 60_000; return pages.shift()!; }) };
+  await downloadAll({ db, client, now: () => clock });
+  expect(await meta(db, "last_download_horizon_at")).toBe("2026-11-14T17:59:58.000Z");
+  expect(await meta(db, "last_download_ok_at")).toBe("2026-11-14T18:02:00.000Z");
+  // In the server's clock, as last_download_ok_at.
+  const behind = await createTestDb();
+  await behind.run("UPDATE meta SET value = ? WHERE key = 'clock_skew_ms'", [String(10 * 86_400_000)]);
+  const again = [FIRST, LAST];
+  await downloadAll({ db: behind, client: { changes: async () => again.shift()! }, now: () => Date.parse("2026-11-04T18:00:00Z") });
+  expect(await meta(behind, "last_download_horizon_at")).toBe("2026-11-14T17:59:58.000Z");
+});
+
 test("an HTTP failure in the middle keeps what was applied and does not claim a full download", async () => {
   const db = await createTestDb();
   const client = { changes: jest.fn().mockResolvedValueOnce(FIRST).mockRejectedValueOnce(new FieldHttpError({ kind: "network" })) };
@@ -97,6 +115,7 @@ test("an HTTP failure in the middle keeps what was applied and does not claim a 
   expect(await count(db, "households")).toBe(1);
   expect(await meta(db, "cursor")).toBe(FIRST.next_cursor);
   expect(await meta(db, "last_download_ok_at")).toBeNull();
+  expect(await meta(db, "last_download_horizon_at")).toBeNull();
 });
 
 test("reset wipes territory but never the outbox", async () => {

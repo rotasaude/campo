@@ -76,15 +76,27 @@ export async function applyPage(db: Db, page: ChangesResponse, options: { starts
 }
 
 // A FieldHttpError goes up to the round; the pages already applied stay, and the next call continues from the cursor.
+// The api serves only what was written up to its now − 2 s (apps/api field_sync/changes.rb). What a download covers is
+// what the server had written up to the first page's request less that margin: its horizon (Q61).
+export const SERVER_FEED_LAG_MS = 2_000;
+export const HORIZON_KEY = "last_download_horizon_at";
+
 export async function downloadAll(deps: { db: Db; client: Pick<FieldClient, "changes">; now: () => number }): Promise<{ complete: boolean }> {
+  let horizon: number | null = null;
   for (let first = true; ; first = false) {
     const cursor = await territoryRepo.getMeta(deps.db, "cursor");
+    if (first) horizon = (await readTrustedNow(deps.db, deps.now())) - SERVER_FEED_LAG_MS;
     const page = await deps.client.changes(cursor);
     await applyPage(deps.db, page, { startsOver: first && cursor === null });
     if (!page.has_more) break;
   }
-  // Only a download that reached the end counts for the 30-day retention, written in the server's time (campo#2).
-  await territoryRepo.setMeta(deps.db, "last_download_ok_at", new Date(await readTrustedNow(deps.db, deps.now())).toISOString());
+  // Only a download that reached the end counts for the 30-day retention, written in the server's time (campo#2), and
+  // only then its horizon (what judges the bulletins accepted on this tablet, src/features/vector/dueData.ts).
+  const okAt = new Date(await readTrustedNow(deps.db, deps.now())).toISOString();
+  await deps.db.tx(async (tx) => {
+    await territoryRepo.setMeta(tx, "last_download_ok_at", okAt);
+    await territoryRepo.setMeta(tx, HORIZON_KEY, new Date(horizon!).toISOString());
+  });
   // The pages told the screens about the territory before this was written: the ones that show it are told now.
   dbEvents.emit("meta");
   return { complete: true };

@@ -29,7 +29,7 @@ async function fill(db: Db): Promise<void> {
     INSERT INTO liraa_items (id, survey_id, household_id, city_block_id, status, version, body) VALUES ('li1', 'sv1', 'hh1', 'cb1', 'pending', 1, '{}');
     INSERT INTO ovitraps (key, id, household_key, number, status, version, body) VALUES ('ov1', 'ov1', 'hh1', 'OVT-1', 'active', 1, '{}');
     INSERT INTO transmission_blocks (id, status, version, body) VALUES ('tb1', 'active', 1, '{}');
-    INSERT INTO meta (key, value) VALUES ('cursor', 'abc'), ('last_download_ok_at', 't'), ('session_host', 'curitiba.rotasaude.app');
+    INSERT INTO meta (key, value) VALUES ('cursor', 'abc'), ('last_download_ok_at', 't'), ('last_download_horizon_at', 't'), ('session_host', 'curitiba.rotasaude.app');
   `);
 }
 const count = async (db: Db, table: string) => (await db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`))!.n;
@@ -53,7 +53,7 @@ test("wipeTerritory for the restart keeps the accepted visits and the last downl
   for (const table of WIPED.filter((t) => !["local_visits", "local_activities"].includes(t))) expect([table, await count(db, table)]).toEqual([table, 0]);
   for (const table of [...KEPT, "local_visits", "local_activities"]) expect([table, await count(db, table)]).toEqual([table, 1]);
   const meta = (await db.all<{ key: string }>("SELECT key FROM meta ORDER BY key")).map((row) => row.key);
-  expect(meta).toEqual(["clock_skew_ms", "last_download_ok_at", "mobile_data", "schema_version", "session_host"]);
+  expect(meta).toEqual(["clock_skew_ms", "last_download_horizon_at", "last_download_ok_at", "mobile_data", "schema_version", "session_host"]);
 });
 
 // campo#2: the clock the 30 days are counted on is not territory. Losing it would let a clock set back hide the age.

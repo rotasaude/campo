@@ -187,3 +187,47 @@ test("an accepted LIRAa bulletin at or before the last good download does not co
   await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T13:00:00.000Z");
   expect((await reasons(db))[0]).toEqual([HH, "liraa", "2027-01-02"]);
 });
+
+// Q61: the download of the round that sent the bulletin does not bring what the api wrote in its last 2 s, and ends
+// after the acceptance. The acceptance is judged against what the download covers (its horizon), not against its end.
+async function horizonAt(db: Db, horizon: string | null): Promise<void> {
+  await db.run("DELETE FROM meta WHERE key = 'last_download_horizon_at'");
+  if (horizon !== null) await db.run("INSERT INTO meta (key, value) VALUES ('last_download_horizon_at', ?)", [horizon]);
+}
+async function inspectedItem(db: Db): Promise<void> {
+  const item = page().items.find((candidate) => candidate.type === "liraa_item")!;
+  await applyPage(db, { ...page(), items: [{ ...item, version: 9, body: { ...(item.body as Record<string, unknown>), status: "inspected", version: 9 } }] } as unknown as ChangesResponse);
+}
+
+test("Q61: a LIRAa bulletin accepted in the round whose download does not bring the item: not back as LIRAa, the situation kept", async () => {
+  const db = await sheet();
+  await closeBlockade(db);
+  await save(db, HH, { activity: "liraa", liraa_draw_item_id: LIRAA_ITEM, situation: "closed" });
+  // Accepted at 13:00:00; the download began at 13:00:01 (horizon 12:59:59) and ended at 13:00:03.
+  await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T13:00:03.000Z");
+  await horizonAt(db, "2026-11-14T12:59:59.000Z");
+  expect((await reasons(db)).filter(([key]) => key === HH)).toEqual([[HH, "pending", "2027-01-02"]]);
+});
+
+test("Q61: the next download brings the item inspected: the local summary stops counting, one card, not back", async () => {
+  const db = await sheet();
+  await closeBlockade(db);
+  await save(db, HH, { activity: "liraa", liraa_draw_item_id: LIRAA_ITEM, situation: "closed" });
+  await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T13:10:03.000Z");
+  await inspectedItem(db);
+  await household(db, HH, "120", { vector: { city_block_id: BLOCK, risk_class: "yellow", risk_assessed_on: "2026-11-03", last_worked_on: "2026-11-03", last_situation: "closed" } });
+  await horizonAt(db, "2026-11-14T13:10:00.000Z");
+  expect((await reasons(db)).filter(([key]) => key === HH)).toEqual([[HH, "pending", "2027-01-02"]]);
+  expect(await db.get("SELECT id FROM liraa_items WHERE id = ?", [LIRAA_ITEM])).toBeFalsy();
+});
+
+test("Q61: no horizon recorded yet → the old rule, against last_download_ok_at", async () => {
+  const db = await sheet();
+  await closeBlockade(db);
+  await save(db, HH, { activity: "liraa", liraa_draw_item_id: LIRAA_ITEM, situation: "closed" });
+  await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T13:00:03.000Z");
+  await horizonAt(db, null);
+  expect((await reasons(db))[0]).toEqual([HH, "liraa", "2027-01-02"]);
+  await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T12:00:00.000Z");
+  expect((await reasons(db))[0]).toEqual([HH, "pending", "2027-01-02"]);
+});

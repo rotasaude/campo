@@ -10,8 +10,11 @@
 //   the download has not brought it yet (review I1, Q47(b)). At or before that download, it only fills a situation the download left null —
 //   the download already speaks for the server, an inspection after this one included;
 // - the worked day is the latest of the download's and of these bulletins'.
-// `accepted_at` is the device's clock and `last_download_ok_at` the trusted one (src/sync/trustedTime.ts): the first is
-// brought to the server's by the measured skew before they are compared.
+// "Newer than the last good download" is judged against what that download covers, its horizon (Q61): the api serves
+// only up to its now − 2 s, so the download of the round that sent the bulletin does not bring it, and ends after the
+// acceptance. Without a horizon recorded yet, against the end of that download (last_download_ok_at), as before.
+// `accepted_at` is the device's clock and the horizon the trusted one (src/sync/trustedTime.ts): the first is brought
+// to the server's by the measured skew before they are compared (Q48).
 // A transmission block stays a reason after the visit, as on the api: the list follows the blockade, not the visit.
 // Nothing of a person: the household by its address and type, never who lives there.
 import type { HouseholdBody } from "../../contract";
@@ -56,8 +59,11 @@ export async function loadDue(db: Db, now: number): Promise<{ items: DueEntry[] 
 
   const today = await cityTodayOf(db, now);
   const bulletins = await readLocalBulletins(db);
-  const meta = new Map((await db.all<{ key: string; value: string }>("SELECT key, value FROM meta WHERE key IN ('last_download_ok_at', 'clock_skew_ms')")).map((row) => [row.key, row.value]));
-  const lastOk = meta.has("last_download_ok_at") ? Date.parse(meta.get("last_download_ok_at")!) : null;
+  const meta = new Map((await db.all<{ key: string; value: string }>(
+    "SELECT key, value FROM meta WHERE key IN ('last_download_horizon_at', 'last_download_ok_at', 'clock_skew_ms')")).map((row) => [row.key, row.value]));
+  // What the last good download covers (Q61); a tablet that has not recorded it yet falls back to the end of that download.
+  const covered = meta.get("last_download_horizon_at") ?? meta.get("last_download_ok_at");
+  const lastOk = covered === undefined ? null : Date.parse(covered);
   const skew = Number(meta.get("clock_skew_ms") ?? 0) || 0;
   const fresh = (b: LocalBulletin): boolean => b.state === "accepted" && b.acceptedAt !== null
     && (lastOk === null || Number.isNaN(lastOk) || Date.parse(b.acceptedAt) + skew > lastOk);
