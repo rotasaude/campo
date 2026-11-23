@@ -93,20 +93,6 @@ export const vectorRepo = {
     return rows.map((r) => JSON.parse(r.body) as CityBlockBody).sort((a, b) => natural.compare(a.number, b.number) || a.id.localeCompare(b.id));
   },
 
-  // householdId: the server's (a LIRAa item never names a household born on the tablet).
-  // Two pending items (two surveys drawn the same household): the api picks the oldest by `created_at, id`
-  // (apps/api due.rb); the feed has neither created_at nor drawn_at, so the app picks the lowest id. The divergence is
-  // accepted (Q43): the inspection carries `liraa_draw_item_id`, so nothing is lost.
-  async pendingLiraaItem(db: Db, householdId: string): Promise<LiraaItemBody | null> {
-    const row = await db.get<{ body: string }>("SELECT body FROM liraa_items WHERE household_id = ? AND status = 'pending' ORDER BY id LIMIT 1", [householdId]);
-    return row ? (JSON.parse(row.body) as LiraaItemBody) : null;
-  },
-
-  async activeBlockFor(db: Db, cityBlockId: string): Promise<TransmissionBlockBody | null> {
-    const rows = await db.all<{ body: string }>("SELECT body FROM transmission_blocks WHERE status = 'active' ORDER BY id");
-    return rows.map((r) => JSON.parse(r.body) as TransmissionBlockBody).find((t) => t.block_ids.includes(cityBlockId)) ?? null;
-  },
-
   // An ovitrap installed on this tablet (Task 9): its local row, under the installation's client_uuid, until the server
   // gives it an id. The body is the download's shape, made here: `id` holds the client_uuid until the acceptance gives
   // the server's (acceptInstallation); the download then overwrites the row by id or client_ids (putOvitrap).

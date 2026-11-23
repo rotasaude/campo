@@ -21,6 +21,7 @@ import type { HouseholdBody } from "../../contract";
 import type { Db } from "../../db/types";
 import { dueList, type DueItem, type DueInput } from "../../rules/vectorDue";
 import type { VectorSituation } from "../../rules/vectorDomains";
+import { HORIZON_KEY } from "../../sync/download";
 import { loadReference } from "../../sync/reference";
 import { addressShort, listHouseholds } from "../households/view";
 import { canRecordInspection, cityTodayOf, loadSession } from "../session";
@@ -60,16 +61,19 @@ export async function loadDue(db: Db, now: number): Promise<{ items: DueEntry[] 
   const today = await cityTodayOf(db, now);
   const bulletins = await readLocalBulletins(db);
   const meta = new Map((await db.all<{ key: string; value: string }>(
-    "SELECT key, value FROM meta WHERE key IN ('last_download_horizon_at', 'last_download_ok_at', 'clock_skew_ms')")).map((row) => [row.key, row.value]));
+    "SELECT key, value FROM meta WHERE key IN (?, 'last_download_ok_at', 'clock_skew_ms')", [HORIZON_KEY])).map((row) => [row.key, row.value]));
   // What the last good download covers (Q61); a tablet that has not recorded it yet falls back to the end of that download.
-  const covered = meta.get("last_download_horizon_at") ?? meta.get("last_download_ok_at");
+  const covered = meta.get(HORIZON_KEY) ?? meta.get("last_download_ok_at");
   const lastOk = covered === undefined ? null : Date.parse(covered);
   const skew = Number(meta.get("clock_skew_ms") ?? 0) || 0;
   const fresh = (b: LocalBulletin): boolean => b.state === "accepted" && b.acceptedAt !== null
     && (lastOk === null || Number.isNaN(lastOk) || Date.parse(b.acceptedAt) + skew > lastOk);
   // Waiting, or accepted after the last good download (Q47(b)): a later download already speaks for the server.
   const consumed = new Set(bulletins.flatMap((b) => ((b.state === "waiting" || fresh(b)) && b.vector.activity === "liraa" && b.liraaDrawItemId !== null ? [b.liraaDrawItemId] : [])));
-  // The lowest id first, as vectorRepo.pendingLiraaItem and activeBlockFor (the api picks the oldest; Q43).
+  // A LIRAa item names the server's household (never one born on the tablet). Two pending items (two surveys drawn the
+  // same household): the api picks the oldest by `created_at, id` (apps/api due.rb); the feed has neither created_at nor
+  // drawn_at, so the app picks the lowest id, and the first active blockade by id. The divergence is accepted (Q43): the
+  // inspection carries `liraa_draw_item_id`, so nothing is lost.
   const liraa = new Map<string, string>();
   for (const item of await db.all<{ id: string; household_id: string }>("SELECT id, household_id FROM liraa_items WHERE status = 'pending' ORDER BY id")) {
     if (!consumed.has(item.id) && !liraa.has(item.household_id)) liraa.set(item.household_id, item.id);

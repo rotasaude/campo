@@ -7,6 +7,8 @@
 // numberTaken is the tablet's own: the api refuses a number of another active ovitrap, without case
 // (idx_ovitraps_number = lower(number) among the active) — ovitrap_number_taken at `number` (Q23). The tablet knows the
 // active ovitraps of its scope and the installations still in its line; the server may know others.
+import { fmtDay } from "./homeVisit";
+import { addDays } from "./vectorDue";
 import { VECTOR_ERRORS, type VectorErrorCode } from "./vectorErrors";
 
 export type ReadingCondition = "ok" | "damaged" | "lost" | "dry";
@@ -76,11 +78,6 @@ export const conditionLabel = (code: string): string => (Object.prototype.hasOwn
 // Contract §6: the 5-day target is guidance on screen (the api only checks min and max).
 export const OVITRAP_TARGET_DAYS = 5;
 
-const addDays = (iso: string, n: number): string => new Date(Date.parse(`${iso}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
-const fmtDay = (iso: string): string => {
-  const m = DATE.exec(iso);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
-};
 const dayMonth = (iso: string): string => fmtDay(iso).slice(0, 5);
 
 // "palheta desde 10/11/2026 — colete entre 13/11 e 20/11 (ideal 15/11)"; without the parameters, only the installation.

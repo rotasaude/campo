@@ -5,6 +5,7 @@
 import { DB_NAME } from "../db/open";
 import { QUEUED_OVITRAP } from "../db/repos/queued";
 import type { Db } from "../db/types";
+import { HORIZON_KEY } from "../sync/download";
 import { SECURE_KEYS, type SecureStorePort } from "./secureStore";
 
 export interface FsPort {
@@ -38,7 +39,7 @@ export async function wipeTerritory(db: Db, options: { restart?: boolean } = {})
     await tx.exec(`DELETE FROM ovitraps WHERE NOT (${QUEUED_OVITRAP})`);
     await tx.run("DELETE FROM meta WHERE key = ?", ["cursor"]);
     if (options.restart === true) return;
-    await tx.run("DELETE FROM meta WHERE key IN (?, ?)", ["last_download_ok_at", "last_download_horizon_at"]);
+    await tx.run("DELETE FROM meta WHERE key IN (?, ?)", ["last_download_ok_at", HORIZON_KEY]);
     await tx.exec("DELETE FROM local_visits WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
     await tx.exec("DELETE FROM local_activities WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
   });

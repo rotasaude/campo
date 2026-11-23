@@ -96,7 +96,8 @@ export const ERROR_PHRASES: Record<string, string> = {
 };
 
 // Codes the 35a items share with the 24c (registry, home visit, HTTP): the table is keyed by code alone, so they keep
-// the 24c phrase above and not the VECTOR_ERRORS one (the screens show VECTOR_ERRORS for their own checks).
+// the 24c phrase above and not the VECTOR_ERRORS one (the screens show VECTOR_ERRORS for their own checks). Read by the
+// spec only: it pins the list, so that a code new in both tables has its phrase chosen, never taken by accident.
 export const SHARED_24C_CODES: readonly string[] = ["cbo_not_allowed", "feature_disabled", "invalid_transition"];
 
 // The code is a contract identifier (letters, digits, underscore): anything else is not echoed.

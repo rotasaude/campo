@@ -13,6 +13,7 @@ const OV = bodyOf<OvitrapBody>("ovitrap");
 const LI = bodyOf<LiraaItemBody>("liraa_item");
 const TB = bodyOf<TransmissionBlockBody>("transmission_block");
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const bodyIn = async <T,>(db: Db, table: string) => JSON.parse((await db.get<{ body: string }>(`SELECT body FROM ${table}`))!.body) as T;
 const count = async (db: Db, table: string) => (await db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`))!.n;
 
 // Q29: the api re-emits with the same version when another row changed (egg count of the reading, the survey closed,
@@ -29,8 +30,8 @@ test("every entity is overwritten on each receipt, whatever its version (Q29)", 
   await vectorRepo.putTransmissionBlock(db, { ...TB, cycles: [TB.cycles[0]!, { number: 2, starts_on: "2026-11-17", ends_on: "2026-11-21" }], version: 2 });
   expect((await vectorRepo.blocksOf(db, BLOCK.neighborhood_id))[0]).toEqual({ ...BLOCK, neighbor_ids: [], version: 1 });
   expect((await vectorRepo.ovitrapsOf(db))[0].body.last_reading?.egg_count).toBe(41);
-  expect((await vectorRepo.pendingLiraaItem(db, LI.household_id))?.survey_name).toBe("LIRAa renomeado");
-  expect((await vectorRepo.activeBlockFor(db, BLOCK.id))?.cycles).toHaveLength(2);
+  expect((await bodyIn<LiraaItemBody>(db, "liraa_items")).survey_name).toBe("LIRAa renomeado");
+  expect((await bodyIn<TransmissionBlockBody>(db, "transmission_blocks")).cycles).toHaveLength(2);
   for (const table of ["city_blocks", "ovitraps", "liraa_items", "transmission_blocks"]) expect([table, await count(db, table)]).toEqual([table, 1]);
 });
 
@@ -46,25 +47,6 @@ test("blocksOf: the active blocks of the neighbourhood, in natural order of numb
   expect((await vectorRepo.blocksOf(db, BLOCK.neighborhood_id)).map((b) => b.number)).toEqual(["2", "12", "12A", "100"]);
   expect((await vectorRepo.blocksOf(db, uuid(99))).map((b) => b.number)).toEqual(["1"]);
   expect(await vectorRepo.blocksOf(db, uuid(98))).toEqual([]);
-});
-
-test("pendingLiraaItem: the household's item still to inspect, or null", async () => {
-  const db = await createTestDb();
-  expect(await vectorRepo.pendingLiraaItem(db, LI.household_id)).toBeNull();
-  await vectorRepo.putLiraaItem(db, LI);
-  expect(await vectorRepo.pendingLiraaItem(db, LI.household_id)).toEqual(LI);
-  expect(await vectorRepo.pendingLiraaItem(db, uuid(7))).toBeNull();
-  await vectorRepo.putLiraaItem(db, { ...LI, status: "inspected" });
-  expect(await vectorRepo.pendingLiraaItem(db, LI.household_id)).toBeNull();
-});
-
-test("activeBlockFor: the active blockade that covers the city block, or null", async () => {
-  const db = await createTestDb();
-  await vectorRepo.putTransmissionBlock(db, TB);
-  expect(await vectorRepo.activeBlockFor(db, TB.block_ids[1])).toEqual(TB);
-  expect(await vectorRepo.activeBlockFor(db, uuid(5))).toBeNull();
-  await vectorRepo.putTransmissionBlock(db, { ...TB, status: "closed" });
-  expect(await vectorRepo.activeBlockFor(db, TB.block_ids[0])).toBeNull();
 });
 
 test("ovitrapsOf: every ovitrap, or the household's, by number", async () => {

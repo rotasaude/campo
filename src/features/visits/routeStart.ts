@@ -1,11 +1,11 @@
 // The bulletin's start as the visit route (app/(main)/visits/new.tsx) reads it from its params, which come from the lists
 // of what to visit and from the property's detail (35a): activity, work type and the link. A value the app does not
 // know is left out (the form offers the choice). Here, and not in the route, so that the specs go through it.
-import type { VectorActivity, VectorWorkType } from "../../rules/vectorDomains";
+import { VECTOR_ACTIVITIES, VECTOR_WORK_TYPES, type VectorActivity, type VectorWorkType } from "../../rules/vectorDomains";
 import type { VectorStart } from "../../rules/vectorInspection";
 
-const ACTIVITIES: readonly string[] = ["li", "li_t", "pe", "ie", "transmission_block", "liraa"];
-const WORK_TYPES: readonly string[] = ["routine", "pending"];
+const ACTIVITIES: readonly string[] = VECTOR_ACTIVITIES;
+const WORK_TYPES: readonly string[] = VECTOR_WORK_TYPES;
 
 export function vectorStart(p: { vector_activity?: string; work_type?: string; liraa_draw_item_id?: string; transmission_block_id?: string }): VectorStart | undefined {
   const start: VectorStart = {
