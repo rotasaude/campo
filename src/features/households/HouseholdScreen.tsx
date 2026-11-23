@@ -20,7 +20,8 @@ import { todayVisits } from "../visits/save";
 import type { VisitStart } from "../who/WhoScreen";
 import { READ_ONLY } from "./HouseholdForm";
 import { WAITING } from "./HouseholdList";
-import { HOUSEHOLD_TABLES, addressLine, pointText, readHousehold, type HouseholdView } from "./view";
+import { AGENT_HAS_RESIDENT } from "./save";
+import { HOUSEHOLD_TABLES, addressLine, hasActiveResident, pointText, readHousehold, type HouseholdView } from "./view";
 
 // Q47: leaving the registry and the identity of a person are not done in the app.
 export const AT_THE_DASHBOARD = "Mudança, óbito e correção de nome, nascimento ou documento: faça pelo dashboard.";
@@ -31,7 +32,8 @@ interface Resident { patientId: string; registrationKey: string; name: string; f
 interface Loaded {
   view: HouseholdView; line: string; type: string; residents: Resident[];
   // `canEdit`: families and residents (the registry, only the ACS); `editsHousehold`: the household itself (canEditHousehold).
-  canEdit: boolean; editsHousehold: boolean; visitsOn: boolean; takesFamilies: boolean;
+  // `occupied`: the endemic agent's non-residential property with an active resident — the api refuses his edit (M2).
+  canEdit: boolean; editsHousehold: boolean; occupied: boolean; visitsOn: boolean; takesFamilies: boolean;
   // 35a: the endemic agent installs an ovitrap here (canUseOvitraps); `hasBlock`: the profile as the tablet knows it.
   ovitraps: { hasBlock: boolean } | null;
   // The hours of the visits made there today on this tablet (withdrawn ones left out).
@@ -55,7 +57,8 @@ async function read(db: Db, key: string, now: number): Promise<Loaded | "missing
   });
   return {
     view, line: addressLine(view.body, dict), type: dict ? dictLabel(dict, "tipo_de_imovel", view.body.property_type) : view.body.property_type, residents,
-    canEdit: canEditRegistry(session), editsHousehold: canEditHousehold(session, view.body.property_type), visitsOn: session?.features.home_visits === true,
+    canEdit: canEditRegistry(session), editsHousehold: canEditHousehold(session, view.body.property_type),
+    occupied: !canEditRegistry(session) && canEditHousehold(session, view.body.property_type) && await hasActiveResident(db, key), visitsOn: session?.features.home_visits === true,
     ovitraps: canUseOvitraps(session) ? { hasBlock: !!(await readProfile(db, key))?.city_block_id } : null,
     takesFamilies: dict !== null && createRegistryRules(dict).allowsFamilies(view.body.property_type) && !view.body.refused,
     visitsToday: (await todayVisits(db, now)).filter((visit) => visit.householdKey === key && visit.state !== "withdrawn").map((visit) => visit.time),
@@ -89,7 +92,8 @@ export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamil
       <Body>{pointText(body.location ?? null)}</Body>
       {body.contact_phone !== null && body.contact_phone !== "" && <Body>{`Telefone: ${body.contact_phone}`}</Body>}
       {data.visitsToday.length > 0 && <Body>{`Visitas de hoje: ${data.visitsToday.join(", ")}`}</Body>}
-      {data.editsHousehold && !view.conflict && <Button label="Editar domicílio" variant="secondary" onPress={onEdit} />}
+      {data.occupied && <Notice>{AGENT_HAS_RESIDENT}</Notice>}
+      {data.editsHousehold && !data.occupied && !view.conflict && <Button label="Editar domicílio" variant="secondary" onPress={onEdit} />}
       {data.ovitraps && !data.ovitraps.hasBlock && <Notice tone="warn">{VECTOR_ERRORS.household_without_block}</Notice>}
       {data.ovitraps && <Button label="Instalar ovitrampa" variant="secondary" disabled={!data.ovitraps.hasBlock} onPress={onInstallOvitrap} />}
 

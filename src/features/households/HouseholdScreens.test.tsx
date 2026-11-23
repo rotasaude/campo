@@ -7,9 +7,9 @@ import type { Db } from "../../db/types";
 import { newUuid } from "../../sync/testing";
 import { AREA, HH, endemicTablet, loadedTablet } from "../testing";
 import { READ_ONLY } from "./HouseholdForm";
-import { HouseholdList, NEW_NON_RESIDENTIAL, NO_HOUSEHOLDS } from "./HouseholdList";
+import { HouseholdList, NON_RESIDENTIAL_ONLY, NO_HOUSEHOLDS } from "./HouseholdList";
 import { AT_THE_DASHBOARD, HouseholdScreen } from "./HouseholdScreen";
-import { saveHousehold } from "./save";
+import { AGENT_HAS_RESIDENT, saveHousehold } from "./save";
 
 const NOW = Date.parse("2026-11-14T15:00:00Z");
 const JOANA = "0e1f2a3b-4c5d-4e6f-8a7b-8c9d0e1f2a3b";
@@ -45,6 +45,7 @@ test("the list: each micro-area's households by street and number, opening one b
   expect(nav.onOpen).toHaveBeenCalledWith(HH);
   await fireEvent.press(screen.getByRole("button", { name: "Novo domicílio" }));
   expect(nav.onNew).toHaveBeenCalled();
+  expect(screen.queryByText(NON_RESIDENTIAL_ONLY)).toBeNull();
 });
 
 test("the list says which households still wait to be sent, and is searched by street or number", async () => {
@@ -156,8 +157,11 @@ test("agent: 'Novo imóvel não residencial' in the list, no family or resident 
   const db = await endemicTablet();
   const nav = await list(db);
   await fireEvent.press(await screen.findByRole("button", { name: "Novo imóvel não residencial" }));
-  expect(NEW_NON_RESIDENTIAL).toBe("Novo imóvel não residencial");
   expect(nav.onNew).toHaveBeenCalled();
+  // The dashboard's note (TerritoryTeam.tsx, NON_RESIDENTIAL_ONLY), word for word.
+  expect(screen.getByText(NON_RESIDENTIAL_ONLY)).toBeTruthy();
+  expect(NON_RESIDENTIAL_ONLY).toBe(
+    "Nesta microárea você cadastra só imóvel não residencial (ponto estratégico, comércio, terreno baldio, escola, creche, estabelecimento religioso e outros).");
   expect(screen.queryByRole("button", { name: "Novo domicílio" })).toBeNull();
   await nav.unmount();
 
@@ -177,4 +181,16 @@ test("agent: 'Novo imóvel não residencial' in the list, no family or resident 
   expect(nav2.onEdit).toHaveBeenCalled();
   expect(screen.queryByText(READ_ONLY)).toBeNull();
   for (const name of ["Nova família", "Novo morador"]) expect(screen.queryByRole("button", { name })).toBeNull();
+  await nav2.unmount();
+});
+
+// Review M2: the api refuses the agent's edit of a property with an active resident (SaveHousehold, cbo_not_allowed).
+test("agent: a non-residential property with an active resident on the tablet offers no 'Editar domicílio' and says why", async () => {
+  const db = await endemicTablet({ household: { property_type: "2", living_conditions: {} } });
+  await detail(db);
+  expect(await screen.findByText("Microárea 03 · Comércio")).toBeTruthy();
+  expect(within(screen.getByTestId(`resident-${JOANA}`)).getByText("Joana Conceição")).toBeTruthy();
+  expect(screen.getByText(AGENT_HAS_RESIDENT)).toBeTruthy();
+  expect(screen.queryByText(READ_ONLY)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Editar domicílio" })).toBeNull();
 });

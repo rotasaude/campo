@@ -10,7 +10,10 @@ import type { LocationPort } from "../../location/capture";
 import type { MapCanvasProps } from "../../map/canvas";
 import { AREA, HH, NEIGHBORHOOD, endemicTablet, loadedTablet, stationChanged } from "../testing";
 import { scrollIntoView } from "../../ui/reveal";
+import { newUuid } from "../../sync/testing";
+import { ERROR_PHRASES } from "../messages/errorPhrases";
 import { HouseholdForm, NO_FIX_MARK_ON_MAP, READ_ONLY } from "./HouseholdForm";
+import { AGENT_HAS_RESIDENT, saveHousehold } from "./save";
 
 // The measuring and the scrolling are the device's: here, that each refusal asks to be brought into sight.
 jest.mock("../../ui/reveal", () => ({ ...jest.requireActual<typeof import("../../ui/reveal")>("../../ui/reveal"), scrollIntoView: jest.fn() }));
@@ -310,4 +313,62 @@ test("agent opens a residential household read-only", async () => {
   expect(await screen.findByText(READ_ONLY)).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Salvar" })).toBeNull();
   expect(screen.queryByLabelText("CEP")).toBeNull();
+});
+
+// The agent's session with HH's area (03) assigned to him too.
+function agentWithHomeArea(): Partial<SessionResponse> {
+  const session = example<SessionResponse>("session-endemic-agent.json");
+  const [team] = session.teams;
+  return { teams: [{ ...team, micro_areas: [...team.micro_areas, { ...team.micro_areas[0], id: AREA, code: "03", name: "Vila Nova" }] }] };
+}
+const NOW = Date.parse("2026-11-14T15:00:00Z");
+const shop = { micro_area_id: AGENT_AREA, property_type: "4", refused: false, contact_phone: null, living_conditions: {},
+  address: { zip: "80010000", street_type: "081", street: "das Flores", number: "45", no_number: false, complement: null, neighborhood_id: NEIGHBORHOOD, district: null, reference: null } };
+
+test("agent edits his own non-residential property through the form: the seven types, his type chosen, the same item", async () => {
+  const db = await endemicTablet();
+  const point = await saveHousehold(db, { fields: shop as never }, { newUuid, now: () => NOW });
+  const t = await mount({ db, householdKey: point.key });
+  expect(field("property_type").getAllByRole("radio")).toHaveLength(7);
+  expect(field("property_type").getByRole("radio", { name: /^Ponto Estratégico/ }).props.accessibilityState).toMatchObject({ checked: true });
+  await type("Telefone de contato (com DDD)", "41988887777");
+  await press("Salvar");
+  await waitFor(() => expect(t.onSaved).toHaveBeenCalledWith(point.key));
+  const items = await outboxRepo.all(db);
+  expect(items).toHaveLength(1);
+  expect([items[0].client_uuid, items[0].body.property_type, items[0].body.contact_phone]).toEqual([point.clientUuid, "4", "41988887777"]);
+});
+
+test("agent: a download that turns the property residential while the form is open is refused under the type", async () => {
+  const db = await endemicTablet({ session: agentWithHomeArea(), household: { property_type: "2", living_conditions: {}, families: [] } });
+  await db.run("DELETE FROM registrations"); // no resident: the type is what refuses
+  await mount({ db, householdKey: HH });
+  await stationChanged(db, "household", HH, { property_type: "1", families: [] });
+  await press("Salvar");
+  expect(await field("property_type").findByText(ERROR_PHRASES.cbo_not_allowed)).toBeTruthy();
+  expect(await outboxRepo.all(db)).toEqual([]);
+});
+
+test("agent: his draft in a micro area that is no longer his is refused under Microárea (out_of_scope)", async () => {
+  const db = await endemicTablet();
+  const point = await saveHousehold(db, { fields: shop as never }, { newUuid, now: () => NOW });
+  const [creation] = await outboxRepo.all(db);
+  const session = example<SessionResponse>("session-endemic-agent.json");
+  const [team] = session.teams;
+  await db.run("UPDATE session SET body = ? WHERE id = 1", [JSON.stringify({ ...session, teams: [{ ...team, micro_areas: [{ ...team.micro_areas[0], id: "9e8d7c6b-5a49-4382-9716-a5b4c3d2e1f0", code: "08" }] }] })]);
+  await mount({ db, householdKey: point.key });
+  await type("Complemento", "fundos");
+  await press("Salvar");
+  expect(await field("micro_area_id").findByText(ERROR_PHRASES.out_of_scope)).toBeTruthy();
+  expect(await outboxRepo.all(db)).toEqual([creation]);
+});
+
+// "Corrigir" in "precisa de atenção" opens the form without the household's screen: the save guards it too (review M2).
+test("agent: saving a non-residential property with an active resident says the dashboard's phrase and enqueues nothing", async () => {
+  const db = await endemicTablet({ session: agentWithHomeArea(), household: { property_type: "2", living_conditions: {}, families: [] } });
+  const t = await mount({ db, householdKey: HH });
+  await press("Salvar");
+  expect(await screen.findByText(AGENT_HAS_RESIDENT)).toBeTruthy();
+  expect(await outboxRepo.all(db)).toEqual([]);
+  expect(t.onSaved).not.toHaveBeenCalled();
 });

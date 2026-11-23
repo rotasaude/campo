@@ -71,6 +71,13 @@ export async function listHouseholds(db: Db, microAreaId?: string): Promise<Hous
 // "Rua das Flores, 120": the api's address_short (apps/api HomeVisits::Json.address_short, main 85dc80ee) — the street
 // type capitalized and the street, then the number or "S/N"; without a street, "Sem endereço". Never the complement
 // (free text). A street type the dictionary does not have is left out, as on the api.
+// Somebody still lives here, as the tablet knows it: a registration filed under the household with no exit (the api's
+// active registration, exit_reason nil). The api re-reads it under its lock and stays the authority.
+export async function hasActiveResident(db: Db, key: string): Promise<boolean> {
+  const rows = await db.all<{ body: string }>("SELECT body FROM registrations WHERE household_key = ?", [key]);
+  return rows.some((row) => (JSON.parse(row.body) as { exit?: unknown }).exit == null);
+}
+
 export function addressShort(body: Pick<HouseholdBody, "address">, dict: RegistrationDictionaries | null): string {
   const a = body.address ?? {};
   const label = dict === null || !a.street_type ? null : dict.stringDomains.tipo_logradouro.find((entry) => entry.code === a.street_type)?.label ?? null;

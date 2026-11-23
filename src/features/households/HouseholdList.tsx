@@ -18,6 +18,9 @@ export const NO_HOUSEHOLDS = "Nenhum domicílio encontrado.";
 export const WAITING = "Aguardando envio";
 export const IN_CONFLICT = "Em conflito";
 export const NEW_NON_RESIDENTIAL = "Novo imóvel não residencial";
+// The dashboard's note for the agent's micro-areas (TerritoryTeam.tsx, NON_RESIDENTIAL_ONLY), word for word.
+export const NON_RESIDENTIAL_ONLY =
+  "Nesta microárea você cadastra só imóvel não residencial (ponto estratégico, comércio, terreno baldio, escola, creche, estabelecimento religioso e outros).";
 
 interface Row { key: string; line: string; type: string; pending: boolean; conflict: boolean; search: string; number: string }
 interface Group { id: string; title: string; rows: Row[] }
@@ -60,7 +63,12 @@ export function HouseholdList({ onOpen, onNew }: { onOpen(key: string): void; on
   return (
     <Screen title="Domicílios">
       {data.creates === "household" && <Button label="Novo domicílio" onPress={onNew} />}
-      {data.creates === "non_residential" && <Button label={NEW_NON_RESIDENTIAL} onPress={onNew} />}
+      {data.creates === "non_residential" && (
+        <>
+          <Muted>{NON_RESIDENTIAL_ONLY}</Muted>
+          <Button label={NEW_NON_RESIDENTIAL} onPress={onNew} />
+        </>
+      )}
       <Field label="Buscar por rua ou número" value={query} onChangeText={setQuery} autoCorrect={false} />
       {groups.length === 0 && <Body>{NO_HOUSEHOLDS}</Body>}
       {groups.map((group) => (

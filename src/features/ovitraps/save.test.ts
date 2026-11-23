@@ -95,11 +95,13 @@ test("the installation cites the queued bulletin that gave the household its blo
   expect((await all(db)).find((i) => i.type === "ovitrap_installation")?.depends_on).toEqual([{ client_uuid: visit, kind: "cite" }]);
 });
 
-// The household born on the tablet is a shop: the endemic agent creates only non-residential properties (Q13(1)).
+// The household born on the tablet is a shop in the agent's own micro-area: he creates only non-residential properties,
+// only in the areas of his session (Q13(1)).
+const AGENT_AREA = "7b8c9d0e-1f2a-4b3c-9d4e-5f6a7b8c9d0e";
 test("the installation in a household born on the tablet cites it by client_uuid", async () => {
   const db = await endemicTablet();
   const { household_id: _id, version: _version, ...fields } = example<UploadRequest>("upload-household-location.json").items[0].body as HouseholdItemBody;
-  const born = await saveHousehold(db, { fields: { ...fields, property_type: "2", living_conditions: {} } as never }, { newUuid, now: () => NOW });
+  const born = await saveHousehold(db, { fields: { ...fields, micro_area_id: AGENT_AREA, property_type: "2", living_conditions: {} } as never }, { newUuid, now: () => NOW });
   await installOvitrap(db, { householdKey: born.key, number: "OVT-015", clientUuid: U1, today: "2026-11-14" });
   const installation = (await all(db)).find((i) => i.type === "ovitrap_installation")!;
   expect(installation.body).toEqual({ household_client_uuid: born.clientUuid, number: "OVT-015", consent: true, installed_on: "2026-11-14" });
@@ -132,8 +134,8 @@ test("correctNumber: the same client_uuid back in the line with the new number, 
 test("the installation in a household born on the tablet whose queued bulletin gave the block cites both, and is valid", async () => {
   const db = await endemicTablet();
   const { household_id: _id, version: _version, ...fields } = example<UploadRequest>("upload-household-location.json").items[0].body as HouseholdItemBody;
-  const born = await saveHousehold(db, { fields: { ...fields, property_type: "2", living_conditions: {} } as never }, { newUuid, now: () => NOW });
-  const visit = await saveVisit(db, draft({ place: { kind: "household", householdId: born.key, propertyType: "2", microAreaId: AREA } }), {
+  const born = await saveHousehold(db, { fields: { ...fields, micro_area_id: AGENT_AREA, property_type: "2", living_conditions: {} } as never }, { newUuid, now: () => NOW });
+  const visit = await saveVisit(db, draft({ place: { kind: "household", householdId: born.key, propertyType: "2", microAreaId: AGENT_AREA } }), {
     clientUuid: newUuid(), teamId: "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b", location: null, visitBody: rules.visitBody, newUuid, now: () => NOW,
     vectorInspection: { activity: "li", work_type: "routine", situation: "worked", educational_action: false, city_block_id: BLOCK } as never,
   });

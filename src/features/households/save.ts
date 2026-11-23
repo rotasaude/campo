@@ -15,7 +15,8 @@ import { applyHouseholdFields } from "../../sync/editable";
 import { coalesceOrEnqueue, enqueue, type Dep } from "../../sync/outbox";
 import { normalizeText } from "../../sync/text";
 import { ERROR_PHRASES } from "../messages/errorPhrases";
-import { agentRegistersNonResidential, canEditHousehold, loadSession } from "../session";
+import { agentRegistersNonResidential, canEditHousehold, loadSession, myMicroAreas } from "../session";
+import { hasActiveResident } from "./view";
 
 // What the form gives: the household item without what names the record (filled here and when it is sent).
 export type HouseholdFields = Omit<HouseholdItemBody, "household_id" | "version">;
@@ -25,17 +26,33 @@ export class HouseholdInConflictError extends Error {
   constructor() { super(CONFLICT_PENDING); }
 }
 
-// Q13(1): what the api would answer cbo_not_allowed to the endemic agent (a type out of his list, now or in the
-// household as it is), refused before anything is enqueued, under the type.
+// The dashboard's phrase for the agent's edit of a property with an active resident (src/lib/territoryRegistry.ts,
+// AGENT_HAS_RESIDENT), word for word.
+export const AGENT_HAS_RESIDENT = "este imóvel tem morador ativo; só a equipe da APS edita";
+
+// Q13(1): what the api would refuse to the endemic agent, refused before anything is enqueued, in the api's order
+// (TerritoryRegistry::Access.endemic_scope, then SaveHousehold#write):
+//   - a micro-area that is not one of his session's → out_of_scope (the api sends no path; here, under Microárea);
+//   - a type out of his list, typed or the one the household has → cbo_not_allowed, under the type;
+//   - an edit of a household with an active resident on the tablet → cbo_not_allowed, with the dashboard's phrase.
 export class HouseholdRefusedError extends Error {
   constructor(readonly problem: Problem) { super(problem.message); }
 }
 
-async function agentRefusal(db: Db, types: (string | null)[]): Promise<HouseholdRefusedError | null> {
+async function agentRefusal(
+  db: Db, o: { microAreaId: string; types: (string | null)[]; householdKey?: string },
+): Promise<HouseholdRefusedError | null> {
   const session = await loadSession(db);
   if (!agentRegistersNonResidential(session)) return null;
-  return types.every((type) => canEditHousehold(session, type))
-    ? null : new HouseholdRefusedError({ path: "property_type", message: ERROR_PHRASES.cbo_not_allowed });
+  if (!myMicroAreas(session).some((area) => area.id === o.microAreaId)) {
+    return new HouseholdRefusedError({ path: "micro_area_id", message: ERROR_PHRASES.out_of_scope });
+  }
+  if (!o.types.every((type) => canEditHousehold(session, type))) {
+    return new HouseholdRefusedError({ path: "property_type", message: ERROR_PHRASES.cbo_not_allowed });
+  }
+  // The api sends no path: the form shows it over the button.
+  if (o.householdKey !== undefined && await hasActiveResident(db, o.householdKey)) return new HouseholdRefusedError({ path: "", message: AGENT_HAS_RESIDENT });
+  return null;
 }
 
 export interface SaveDeps { newUuid(): string; now(): number }
@@ -50,7 +67,7 @@ export async function saveHousehold(
   const fields = input.fields as unknown as Body;
   const saved = await db.tx(async (tx) => {
     if (input.key === undefined) {
-      const refusal = await agentRefusal(tx, [input.fields.property_type]);
+      const refusal = await agentRefusal(tx, { microAreaId: input.fields.micro_area_id, types: [input.fields.property_type] });
       if (refusal) throw refusal;
       const clientUuid = deps.newUuid().toLowerCase();
       const area = (await territoryRepo.microAreaRef(tx, input.fields.micro_area_id)) ?? { id: input.fields.micro_area_id, code: "" };
@@ -72,7 +89,10 @@ export async function saveHousehold(
       "SELECT id, client_uuid, base_version, base_body, body FROM households WHERE key = ?", [input.key]);
     if (!row) throw new Error("domicílio não encontrado");
     // The api looks at the type typed and at the one the household has (no turning a home into a shop, nor back).
-    const refusal = await agentRefusal(tx, [input.fields.property_type, (JSON.parse(row.body) as { property_type?: string }).property_type ?? null]);
+    const refusal = await agentRefusal(tx, {
+      microAreaId: input.fields.micro_area_id, householdKey: input.key,
+      types: [input.fields.property_type, (JSON.parse(row.body) as { property_type?: string }).property_type ?? null],
+    });
     if (refusal) throw refusal;
     const queued = (await outboxRepo.all(tx)).filter((item) => item.target_id === input.key && (item.type === "household" || item.type === "family"));
     if (queued.some((item) => item.state === "conflict")) throw new HouseholdInConflictError();

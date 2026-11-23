@@ -10,7 +10,7 @@ import { applyPage } from "../../sync/download";
 import { accepted, newUuid, rejected } from "../../sync/testing";
 import { ERROR_PHRASES } from "../messages/errorPhrases";
 import { stationChanged } from "../testing";
-import { CONFLICT_PENDING, HouseholdRefusedError, saveHousehold, type HouseholdFields } from "./save";
+import { AGENT_HAS_RESIDENT, CONFLICT_PENDING, HouseholdRefusedError, saveHousehold, type HouseholdFields } from "./save";
 import { listHouseholds, readHousehold } from "./view";
 
 const HH = "8c9d0e1f-2a3b-4c4d-8e5f-6a7b8c9d0e1f";
@@ -167,20 +167,29 @@ test("an unknown household is refused", async () => {
 
 // ── Q13(1): the endemic agent (515140, vector_control and territory_registry on) registers only non-residential properties ──
 const AGENT_AREA = "7b8c9d0e-1f2a-4b3c-9d4e-5f6a7b8c9d0e"; // the micro-area assigned to him in the session
-async function agentTerritory(): Promise<Db> {
+// `areas`: the micro-areas assigned to him in the session, in place of the example's (07).
+function agentSession(areas?: { id: string; code: string }[]): SessionResponse {
+  const session = example<SessionResponse>("session-endemic-agent.json");
+  if (!areas) return session;
+  const [team] = session.teams;
+  return { ...session, teams: [{ ...team, micro_areas: areas.map((area) => ({ ...team.micro_areas[0], ...area, name: `Microárea ${area.code}` })) }] };
+}
+async function agentTerritory(areas?: { id: string; code: string }[]): Promise<Db> {
   const db = await territory();
-  await db.run("INSERT INTO session (id, body, fetched_at) VALUES (1, ?, '2026-11-14T12:00:00.000Z')", [JSON.stringify(example<SessionResponse>("session-endemic-agent.json"))]);
+  await db.run("INSERT INTO session (id, body, fetched_at) VALUES (1, ?, '2026-11-14T12:00:00.000Z')", [JSON.stringify(agentSession(areas))]);
   return db;
 }
 
 test("agent saving a residential type is refused on screen and nothing is enqueued", async () => {
-  const db = await agentTerritory();
+  // HH's area is his too here: the type is what refuses.
+  const db = await agentTerritory([{ id: AGENT_AREA, code: "07" }, { id: AREA, code: "03" }]);
   const before = await db.all("SELECT key FROM households");
   const refusal = saveHousehold(db, { fields: fields({ micro_area_id: AGENT_AREA, property_type: "1" }) }, deps);
   await expect(refusal).rejects.toBeInstanceOf(HouseholdRefusedError);
   await expect(refusal).rejects.toMatchObject({ problem: { path: "property_type", message: ERROR_PHRASES.cbo_not_allowed } });
   // Nor a residential one turned into a shop: the api looks at the type the household has too (current_property_type).
-  await expect(saveHousehold(db, { key: HH, fields: fields({ property_type: "2", living_conditions: {} }) }, deps)).rejects.toBeInstanceOf(HouseholdRefusedError);
+  await expect(saveHousehold(db, { key: HH, fields: fields({ property_type: "2", living_conditions: {} }) }, deps))
+    .rejects.toMatchObject({ problem: { path: "property_type", message: ERROR_PHRASES.cbo_not_allowed } });
   expect(await outboxRepo.all(db)).toEqual([]);
   expect(await db.all("SELECT key FROM households")).toEqual(before);
 });
@@ -208,4 +217,37 @@ test("the server's cbo_not_allowed on the agent's household goes to needs attent
   const [creation] = await outboxRepo.all(db);
   await applyResults(db, [creation], [rejected(creation, "cbo_not_allowed")], { onStale: async () => undefined });
   expect(await outboxRepo.bySeq(db, creation.seq)).toMatchObject({ state: "needs_attention", error: "cbo_not_allowed" });
+});
+
+test("agent: a micro area outside his session is refused on screen with the api's out_of_scope, on create and on edit of his draft", async () => {
+  const db = await agentTerritory();
+  const outside = { problem: { path: "micro_area_id", message: ERROR_PHRASES.out_of_scope } };
+  await expect(saveHousehold(db, { fields: fields({ micro_area_id: AREA, property_type: "2", living_conditions: {} }) }, deps)).rejects.toMatchObject(outside);
+  expect(await outboxRepo.all(db)).toEqual([]);
+
+  // His own draft, moved to an area that is not his…
+  const body = fields({ micro_area_id: AGENT_AREA, property_type: "2", living_conditions: {} });
+  const saved = await saveHousehold(db, { fields: body }, deps);
+  const [creation] = await outboxRepo.all(db);
+  await expect(saveHousehold(db, { key: saved.key, fields: { ...body, micro_area_id: AREA } }, deps)).rejects.toMatchObject(outside);
+  // …or kept in one whose assignment ended (the session no longer has it): nothing changes in the line.
+  await db.run("UPDATE session SET body = ? WHERE id = 1", [JSON.stringify(agentSession([{ id: "9e8d7c6b-5a49-4382-9716-a5b4c3d2e1f0", code: "08" }]))]);
+  await expect(saveHousehold(db, { key: saved.key, fields: { ...body, contact_phone: "41988887777" } }, deps)).rejects.toMatchObject(outside);
+  expect(await outboxRepo.all(db)).toEqual([creation]);
+});
+
+test("agent: a non-residential property with an active resident on the tablet is not edited; an exited resident does not hold it", async () => {
+  const db = await agentTerritory([{ id: AREA, code: "03" }]);
+  // The station turned HH (with Joana's active registration) into a shop.
+  await stationChanged(db, "household", HH, { property_type: "2", living_conditions: {} });
+  const edit = { key: HH, fields: fields({ property_type: "2", living_conditions: {} }) };
+  await expect(saveHousehold(db, edit, deps)).rejects.toMatchObject({ problem: { message: AGENT_HAS_RESIDENT } });
+  expect(AGENT_HAS_RESIDENT).toBe("este imóvel tem morador ativo; só a equipe da APS edita");
+  expect(await outboxRepo.all(db)).toEqual([]);
+
+  const joana = (await db.get<{ key: string; body: string }>("SELECT key, body FROM registrations WHERE household_key = ?", [HH]))!;
+  const exited = { ...JSON.parse(joana.body), status: "exited", exit: { reason: "mudanca_territorio", on: "2026-11-10", death_on: null, death_certificate: null } };
+  await db.run("UPDATE registrations SET body = ? WHERE key = ?", [JSON.stringify(exited), joana.key]);
+  await saveHousehold(db, edit, deps);
+  expect(await outboxRepo.all(db)).toHaveLength(1);
 });
