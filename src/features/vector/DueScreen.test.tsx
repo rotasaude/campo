@@ -5,7 +5,8 @@ import { example } from "../../contract/fixtures";
 import type { Db } from "../../db/types";
 import { applyPage } from "../../sync/download";
 import { HH, LIRAA_ITEM, TRANSMISSION_BLOCK, endemicTablet } from "../testing";
-import { DUE_EMPTY, DueScreen } from "./DueScreen";
+import type { DueEntry } from "./dueData";
+import { DUE_EMPTY, DueScreen, dueVisitParams } from "./DueScreen";
 
 const NOW = Date.parse("2026-11-14T15:00:00Z");
 
@@ -64,4 +65,16 @@ test("\"Registrar visita\" of the blockade carries its id", async () => {
 test("nothing to visit", async () => {
   await mount(await endemicTablet({ household: { status: "inactive" } }));
   expect(await screen.findByText(DUE_EMPTY)).toBeTruthy();
+});
+
+// Review M3: the route keys of the other starts.
+test("dueVisitParams: pending, pending PE and PE", () => {
+  const entry = (o: Partial<DueEntry>): DueEntry => ({
+    householdKey: HH, reason: "due", dueSince: null, lastWorkedOn: null, riskClass: null, liraaDrawItemId: null, transmissionBlockId: null,
+    address: "Rua das Flores, 120", block: null, propertyType: "1", ...o,
+  });
+  expect(dueVisitParams(entry({ reason: "pending" }))).toEqual({ household_id: HH, work_type: "pending" });
+  expect(dueVisitParams(entry({ reason: "pending", propertyType: "4" }))).toEqual({ household_id: HH, vector_activity: "pe", work_type: "pending" });
+  expect(dueVisitParams(entry({ propertyType: "4" }))).toEqual({ household_id: HH, vector_activity: "pe" });
+  expect(dueVisitParams(entry({}))).toEqual({ household_id: HH });
 });

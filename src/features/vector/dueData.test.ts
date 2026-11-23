@@ -61,7 +61,8 @@ test("the agent's sheet: one reason per active household, in the api's order, wi
     block: { id: BLOCK, number: "12A" }, riskClass: "yellow", lastWorkedOn: "2026-11-03", propertyType: "1",
     transmissionBlockId: TRANSMISSION_BLOCK, liraaDrawItemId: null,
   });
-  expect(items[0].address).toMatch(/das Flores, 120/);
+  // The api's address_short: street type and street, number; never the complement (free text, review M4).
+  expect(items[0].address).toBe("Rua das Flores, 120");
   expect(items[1]).toMatchObject({ block: null, riskClass: null, lastWorkedOn: null });
   expect(items[2].propertyType).toBe("4");
   // Never a person: the tablet has HH's resident, and nothing of her reaches the sheet.
@@ -109,7 +110,59 @@ test("a closed or refused visit saved today makes the household pending", async 
   expect((await reasons(db)).map(([key]) => key)).not.toContain(PE);
 });
 
-test("the ACS and a tablet without the vector domains have no sheet", async () => {
+test("the ACS, a tablet without the vector domains and a city with the visit off have no sheet", async () => {
   expect((await loadDue(await loadedTablet(), NOW)).items).toEqual([]);
   expect((await loadDue(await endemicTablet({ domains: null }), NOW)).items).toEqual([]);
+  // Review M6: the bulletin goes inside the visit.
+  const off = await endemicTablet({ session: { features: { home_visits: false, collective_activities: false, territory_registry: true, vector_control: true } } });
+  expect((await loadDue(off, NOW)).items).toEqual([]);
+});
+
+test("the address is the api's short one: no complement, S/N, no street", async () => {
+  const db = await endemicTablet();
+  const address = (page().items.find((item) => item.type === "household")!.body as { address: Record<string, unknown> }).address;
+  await household(db, NEVER, "200", { vector: null, address: { ...address, complement: "casa da Dona Maria", neighborhood_id: NEIGHBORHOOD } });
+  await household(db, FRESH, "x", { vector: null, address: { ...address, no_number: true, number: null, neighborhood_id: NEIGHBORHOOD } });
+  await household(db, PE, "x", { vector: null, address: { ...address, street_type: null, street: null, neighborhood_id: NEIGHBORHOOD } });
+  const byKey = new Map((await loadDue(db, NOW)).items.map((i) => [i.householdKey, i.address]));
+  expect(byKey.get(NEVER)).toBe("Rua das Flores, 120");
+  expect(byKey.get(FRESH)).toBe("Rua das Flores, S/N");
+  expect(byKey.get(PE)).toBe("Sem endereço");
+});
+
+// Review I1: the api's situation is that of the latest inspection. An accepted bulletin newer than the last good download
+// sets it, as a queued one does; one at or before that download only fills what the download left null.
+async function acceptAll(db: Db, acceptedAt: string, lastOk: string | null): Promise<void> {
+  for (const item of await outboxRepo.all(db)) await applyResults(db, [item], [accepted(item)], { onStale: async () => undefined });
+  await db.run("UPDATE local_visits SET accepted_at = ?", [acceptedAt]);
+  await db.run("DELETE FROM meta WHERE key = 'last_download_ok_at'");
+  if (lastOk !== null) await db.run("INSERT INTO meta (key, value) VALUES ('last_download_ok_at', ?)", [lastOk]);
+}
+
+test("A: downloaded closed, worked today and accepted, the download failed → out of the list", async () => {
+  const db = await endemicTablet();
+  await household(db, NEVER, "200", { vector: { ...NO_PROFILE, last_worked_on: "2026-08-01", last_situation: "closed" } });
+  expect(await reasons(db)).toContainEqual([NEVER, "pending", "2026-09-30"]);
+  await save(db, NEVER, { situation: "worked" });
+  await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T12:00:00.000Z");
+  expect((await reasons(db)).map(([key]) => key)).not.toContain(NEVER);
+  // A download after the acceptance speaks for the server: it said closed again (an inspection after this one).
+  await household(db, NEVER, "200", { vector: { ...NO_PROFILE, last_worked_on: "2026-11-14", last_situation: "closed" } });
+  await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T14:00:00.000Z");
+  expect(await reasons(db)).toContainEqual([NEVER, "pending", "2027-01-13"]);
+});
+
+test("B: downloaded as recently worked, closed today and accepted → pending", async () => {
+  const db = await endemicTablet();
+  await household(db, NEVER, "200", { vector: { ...NO_PROFILE, last_worked_on: "2026-11-01", last_situation: "worked" } });
+  expect((await reasons(db)).map(([key]) => key)).not.toContain(NEVER);
+  await save(db, NEVER, { situation: "closed" });
+  await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T12:00:00.000Z");
+  expect(await reasons(db)).toContainEqual([NEVER, "pending", "2026-12-31"]);
+  // No good download yet: the acceptance is the newest there is.
+  await acceptAll(db, "2026-11-14T13:00:00.000Z", null);
+  expect(await reasons(db)).toContainEqual([NEVER, "pending", "2026-12-31"]);
+  // At or before the last good download: the download's worked stays.
+  await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T13:00:00.000Z");
+  expect((await reasons(db)).map(([key]) => key)).not.toContain(NEVER);
 });

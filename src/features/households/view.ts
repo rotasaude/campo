@@ -68,6 +68,19 @@ export async function listHouseholds(db: Db, microAreaId?: string): Promise<Hous
   return views;
 }
 
+// "Rua das Flores, 120": the api's address_short (apps/api HomeVisits::Json.address_short, main 85dc80ee) — the street
+// type capitalized and the street, then the number or "S/N"; without a street, "Sem endereço". Never the complement
+// (free text). A street type the dictionary does not have is left out, as on the api.
+export function addressShort(body: Pick<HouseholdBody, "address">, dict: RegistrationDictionaries | null): string {
+  const a = body.address ?? {};
+  const label = dict === null || !a.street_type ? null : dict.stringDomains.tipo_logradouro.find((entry) => entry.code === a.street_type)?.label ?? null;
+  const type = label === null ? null : label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();
+  const street = [type, a.street ?? null].filter((part): part is string => part !== null).join(" ");
+  if (street === "") return "Sem endereço";
+  const number = a.no_number ? "S/N" : a.number ?? null;
+  return number === null ? street : `${street}, ${number}`;
+}
+
 // "RUA das Flores, 120 — fundos": the address in one line, as the agent says it. Without a dictionary the street type is left out.
 export function addressLine(body: Pick<HouseholdBody, "address">, dict: RegistrationDictionaries | null): string {
   const a = body.address ?? {};

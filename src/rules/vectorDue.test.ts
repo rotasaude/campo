@@ -22,6 +22,13 @@ test.each([
   expect(cadenceDays({ propertyType, neighborhoodId: NB, riskClass: "red" }, cadences, P)).toBe(expected);
 });
 
+// Review M2: a common property never reads a PE row, even with the whole table there.
+test("cadenceDays: a common property ignores the PE rows", () => {
+  expect(cadenceDays({ propertyType: "1", neighborhoodId: NB, riskClass: null }, TABLE, P)).toBe(45);
+  expect(cadenceDays({ propertyType: "1", neighborhoodId: NB, riskClass: "red" }, TABLE, P)).toBe(30);
+  expect(cadenceDays({ propertyType: "1", neighborhoodId: NB, riskClass: null }, TABLE.filter((c) => c.strategic_point), P)).toBe(60);
+});
+
 test("cadenceDays: a PE ignores the risk; without risk or neighbourhood only the any-risk and city steps count", () => {
   expect(cadenceDays({ propertyType: "4", neighborhoodId: NB, riskClass: "red" }, [], P)).toBe(15);
   const noPe = TABLE.filter((c) => !c.strategic_point);
