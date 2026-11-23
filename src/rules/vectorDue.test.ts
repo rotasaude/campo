@@ -1,4 +1,4 @@
-import { cadenceDays, dueList, startFor, type DueInput, type DueItem } from "./vectorDue";
+import { cadenceDays, dueList, startFor, startForProperty, type DueInput, type DueItem } from "./vectorDue";
 import type { Cadence, VectorSituation } from "./vectorDomains";
 
 // The cases of apps/api spec/services/vector_control/{cadence,due}_spec.rb (Q11), with the (city, any) step of Q10.
@@ -110,4 +110,9 @@ test("the cadence of each household is its own (PE, neighbourhood, risk)", () =>
     row("plain", { worked: "2026-10-17" }),
   ], "2026-11-16", TABLE.filter((c) => c.days !== 10 && c.days !== 12), P);
   expect(items.map((i) => [i.householdKey, i.dueSince])).toEqual([["pe", "2026-11-16"], ["red", "2026-11-16"]]);
+});
+
+test("startForProperty (Q59(b)): off the sheet, PE for the strategic point and nothing for the rest", () => {
+  expect(startForProperty("4")).toEqual({ activity: "pe" });
+  for (const type of ["1", "2", "3", "13"]) expect(startForProperty(type)).toEqual({});
 });

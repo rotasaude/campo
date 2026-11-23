@@ -1,6 +1,6 @@
 # Q13(1), offline: the endemic agent registers a strategic point (a non-residential property of his micro-area) and,
-# from "Imóveis a visitar", visits it with a PE bulletin, worked. Both wait on the tablet; one sync sends them, the visit
-# citing the new household by its client_uuid.
+# from the property's own detail (Q59(b): nobody lives there), visits it with a PE bulletin, worked. Both wait on the
+# tablet; one sync sends them, the visit citing the new household by its client_uuid.
 appId: br.rotasaude.campo
 ---
 - runScript:
@@ -62,25 +62,17 @@ appId: br.rotasaude.campo
 # To the end of the form: the last button sits behind the tablet's task bar until then.
 - scroll
 - tapOn: "Salvar"
+# Saved, the form gives way to the property's detail.
 - extendedWaitUntil:
     visible: "AVENIDA das Indústrias, 900"
     timeout: 30000
 - assertVisible: "Aguardando envio"
-- repeat:
-    while:
-      notVisible: "Sincronizar"
-    times: 3
-    commands:
-      - back
 
-# The visit: the new strategic point is due (never worked), and its card opens a PE bulletin.
-- tapOn: "Imóveis a visitar"
-- extendedWaitUntil:
-    visible: "Avenida das Indústrias, 900"
-    timeout: 30000
-- tapOn:
-    text: "Registrar visita"
-    below: "Avenida das Indústrias, 900"
+# The visit, from the detail: nobody lives at the new strategic point, so it offers its own visit, with a PE bulletin.
+- scrollUntilVisible:
+    element: "Registrar visita"
+    centerElement: true
+- tapOn: "Registrar visita"
 - extendedWaitUntil:
     visible: "Nova visita"
     timeout: 30000

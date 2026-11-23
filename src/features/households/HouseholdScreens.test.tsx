@@ -1,11 +1,15 @@
-import { fireEvent, screen, within } from "@testing-library/react-native";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 import { fakeServices, renderWithServices } from "../../app/testing";
 import type { SessionResponse, UploadRequest, HouseholdItemBody } from "../../contract";
 import { example } from "../../contract/fixtures";
 import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
 import { newUuid } from "../../sync/testing";
-import { AREA, HH, endemicTablet, loadedTablet } from "../testing";
+import type { VectorActivity } from "../../rules/vectorDomains";
+import { loadDue } from "../vector/dueData";
+import type { DueVisitParams } from "../vector/DueScreen";
+import { VisitForm } from "../visits/VisitForm";
+import { AREA, HH, LIRAA_ITEM, endemicTablet, loadedTablet } from "../testing";
 import { READ_ONLY } from "./HouseholdForm";
 import { HouseholdList, NON_RESIDENTIAL_ONLY, NO_HOUSEHOLDS } from "./HouseholdList";
 import { AT_THE_DASHBOARD, HouseholdScreen } from "./HouseholdScreen";
@@ -29,7 +33,7 @@ async function list(db: Db) {
   return { ...nav, unmount: () => view.unmount() };
 }
 async function detail(db: Db, key = HH) {
-  const nav = { onEdit: jest.fn(), onNewFamily: jest.fn(), onEditFamily: jest.fn(), onNewResident: jest.fn(), onStartVisit: jest.fn(), onOpenResident: jest.fn(), onInstallOvitrap: jest.fn() };
+  const nav = { onEdit: jest.fn(), onNewFamily: jest.fn(), onEditFamily: jest.fn(), onNewResident: jest.fn(), onStartVisit: jest.fn(), onOpenResident: jest.fn(), onInstallOvitrap: jest.fn(), onStartPropertyVisit: jest.fn<void, [DueVisitParams]>() };
   const view = await renderWithServices(<HouseholdScreen householdKey={key} {...nav} />, fakeServices({ db, now: () => NOW }));
   return { ...nav, unmount: () => view.unmount() };
 }
@@ -193,4 +197,84 @@ test("agent: a non-residential property with an active resident on the tablet of
   expect(screen.getByText(AGENT_HAS_RESIDENT)).toBeTruthy();
   expect(screen.queryByText(READ_ONLY)).toBeNull();
   expect(screen.queryByRole("button", { name: "Editar domicílio" })).toBeNull();
+});
+
+// ── Q59(b): the endemic agent visits an empty property from its detail ──
+// HH as a property with nobody in it on the tablet, worked yesterday, with no LIRAa item nor blockade: off the sheet.
+async function emptyProperty(propertyType: string, o: { session?: Partial<SessionResponse>; domains?: null } = {}): Promise<Db> {
+  const vector = { city_block_id: null, risk_class: null, risk_assessed_on: null, last_worked_on: "2026-11-13", last_situation: "worked" };
+  const db = await endemicTablet({ household: { property_type: propertyType, families: [], living_conditions: {}, vector }, ...o });
+  await db.run("DELETE FROM registrations");
+  await db.run("DELETE FROM liraa_items");
+  await db.run("DELETE FROM transmission_blocks");
+  return db;
+}
+
+test("Q59(b): a commerce with no resident, off the due sheet, offers 'Registrar visita', which opens the visit with the bulletin", async () => {
+  const db = await emptyProperty("2");
+  expect((await loadDue(db, NOW)).items.map((item) => item.householdKey)).not.toContain(HH);
+  const nav = await detail(db);
+  await fireEvent.press(await screen.findByRole("button", { name: "Registrar visita" }));
+  expect(nav.onStartPropertyVisit).toHaveBeenCalledWith({ household_id: HH });
+  expect(nav.onStartVisit).not.toHaveBeenCalled();
+  await nav.unmount();
+
+  // The visit route (app/(main)/visits/new.tsx) gives the form the household's key and the bulletin's start.
+  const [params] = nav.onStartPropertyVisit.mock.calls[0];
+  await renderWithServices(<VisitForm start={{ householdKey: params.household_id }} onSaved={jest.fn()} />, fakeServices({ db, now: () => NOW }));
+  expect(await screen.findByRole("header", { name: "Nova visita" })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "Registrar boletim" }).props.accessibilityState.checked).toBe(true);
+  expect(screen.getByText("Boletim do agente de endemias")).toBeTruthy();
+  // No person at a property that is not a home: the 24b's subject question is not there.
+  expect(screen.queryByTestId("field-subject")).toBeNull();
+});
+
+test("Q59(b): a strategic point opens the visit with activity pe", async () => {
+  const db = await emptyProperty("4");
+  const nav = await detail(db);
+  await fireEvent.press(await screen.findByRole("button", { name: "Registrar visita" }));
+  const [params] = nav.onStartPropertyVisit.mock.calls[0];
+  expect(params).toEqual({ household_id: HH, vector_activity: "pe" });
+  await nav.unmount();
+
+  await renderWithServices(<VisitForm start={{ householdKey: params.household_id, vector: { activity: params.vector_activity as VectorActivity } }} onSaved={jest.fn()} />,
+    fakeServices({ db, now: () => NOW }));
+  const pe = await within(await screen.findByTestId("field-vector_inspection.activity")).findByRole("radio", { name: "PE — Ponto estratégico" });
+  expect(pe.props.accessibilityState.checked).toBe(true);
+});
+
+test("Q59(b): a property on the due sheet starts the visit as its card does (the LIRAa link)", async () => {
+  const db = await endemicTablet({ household: { property_type: "2", families: [], living_conditions: {} } });
+  await db.run("DELETE FROM registrations");
+  await db.run("DELETE FROM transmission_blocks");
+  const nav = await detail(db);
+  await fireEvent.press(await screen.findByRole("button", { name: "Registrar visita" }));
+  expect(nav.onStartPropertyVisit).toHaveBeenCalledWith({ household_id: HH, vector_activity: "liraa", liraa_draw_item_id: LIRAA_ITEM });
+});
+
+test("Q59(b): a property with an active resident keeps the visit through the resident", async () => {
+  const db = await endemicTablet({ household: { property_type: "2", families: [], living_conditions: {} } });
+  const nav = await detail(db);
+  const joana = within(await screen.findByTestId(`resident-${JOANA}`));
+  expect(screen.getAllByRole("button", { name: "Registrar visita" })).toHaveLength(1);
+  await fireEvent.press(joana.getByRole("button", { name: "Registrar visita" }));
+  expect(nav.onStartVisit).toHaveBeenCalled();
+  expect(nav.onStartPropertyVisit).not.toHaveBeenCalled();
+});
+
+test("Q59(b): the ACS, the agent without the bulletin and a city with the visit off see no property visit", async () => {
+  const acs = await loadedTablet();
+  const shop = await saveHousehold(acs, { fields: exampleFields({ property_type: "2", living_conditions: {} }) }, { newUuid, now: () => NOW });
+  let nav = await detail(acs, shop.key);
+  expect(await screen.findByText("Microárea 03 · Comércio")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Registrar visita" })).toBeNull();
+  await nav.unmount();
+
+  const session = example<SessionResponse>("session-endemic-agent.json");
+  for (const db of [await emptyProperty("2", { domains: null }), await emptyProperty("2", { session: { features: { ...session.features, home_visits: false } } })]) {
+    nav = await detail(db);
+    expect(await screen.findByText("Microárea 03 · Comércio")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Registrar visita" })).toBeNull());
+    await nav.unmount();
+  }
 });

@@ -1,7 +1,8 @@
 // One household: where it is, who lives there and what can be done from the
 // gate — edit it, add a family or a resident, register a visit. What is
 // still in the line is shown as it was typed, and marked. The endemic agent
-// (35a, Q13(1)) edits a non-residential property, never a family or a resident.
+// (35a, Q13(1)) edits a non-residential property, never a family or a resident;
+// with the bulletin, he visits a property nobody lives in from here (Q59(b)).
 import { useCallback } from "react";
 import { View } from "react-native";
 import { useServices } from "../../app/services";
@@ -14,7 +15,9 @@ import { loadReference } from "../../sync/reference";
 import { SIZES, useTheme } from "../../theme/theme";
 import { VECTOR_ERRORS } from "../../rules/vectorErrors";
 import { Body, Button, Muted, Notice, Screen, Title } from "../../ui/components";
-import { canEditHousehold, canEditRegistry, canUseOvitraps, loadSession } from "../session";
+import { canEditHousehold, canEditRegistry, canRecordInspection, canUseOvitraps, loadSession } from "../session";
+import { DUE_TABLES, loadDue } from "../vector/dueData";
+import { propertyVisitParams, type DueVisitParams } from "../vector/DueScreen";
 import { readProfile } from "../vector/profile";
 import { todayVisits } from "../visits/save";
 import type { VisitStart } from "../who/WhoScreen";
@@ -36,11 +39,20 @@ interface Loaded {
   canEdit: boolean; editsHousehold: boolean; occupied: boolean; visitsOn: boolean; takesFamilies: boolean;
   // 35a: the endemic agent installs an ovitrap here (canUseOvitraps); `hasBlock`: the profile as the tablet knows it.
   ovitraps: { hasBlock: boolean } | null;
+  // Q59(b): the property's own visit, for who records the bulletin with the visit on, where nobody lives as the tablet
+  // knows it (a visit with no person; with a resident, the visit goes through the resident, as in the 24c).
+  propertyVisit: DueVisitParams | null;
   // The hours of the visits made there today on this tablet (withdrawn ones left out).
   visitsToday: string[];
 }
 
-const TABLES = [...HOUSEHOLD_TABLES, "registrations", "reference", "session", "local_visits", "meta"];
+const TABLES = [...new Set([...HOUSEHOLD_TABLES, "registrations", "reference", "session", "local_visits", "meta", ...DUE_TABLES])];
+
+async function propertyVisitOf(db: Db, view: HouseholdView, now: number, visits: boolean): Promise<DueVisitParams | null> {
+  if (!visits || await hasActiveResident(db, view.key)) return null;
+  const entry = (await loadDue(db, now)).items.find((item) => item.householdKey === view.key) ?? null;
+  return propertyVisitParams(view.key, view.body.property_type, entry);
+}
 
 const people = (n: number) => (n === 1 ? "1 pessoa" : `${n} pessoas`);
 
@@ -60,13 +72,15 @@ async function read(db: Db, key: string, now: number): Promise<Loaded | "missing
     canEdit: canEditRegistry(session), editsHousehold: canEditHousehold(session, view.body.property_type),
     occupied: !canEditRegistry(session) && canEditHousehold(session, view.body.property_type) && await hasActiveResident(db, key), visitsOn: session?.features.home_visits === true,
     ovitraps: canUseOvitraps(session) ? { hasBlock: !!(await readProfile(db, key))?.city_block_id } : null,
+    propertyVisit: await propertyVisitOf(db, view, now, session?.features.home_visits === true && canRecordInspection(session, reference)),
     takesFamilies: dict !== null && createRegistryRules(dict).allowsFamilies(view.body.property_type) && !view.body.refused,
     visitsToday: (await todayVisits(db, now)).filter((visit) => visit.householdKey === key && visit.state !== "withdrawn").map((visit) => visit.time),
   };
 }
 
-export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamily, onNewResident, onStartVisit, onOpenResident, onInstallOvitrap }: {
+export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamily, onNewResident, onStartVisit, onOpenResident, onInstallOvitrap, onStartPropertyVisit }: {
   householdKey: string; onEdit(): void; onNewFamily(): void; onEditFamily(familyId: string): void; onInstallOvitrap(): void;
+  onStartPropertyVisit(params: DueVisitParams): void;
   // `familyId`: the family the new resident enters; null for somebody outside any family (or the head of one yet to be registered).
   onNewResident(familyId: string | null): void; onStartVisit(start: VisitStart): void; onOpenResident(registrationKey: string): void;
 }) {
@@ -96,6 +110,7 @@ export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamil
       {data.editsHousehold && !data.occupied && !view.conflict && <Button label="Editar domicílio" variant="secondary" onPress={onEdit} />}
       {data.ovitraps && !data.ovitraps.hasBlock && <Notice tone="warn">{VECTOR_ERRORS.household_without_block}</Notice>}
       {data.ovitraps && <Button label="Instalar ovitrampa" variant="secondary" disabled={!data.ovitraps.hasBlock} onPress={onInstallOvitrap} />}
+      {data.propertyVisit && <Button label="Registrar visita" variant="secondary" onPress={() => onStartPropertyVisit(data.propertyVisit as DueVisitParams)} />}
 
       <Title>Famílias</Title>
       {families.length === 0 && <Muted>Nenhuma família</Muted>}

@@ -99,3 +99,9 @@ export function startFor(item: DueItem, propertyType: string): VectorStart {
   if (propertyType === PE_PROPERTY) return { activity: "pe" };
   return {};
 }
+
+// A property opened from its detail and off the sheet (Q59(b)): the start of a routine visit — PE by the type, else
+// nothing (startFor's own last case).
+export function startForProperty(propertyType: string): VectorStart {
+  return startFor({ householdKey: "", reason: "due", dueSince: null, lastWorkedOn: null, riskClass: null, liraaDrawItemId: null, transmissionBlockId: null }, propertyType);
+}

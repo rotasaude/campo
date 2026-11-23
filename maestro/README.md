@@ -99,7 +99,7 @@ Cada fluxo começa pelo `common/pair.yaml`: instalação limpa, o payload em "Co
 | `vector-inspection-offline.yaml` | 35a, modo avião: em "Imóveis a visitar", boletim LI de rotina, trabalhado, A1 com 2 existentes / 1 com água / 1 com larva, uma amostra com a etiqueta na tela, medida focal com produto, ação educativa; "Etiquete os tubitos" em Hoje; "Pendentes de envio: 1"; volta a rede, sincroniza, zero; o servidor tem 1 boletim, 1 amostra e nenhum corpo com 34–37 |
 | `ovitrap-install.yaml` | 35a, modo avião: no domicílio com quarteirão, "Instalar ovitrampa" com número e TCLE; volta a rede, sincroniza; 1 instalação aceita |
 | `ovitrap-collect.yaml` | 35a: em "Ovitrampas", a `OVT-014` do download (palheta de 5 dias), "Coletar palheta" em bom estado, reinstalada (sem caixa: é o padrão, Q33); sincroniza; 1 coleta aceita |
-| `strategic-point-offline.yaml` | 35a, Q13(1), modo avião: "Novo imóvel não residencial" do tipo ponto estratégico na microárea do agente; pela folha "Imóveis a visitar", visita com boletim PE, trabalhado; "Pendentes de envio: 2"; volta a rede, sincroniza, zero; 1 domicílio e 1 visita com boletim aceitos (a visita cita o domicílio pelo `client_uuid`) |
+| `strategic-point-offline.yaml` | 35a, Q13(1), modo avião: "Novo imóvel não residencial" do tipo ponto estratégico na microárea do agente; pelo detalhe do imóvel (Q59(b): sem morador), visita com boletim PE, trabalhado; "Pendentes de envio: 2"; volta a rede, sincroniza, zero; 1 domicílio e 1 visita com boletim aceitos (a visita cita o domicílio pelo `client_uuid`) |
 
 Duas coisas que valem para qualquer fluxo novo, aprendidas no tablet:
 

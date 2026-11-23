@@ -13,6 +13,7 @@ export default function HouseholdRoute() {
       onNewResident={(family) => router.push({ pathname: "/registrations/new", params: { household: key, family: family ?? "" } })}
       onOpenResident={(registration) => router.push({ pathname: "/registrations/[key]/edit", params: { key: registration } })}
       onInstallOvitrap={() => router.push({ pathname: "/ovitraps/new", params: { household: key } })}
+      onStartPropertyVisit={(params) => router.push({ pathname: "/visits/new", params: { ...params } })}
       onStartVisit={(start) => router.push({
         pathname: "/visits/new",
         params: { patient_id: start.patient_id, household_id: start.household_id ?? "", family_id: start.family_id ?? "", micro_area_id: start.micro_area_id },

@@ -10,7 +10,8 @@ import { useLive } from "../../db/events";
 import type { Db } from "../../db/types";
 import { dictLabel } from "../../rules/dictionaries";
 import { fmtDay } from "../../rules/homeVisit";
-import { startFor, type DueReason } from "../../rules/vectorDue";
+import { startFor, startForProperty, type DueReason } from "../../rules/vectorDue";
+import type { VectorStart } from "../../rules/vectorInspection";
 import { loadReference } from "../../sync/reference";
 import { SIZES, useTheme } from "../../theme/theme";
 import { Body, Button, Muted, Screen } from "../../ui/components";
@@ -27,9 +28,18 @@ export interface DueVisitParams {
   household_id: string; vector_activity?: string; work_type?: string; liraa_draw_item_id?: string; transmission_block_id?: string;
 }
 export function dueVisitParams(entry: DueEntry): DueVisitParams {
-  const start = startFor(entry, entry.propertyType);
+  return visitParams(entry.householdKey, startFor(entry, entry.propertyType));
+}
+
+// Q59(b): the visit of a property from its detail — its card's start when the property is on the sheet (the LIRAa or
+// blockade link, a pending one), the routine one otherwise.
+export function propertyVisitParams(householdKey: string, propertyType: string, entry: DueEntry | null): DueVisitParams {
+  return entry ? dueVisitParams(entry) : visitParams(householdKey, startForProperty(propertyType));
+}
+
+function visitParams(householdKey: string, start: VectorStart): DueVisitParams {
   return {
-    household_id: entry.householdKey,
+    household_id: householdKey,
     ...(start.activity ? { vector_activity: start.activity } : {}),
     ...(start.workType ? { work_type: start.workType } : {}),
     ...(start.liraaDrawItemId ? { liraa_draw_item_id: start.liraaDrawItemId } : {}),
