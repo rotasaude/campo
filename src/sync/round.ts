@@ -141,6 +141,11 @@ async function round(deps: RoundDeps): Promise<RoundOutcome> {
       return { kind: "skipped", reason: "needs_wifi" };
     }
     await downloadAll({ db, client, now: deps.now });
+    // Known window (review M3, Q61): the purge takes the city's day of now, after the download, not of its horizon. A
+    // bulletin accepted just before midnight in a round whose download ends after it is "yesterday" and goes, though
+    // the horizon (first request − 2 s) may fall before the acceptance and the download not bring it yet: for that
+    // round its LIRAa item shows as pending again, until the next download brings it inspected. Seconds, only with
+    // work at midnight; accepted as is.
     await purgeAccepted(db, cityToday(deps.now(), skew, offset));
 
     // The reason of a failure may carry a path or a message of the platform: only the fact is logged.
