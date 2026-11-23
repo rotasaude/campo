@@ -23,8 +23,8 @@ type Set = Pick<VisitVectorSummary, "city_block_id" | "risk_class">;
 // A bulletin of this tablet that still counts for the place: waiting in the line (pending, sending, or blocked behind
 // what it cites) or accepted (the sheet keeps today's only, src/sync/retention.ts). A refused one (needs attention) and
 // a withdrawn one are left out. `day`: the visit's city day; `acceptedAt`: when the acceptance came back (the device's
-// clock, src/sync/dispatch.ts); `liraaDrawItemId`: the LIRAa item it inspects, read from the line while it waits (the
-// sheet does not keep it, Q11).
+// clock, src/sync/dispatch.ts); `liraaDrawItemId`: the LIRAa item it inspects, from the sheet (Q47(b)) or, for a visit
+// saved before the sheet kept it, from the line while it waits.
 export interface LocalBulletin {
   householdKey: string; day: string; state: "waiting" | "accepted"; acceptedAt: string | null; vector: VisitVectorSummary; liraaDrawItemId: string | null;
 }
@@ -43,7 +43,7 @@ export async function readLocalBulletins(db: Db): Promise<LocalBulletin[]> {
     bulletins.push({
       householdKey: summary.household, day: visit.city_day, state: visit.state === "accepted" ? "accepted" : "waiting",
       acceptedAt: visit.state === "accepted" ? visit.accepted_at : null, vector: summary.vector,
-      liraaDrawItemId: inspection?.liraa_draw_item_id ?? null,
+      liraaDrawItemId: summary.vector.liraa_draw_item_id ?? inspection?.liraa_draw_item_id ?? null,
     });
   }
   return bulletins;

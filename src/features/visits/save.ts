@@ -24,8 +24,11 @@ export const WITHDRAW_REASON = { min: 10, max: 500 } as const;
 
 type Values = Record<string, unknown>;
 // What the sheet keeps of a bulletin (Q11): the activity and the situation, and the block and the risk it sets (read by
-// src/features/vector/profile.ts until the download brings them). Never deposits, measures or samples.
-export interface VisitVectorSummary { activity: VectorActivity; situation: VectorSituation; city_block_id?: string; risk_class?: RiskClass }
+// src/features/vector/profile.ts until the download brings them), and the LIRAa item it inspects (Q47(b): the due sheet
+// drops the item after the acceptance, before the download). Never deposits, measures or samples.
+export interface VisitVectorSummary {
+  activity: VectorActivity; situation: VectorSituation; city_block_id?: string; risk_class?: RiskClass; liraa_draw_item_id?: string;
+}
 export interface VisitSummary extends LocalVisitSummary { subject: VisitSubject; outcome: VisitOutcome; vector?: VisitVectorSummary }
 
 // The bulletin as the upload carries it. The rules work on arrays (VectorInspectionInput), the generated type has tuples
@@ -103,6 +106,7 @@ export async function saveVisit(db: Db, draft: VisitDraft, ctx: SaveVisitContext
         activity: inspection.activity, situation: inspection.situation,
         ...(inspection.city_block_id !== undefined ? { city_block_id: inspection.city_block_id } : {}),
         ...(inspection.risk_class !== undefined ? { risk_class: inspection.risk_class } : {}),
+        ...(inspection.activity === "liraa" && typeof inspection.liraa_draw_item_id === "string" ? { liraa_draw_item_id: inspection.liraa_draw_item_id } : {}),
       };
     }
     await tx.run("INSERT INTO local_visits (client_uuid, city_day, occurred_at, summary, state) VALUES (?, ?, ?, ?, 'pending')",

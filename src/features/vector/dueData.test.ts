@@ -166,3 +166,24 @@ test("B: downloaded as recently worked, closed today and accepted → pending", 
   await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T13:00:00.000Z");
   expect((await reasons(db)).map(([key]) => key)).not.toContain(NEVER);
 });
+
+// Q47(b): the summary of the visit keeps the LIRAa item, so an accepted bulletin the last good download cannot have
+// brought consumes it as a queued one does.
+test("an accepted LIRAa bulletin with the next download failing does not bring the household back as LIRAa", async () => {
+  const db = await sheet();
+  await closeBlockade(db);
+  await save(db, HH, { activity: "liraa", liraa_draw_item_id: LIRAA_ITEM, situation: "closed" });
+  const row = await db.get<{ summary: string }>("SELECT summary FROM local_visits");
+  expect(JSON.parse(row!.summary).vector).toEqual({ activity: "liraa", situation: "closed", liraa_draw_item_id: LIRAA_ITEM });
+  await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T12:00:00.000Z");
+  expect((await reasons(db))[0]).toEqual([HH, "pending", "2027-01-02"]);
+});
+
+test("an accepted LIRAa bulletin at or before the last good download does not consume the item", async () => {
+  const db = await sheet();
+  await closeBlockade(db);
+  await save(db, HH, { activity: "liraa", liraa_draw_item_id: LIRAA_ITEM, situation: "closed" });
+  // The download after the acceptance still has the item pending: it speaks for the server.
+  await acceptAll(db, "2026-11-14T13:00:00.000Z", "2026-11-14T13:00:00.000Z");
+  expect((await reasons(db))[0]).toEqual([HH, "liraa", "2027-01-02"]);
+});

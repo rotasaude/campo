@@ -6,8 +6,8 @@
 // the latest one.
 // - a bulletin waiting in the line sets the situation over the download and consumes the LIRAa item it inspects (any
 //   situation takes an item out of `pending` on the api, Liraa::Items.inspected!);
-// - an accepted one (today's) newer than the last good download sets the situation the same way: the download has
-//   not brought it yet (review I1). At or before that download, it only fills a situation the download left null —
+// - an accepted one (today's) newer than the last good download sets the situation and consumes its item the same way:
+//   the download has not brought it yet (review I1, Q47(b)). At or before that download, it only fills a situation the download left null —
 //   the download already speaks for the server, an inspection after this one included;
 // - the worked day is the latest of the download's and of these bulletins'.
 // `accepted_at` is the device's clock and `last_download_ok_at` the trusted one (src/sync/trustedTime.ts): the first is
@@ -61,7 +61,8 @@ export async function loadDue(db: Db, now: number): Promise<{ items: DueEntry[] 
   const skew = Number(meta.get("clock_skew_ms") ?? 0) || 0;
   const fresh = (b: LocalBulletin): boolean => b.state === "accepted" && b.acceptedAt !== null
     && (lastOk === null || Number.isNaN(lastOk) || Date.parse(b.acceptedAt) + skew > lastOk);
-  const consumed = new Set(bulletins.flatMap((b) => (b.state === "waiting" && b.vector.activity === "liraa" && b.liraaDrawItemId !== null ? [b.liraaDrawItemId] : [])));
+  // Waiting, or accepted after the last good download (Q47(b)): a later download already speaks for the server.
+  const consumed = new Set(bulletins.flatMap((b) => ((b.state === "waiting" || fresh(b)) && b.vector.activity === "liraa" && b.liraaDrawItemId !== null ? [b.liraaDrawItemId] : [])));
   // The lowest id first, as vectorRepo.pendingLiraaItem and activeBlockFor (the api picks the oldest; Q43).
   const liraa = new Map<string, string>();
   for (const item of await db.all<{ id: string; household_id: string }>("SELECT id, household_id FROM liraa_items WHERE status = 'pending' ORDER BY id")) {
