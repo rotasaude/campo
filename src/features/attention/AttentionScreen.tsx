@@ -4,6 +4,8 @@
 // the server suspects the person typed is somebody it knows (its candidates
 // are shown and the agent answers), the person already has a registration
 // (the existing one is opened), or a participant looks like a repetition.
+// 35a: a sample label already taken in the city (sample_label_taken, Q7(1)) offers new labels — only on the agent's tap,
+// and the new ones are shown at once, for the tubes to be labelled again.
 import { useCallback, useState } from "react";
 import { View } from "react-native";
 import { useServices } from "../../app/services";
@@ -25,6 +27,7 @@ import { correctNumber } from "../ovitraps/save";
 import { takenNumbers } from "../ovitraps/view";
 import { installProblems, numberTaken } from "../../rules/ovitrap";
 import { VECTOR_ERRORS } from "../../rules/vectorErrors";
+import { bulletinLabels, canRelabel, relabelVisit } from "../visits/relabel";
 
 export const NOT_WAITING_FOR_YOU = "Este registro não está aguardando você.";
 export const NO_FORM_FOR_THIS = "Este registro não pode ser corrigido aqui. Descarte e registre de novo.";
@@ -47,7 +50,7 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
   seq: number; onFix(target: FixTarget): void; onOpenRegistration(registrationKey: string): void; onDone(): void;
 }) {
   const { colors } = useTheme();
-  const { db } = useServices();
+  const { db, crypto } = useServices();
   const read = useCallback(async (from: Db): Promise<{ item: OutboxItem | null; others: number; existingKey: string | null }> => {
     const item = await outboxRepo.bySeq(from, seq);
     const existingId = item?.error === "already_registered" ? ((item.candidates?.[0] as { registration_id?: string } | undefined)?.registration_id ?? null) : null;
@@ -62,9 +65,13 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
   // "Corrigir número" (Q11): the number typed, and why the tablet refuses it.
   const [number, setNumber] = useState<string | null>(null);
   const [numberProblem, setNumberProblem] = useState<string | null>(null);
+  // The labels "Gerar etiquetas novas" gave: shown until the agent leaves (the item is back in the line by then).
+  const [newLabels, setNewLabels] = useState<string[] | null>(null);
 
   if (!data) return <Screen title="Precisa de atenção"><Muted>Carregando…</Muted></Screen>;
   if (notice !== null) return <Screen title="Precisa de atenção"><Notice>{notice}</Notice></Screen>;
+  // The dashboard's words after the 201 (InspectionSection.tubeLabelsText).
+  if (newLabels !== null) return <Screen title="Precisa de atenção"><Notice>{`Etiquete os tubitos: ${newLabels.join(", ")}`}</Notice></Screen>;
   const { item } = data;
   if (item === null || item.state !== "needs_attention") return <Screen title="Precisa de atenção"><Notice>{NOT_WAITING_FOR_YOU}</Notice></Screen>;
 
@@ -75,6 +82,7 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
   const existingId = registered ? ((item.candidates?.[0] as { registration_id?: string } | undefined)?.registration_id ?? null) : null;
   const hasForm = WITH_FORM.includes(item.type) && item.target_id !== null && !suspected && !registered;
   const renumber = item.type === "ovitrap_installation" && item.error === "ovitrap_number_taken";
+  const relabel = canRelabel(item);
   const card = { gap: 6, padding: SIZES.gap, borderRadius: SIZES.radius, borderWidth: 1, borderColor: colors.rule, backgroundColor: colors.panel } as const;
 
   const openExisting = async () => {
@@ -128,8 +136,17 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
           }} />
         </>
       )}
-      {!hasForm && !suspected && !registered && !renumber && <Muted>{NO_FORM_FOR_THIS}</Muted>}
-      {!suspected && !registered && !renumber && <Button label="Reenviar" variant="secondary" onPress={() => run(() => resend(db, seq))} />}
+      {relabel && (
+        <>
+          <Muted>{bulletinLabels(item).join(", ")}</Muted>
+          <Button label="Gerar etiquetas novas" onPress={() => {
+            void relabelVisit(db, seq, crypto.randomUUID).then(({ labels }) => setNewLabels(labels))
+              .catch(() => setNotice("Não foi possível concluir. Volte e tente de novo."));
+          }} />
+        </>
+      )}
+      {!hasForm && !suspected && !registered && !renumber && !relabel && <Muted>{NO_FORM_FOR_THIS}</Muted>}
+      {!suspected && !registered && !renumber && !relabel && <Button label="Reenviar" variant="secondary" onPress={() => run(() => resend(db, seq))} />}
       {confirming ? (
         <>
           <Notice tone="down">{DISCARD_WARNING}</Notice>

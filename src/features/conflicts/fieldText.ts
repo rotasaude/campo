@@ -7,6 +7,7 @@ import { dictLabel, type FieldSpec, type RegistrationDictionaries, type SectionK
 import { sectionFieldLabel } from "../../rules/labels";
 import { dateToScreen, monthToScreen } from "../forms/SectionFields";
 import { addressLine, pointText } from "../households/view";
+import { COUNTERS, SECTION_TITLE as BULLETIN_TITLE } from "../visits/InspectionSection";
 
 const SECTION_TITLE: Record<SectionKey, string> = {
   living_conditions: "Condições de moradia", identification: "Identificação", sociodemographic: "Sociodemográfico", health_conditions: "Condições de saúde",
@@ -58,9 +59,38 @@ const OVITRAP_LABEL: Record<string, string> = {
 };
 const OVITRAP_ITEMS: readonly ItemType[] = ["ovitrap_installation", "ovitrap_collection"];
 
+// The bulletin's paths (35a, M5 of the Task 7 review) with the labels of its section on the visit form (InspectionSection,
+// copied from the dashboard): a deposit by "Depósitos" and its counter, a measure or a sample by "Medida n" / "Amostra n"
+// and its field, as participants[i]. The LIRAa draw and the transmission block are refused under "Atividade", where the
+// form shows them. Anything else under the bulletin is the section's name, never the raw path.
+const BULLETIN = "vector_inspection";
+const INSPECTION_LABEL: Record<string, string> = {
+  activity: "Atividade", liraa_draw_item_id: "Atividade", transmission_block_id: "Atividade", work_type: "Tipo de trabalho",
+  situation: "Situação do imóvel", entered_at: "Entrada (hh:mm)", left_at: "Saída (hh:mm)", deposits: "Depósitos",
+  measures: "Medidas de controle", samples: "Amostras", educational_action: "Ação educativa", city_block_id: "Quarteirão",
+  risk_class: "Risco do imóvel",
+};
+const DEPOSIT_LABEL: Record<string, string> = { group: "Grupo do depósito", ...Object.fromEntries(COUNTERS) };
+const MEASURE_LABEL: Record<string, string> = { method: "Método", vector_product_id: "Produto", charges: "Cargas" };
+const SAMPLE_LABEL: Record<string, string> = { larvae_collected: "Larvas coletadas", deposit_group: "Grupo da amostra" };
+
+function inspectionLabel(path: string): string {
+  const indexed = /^(deposits|measures|samples)\[(\d+)\](?:\.(.+))?$/.exec(path);
+  if (indexed) {
+    const [, list, index, field] = indexed;
+    if (list === "deposits") return field && DEPOSIT_LABEL[field] ? `Depósitos: ${DEPOSIT_LABEL[field]}` : "Depósitos";
+    const head = `${list === "measures" ? "Medida" : "Amostra"} ${Number(index) + 1}`;
+    const inner = field ? (list === "measures" ? MEASURE_LABEL : SAMPLE_LABEL)[field] : undefined;
+    return inner ? `${head}: ${inner}` : head;
+  }
+  return INSPECTION_LABEL[path] ?? BULLETIN_TITLE;
+}
+
 // The field a refusal of the server points to (its `path`), in words: "participants[1].new_patient.cpf" → "Participante 2: CPF".
 export function pathLabel(type: ItemType, path: string): string {
   if (OVITRAP_ITEMS.includes(type)) return OVITRAP_LABEL[path] ?? path;
+  if (path === BULLETIN) return BULLETIN_TITLE;
+  if (path.startsWith(`${BULLETIN}.`)) return inspectionLabel(path.slice(BULLETIN.length + 1));
   const participant = /^participants\[(\d+)\](?:\.(.*))?$/.exec(path);
   if (participant) {
     const rest = participant[2] ? pathLabel(type, participant[2]) : "";

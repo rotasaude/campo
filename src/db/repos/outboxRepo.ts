@@ -92,6 +92,12 @@ export const outboxRepo = {
     dbEvents.emit("outbox");
   },
 
+  // A new idempotency key for an item the server never accepted (35a, sample_label_taken): see features/visits/relabel.ts.
+  async rekey(db: Db, seq: number, clientUuid: string): Promise<void> {
+    await db.run("UPDATE outbox SET client_uuid = ?, updated_at = ? WHERE seq = ?", [clientUuid, nowIso(), seq]);
+    dbEvents.emit("outbox");
+  },
+
   async remove(db: Db, seq: number): Promise<void> {
     await db.run("DELETE FROM outbox WHERE seq = ?", [seq]);
     dbEvents.emit("outbox");

@@ -29,7 +29,7 @@ export const SAMPLE_NEEDS_LARVAE = "amostra só de grupo com larva";
 export const EXIT_AT_SAVE = "Saída em branco: a hora em que a visita for registrada.";
 export const SECTION_TITLE = "Boletim do agente de endemias";
 const ROOT = "vector_inspection";
-const COUNTERS = [
+export const COUNTERS = [
   ["existing", "Existentes"], ["with_water", "Com água"], ["with_larvae", "Com larva"], ["eliminated", "Eliminados"], ["treated", "Tratados"],
 ] as const;
 
