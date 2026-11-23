@@ -2,7 +2,8 @@
 // first eight characters of the visit's client_uuid (§9, sampleLabel), so the way out is a new client_uuid — the server
 // never recorded the refused visit (the refusal undoes it whole, and leaves no receipt), so the new one is a first
 // sending, not a second visit. Only on the agent's tap, only for this refusal. The item goes back to the line at once
-// (nothing holds it until the tubes are relabelled); the new labels are shown on the attention screen right after the tap.
+// (nothing holds it until the tubes are relabelled); the new labels are shown on the attention screen right after the tap,
+// and the Hoje list shows the current ones on the visit's line until the visit is accepted (Q58, todayVisits).
 //
 // One transaction: the item's client_uuid, the sheet line's key and everything in the line that names the old uuid —
 // what depends on it (an ovitrap installation waits for the bulletin that set the block) and a `<kind>_client_uuid`

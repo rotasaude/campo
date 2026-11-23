@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from "@testing-library/react-native";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 import { fakeServices, renderWithServices } from "../../app/testing";
 import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
@@ -6,7 +6,9 @@ import { createVisitRules, emptyVisitDraft, type VisitDraft } from "../../rules/
 import { createRegistryRules } from "../../rules/registry";
 import { registrationDictionaries } from "../../rules/testing/dictionaries";
 import { applyResults } from "../../sync/dispatch";
-import { accepted, newUuid } from "../../sync/testing";
+import type { VectorInspectionBody } from "../../contract";
+import { accepted, newUuid, rejected } from "../../sync/testing";
+import { relabelVisit } from "./relabel";
 import { AREA, HH, loadedTablet } from "../testing";
 import { NOT_SENT_WILL_BE_ERASED, saveVisit } from "./save";
 import { NO_VISITS_TODAY, TodayScreen } from "./TodayScreen";
@@ -22,8 +24,8 @@ const draft = (o: Partial<VisitDraft> = {}): VisitDraft => ({
 });
 async function mount(db: Db) {
   const onNewVisit = jest.fn();
-  await renderWithServices(<TodayScreen onNewVisit={onNewVisit} />, fakeServices({ db, now: () => NOW }));
-  return { onNewVisit };
+  const view = await renderWithServices(<TodayScreen onNewVisit={onNewVisit} />, fakeServices({ db, now: () => NOW }));
+  return { onNewVisit, view };
 }
 const visit = (uuid: string) => within(screen.getByTestId(`visit-${uuid}`));
 
@@ -93,4 +95,64 @@ test("a visit whose item is gone from the line without having been accepted is n
   await fireEvent.press(visit(uuid).getByRole("button", { name: "Apagar visita" }));
   expect(await screen.findByText(NO_VISITS_TODAY)).toBeTruthy();
   expect(await outboxRepo.all(db)).toEqual([]); // no withdrawal of a visit the server never had
+});
+
+// Q58: a visit with samples that the server has not accepted yet repeats, on its line, the labels the tubes must carry —
+// the current ones, made from the visit's client_uuid now (never stored), so a relabel shows only the new ones.
+const OLD = "3f2a9c1e-0000-4000-8000-0000000000a1";
+const NEW = "abcdef12-0000-4000-8000-0000000000b2";
+const bulletin = (samples: { number: number; deposit_group: string; larvae_collected: number }[]) => ({
+  activity: "li", work_type: "routine", situation: "worked", educational_action: true,
+  deposits: [{ group: "A1", existing: 2, with_water: 2, with_larvae: 2, eliminated: 0, treated: 0 }], samples,
+}) as unknown as VectorInspectionBody;
+const TWO = [{ number: 1, deposit_group: "A1", larvae_collected: 3 }, { number: 2, deposit_group: "A1", larvae_collected: 1 }];
+const withBulletin = (clientUuid: string, samples = TWO) => ({ ...ctx(), clientUuid, vectorInspection: bulletin(samples) });
+const noStale = { onStale: async () => undefined };
+
+test("a visit with samples not yet accepted shows its labels; one without samples shows none", async () => {
+  const db = await loadedTablet();
+  await saveVisit(db, draft({ time: "09:00", outcome: 1 }), withBulletin(OLD));
+  const empty = await saveVisit(db, draft({ time: "10:00", outcome: 1 }), withBulletin(newUuid(), []));
+  const plain = await saveVisit(db, draft({ time: "11:00" }), ctx());
+  await mount(db);
+  expect(await screen.findByText("Etiquete os tubitos: 3F2A9C1E-01, 3F2A9C1E-02")).toBeTruthy();
+  expect(visit(OLD).getByText("Etiquete os tubitos: 3F2A9C1E-01, 3F2A9C1E-02")).toBeTruthy();
+  expect(visit(empty).queryByText(/Etiquete os tubitos/)).toBeNull();
+  expect(visit(plain).queryByText(/Etiquete os tubitos/)).toBeNull();
+  // Not stored: the sheet line keeps no sample nor label.
+  const [row] = await db.all<{ summary: string }>("SELECT summary FROM local_visits WHERE client_uuid = ?", [OLD]);
+  expect(row.summary).not.toMatch(/samples|3f2a9c1e/i);
+});
+
+test("after a relabel Hoje shows only the new labels, never the old", async () => {
+  const db = await loadedTablet();
+  await saveVisit(db, draft({ outcome: 1 }), withBulletin(OLD));
+  const item = (await outboxRepo.byClientUuid(db, OLD))!;
+  await applyResults(db, [item], [rejected(item, "sample_label_taken", { path: "vector_inspection.samples[0]" })], noStale);
+  await relabelVisit(db, item.seq, () => NEW);
+  await mount(db);
+  expect(await screen.findByText("Etiquete os tubitos: ABCDEF12-01, ABCDEF12-02")).toBeTruthy();
+  expect(screen.queryByText(/3F2A9C1E/i)).toBeNull();
+});
+
+test("an accepted visit loses the line", async () => {
+  const db = await loadedTablet();
+  await saveVisit(db, draft({ outcome: 1 }), withBulletin(OLD));
+  await mount(db);
+  expect(await screen.findByText("Etiquete os tubitos: 3F2A9C1E-01, 3F2A9C1E-02")).toBeTruthy();
+  const item = (await outboxRepo.byClientUuid(db, OLD))!;
+  await applyResults(db, [item], [accepted(item)], noStale);
+  await waitFor(() => expect(visit(OLD).getByText("Enviada")).toBeTruthy());
+  expect(screen.queryByText(/Etiquete os tubitos/)).toBeNull();
+});
+
+test("reopening the app keeps the line: read again from the database", async () => {
+  const db = await loadedTablet();
+  await saveVisit(db, draft({ outcome: 1 }), withBulletin(OLD));
+  const first = await mount(db);
+  expect(await screen.findByText("Etiquete os tubitos: 3F2A9C1E-01, 3F2A9C1E-02")).toBeTruthy();
+  await first.view.unmount();
+  expect(screen.queryByText(/Etiquete os tubitos/)).toBeNull();
+  await mount(db);
+  expect(await screen.findByText("Etiquete os tubitos: 3F2A9C1E-01, 3F2A9C1E-02")).toBeTruthy();
 });

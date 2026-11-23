@@ -17,6 +17,7 @@ import { DERIVED_REASONS, type InspectionIssue, type VectorInspectionInput } fro
 import { cityToday } from "../../sync/clock";
 import { enqueue, removeUnsent, type Dep } from "../../sync/outbox";
 import type { LocalVisitSummary } from "../map/mapData";
+import { bulletinLabels } from "./relabel";
 
 export const NOT_SENT_WILL_BE_ERASED = "Esta visita ainda não foi enviada e será apagada";
 export const VISIT_BEING_SENT = "A visita está sendo enviada agora. Tente de novo em instantes.";
@@ -122,6 +123,9 @@ export interface TodayVisit {
   householdKey: string | null; subject: VisitSubject; outcome: VisitOutcome;
   // The outbox item of the visit, while it has one (what the screen says about the sending), and a withdrawal on its way.
   sending: "pending" | "sending" | "needs_attention" | "conflict" | "blocked" | null; withdrawalQueued: boolean;
+  // Q58: the labels the bulletin's tubes must carry, while the server has not accepted the visit — made now from the
+  // item's current client_uuid and the sample numbers (never stored, so a relabel shows only the new ones). Empty otherwise.
+  labels: string[];
 }
 
 export const TODAY_TABLES = ["local_visits", "outbox", "meta"];
@@ -135,11 +139,13 @@ export async function todayVisits(db: Db, now: number): Promise<TodayVisit[]> {
     "SELECT client_uuid, occurred_at, summary, state FROM local_visits WHERE city_day = ? ORDER BY occurred_at, client_uuid", [today]);
   return rows.map((row) => {
     const summary = JSON.parse(row.summary) as Partial<VisitSummary>;
+    const item = queue.find((queued) => queued.client_uuid === row.client_uuid && queued.type === "home_visit");
     return {
       clientUuid: row.client_uuid, time: row.occurred_at.slice(11, 16), occurredAt: row.occurred_at, state: row.state,
       householdKey: summary.household ?? null, subject: summary.subject ?? "none", outcome: summary.outcome ?? 1,
       sending: queue.find((item) => item.client_uuid === row.client_uuid)?.state ?? null,
       withdrawalQueued: queue.some((item) => item.type === "home_visit_withdrawal" && item.body.visit_client_uuid === row.client_uuid),
+      labels: row.state === "pending" && item ? bulletinLabels(item) : [],
     };
   });
 }

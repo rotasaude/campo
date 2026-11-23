@@ -71,6 +71,8 @@ export function TodayScreen({ onNewVisit }: { onNewVisit(): void }) {
           <Body>{`${visit.time} · ${visit.where}`}</Body>
           <Muted>{visit.outcomeLabel}</Muted>
           <Muted>{visit.status}</Muted>
+          {/* Q58: the dashboard's words after the 201, until the server accepts the visit. */}
+          {visit.labels.length > 0 && <Body>{`Etiquete os tubitos: ${visit.labels.join(", ")}`}</Body>}
           {visit.canWithdraw && open !== visit.clientUuid && (
             <Button label="Retirar" variant="secondary" onPress={() => { setOpen(visit.clientUuid); setReason(""); setError(null); }} />
           )}
