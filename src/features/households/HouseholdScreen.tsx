@@ -39,8 +39,9 @@ interface Loaded {
   canEdit: boolean; editsHousehold: boolean; occupied: boolean; visitsOn: boolean; takesFamilies: boolean;
   // 35a: the endemic agent installs an ovitrap here (canUseOvitraps); `hasBlock`: the profile as the tablet knows it.
   ovitraps: { hasBlock: boolean } | null;
-  // Q59(b): the property's own visit, for who records the bulletin with the visit on, where nobody lives as the tablet
-  // knows it (a visit with no person; with a resident, the visit goes through the resident, as in the 24c).
+  // Q59(b): the property's own visit, for who records the bulletin with the visit on, at an active property where nobody
+  // lives as the tablet knows it (a visit with no person; with a resident, the visit goes through the resident, as in
+  // the 24c).
   propertyVisit: DueVisitParams | null;
   // The hours of the visits made there today on this tablet (withdrawn ones left out).
   visitsToday: string[];
@@ -48,8 +49,12 @@ interface Loaded {
 
 const TABLES = [...new Set([...HOUSEHOLD_TABLES, "registrations", "reference", "session", "local_visits", "meta", ...DUE_TABLES])];
 
+// Nobody there, as the api would see it: an inactive household is refused (household_inactive, like the due sheet leaves
+// it out), and an active family (not moved out) takes the reasons 34–37 from a visit with no person (Q44) — the
+// bulletin's derived ones among them.
 async function propertyVisitOf(db: Db, view: HouseholdView, now: number, visits: boolean): Promise<DueVisitParams | null> {
-  if (!visits || await hasActiveResident(db, view.key)) return null;
+  if (!visits || view.body.status !== "active" || view.body.families.some((family) => !family.moved_out)) return null;
+  if (await hasActiveResident(db, view.key)) return null;
   const entry = (await loadDue(db, now)).items.find((item) => item.householdKey === view.key) ?? null;
   return propertyVisitParams(view.key, view.body.property_type, entry);
 }
@@ -95,6 +100,7 @@ export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamil
   const body = view.body;
   const card = { gap: 6, padding: SIZES.gap, borderRadius: SIZES.radius, borderWidth: 1, borderColor: colors.rule, backgroundColor: colors.panel } as const;
   const families = body.families;
+  const { propertyVisit } = data;
 
   return (
     <Screen title={data.line}>
@@ -110,7 +116,7 @@ export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamil
       {data.editsHousehold && !data.occupied && !view.conflict && <Button label="Editar domicílio" variant="secondary" onPress={onEdit} />}
       {data.ovitraps && !data.ovitraps.hasBlock && <Notice tone="warn">{VECTOR_ERRORS.household_without_block}</Notice>}
       {data.ovitraps && <Button label="Instalar ovitrampa" variant="secondary" disabled={!data.ovitraps.hasBlock} onPress={onInstallOvitrap} />}
-      {data.propertyVisit && <Button label="Registrar visita" variant="secondary" onPress={() => onStartPropertyVisit(data.propertyVisit as DueVisitParams)} />}
+      {propertyVisit && <Button label="Registrar visita" variant="secondary" onPress={() => onStartPropertyVisit(propertyVisit)} />}
 
       <Title>Famílias</Title>
       {families.length === 0 && <Muted>Nenhuma família</Muted>}
@@ -138,7 +144,7 @@ export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamil
           <Button label="Abrir cadastro" variant="secondary" onPress={() => onOpenResident(resident.registrationKey)} />
           {data.visitsOn && (
             <Button label="Registrar visita" variant="secondary" onPress={() => onStartVisit({
-              patient_id: resident.patientId, household_id: view.id ?? view.key, family_id: resident.familyId, micro_area_id: body.micro_area.id,
+              patient_id: resident.patientId, household_id: view.key, family_id: resident.familyId, micro_area_id: body.micro_area.id,
             })} />
           )}
         </View>

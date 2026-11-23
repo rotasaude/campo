@@ -1,15 +1,15 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 import { fakeServices, renderWithServices } from "../../app/testing";
-import type { SessionResponse, UploadRequest, HouseholdItemBody } from "../../contract";
+import type { ChangesResponse, HouseholdBody, HouseholdItemBody, SessionResponse, UploadRequest } from "../../contract";
 import { example } from "../../contract/fixtures";
 import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
 import { newUuid } from "../../sync/testing";
-import type { VectorActivity } from "../../rules/vectorDomains";
 import { loadDue } from "../vector/dueData";
-import type { DueVisitParams } from "../vector/DueScreen";
+import { dueVisitParams, type DueVisitParams } from "../vector/DueScreen";
+import { vectorStart } from "../visits/routeStart";
 import { VisitForm } from "../visits/VisitForm";
-import { AREA, HH, LIRAA_ITEM, endemicTablet, loadedTablet } from "../testing";
+import { AREA, HH, LIRAA_ITEM, TRANSMISSION_BLOCK, endemicTablet, loadedTablet } from "../testing";
 import { READ_ONLY } from "./HouseholdForm";
 import { HouseholdList, NON_RESIDENTIAL_ONLY, NO_HOUSEHOLDS } from "./HouseholdList";
 import { AT_THE_DASHBOARD, HouseholdScreen } from "./HouseholdScreen";
@@ -201,9 +201,11 @@ test("agent: a non-residential property with an active resident on the tablet of
 
 // ── Q59(b): the endemic agent visits an empty property from its detail ──
 // HH as a property with nobody in it on the tablet, worked yesterday, with no LIRAa item nor blockade: off the sheet.
-async function emptyProperty(propertyType: string, o: { session?: Partial<SessionResponse>; domains?: null } = {}): Promise<Db> {
+// `household`: over that body (its status, its families, its profile).
+async function emptyProperty(propertyType: string, o: { session?: Partial<SessionResponse>; domains?: null; household?: Record<string, unknown> } = {}): Promise<Db> {
   const vector = { city_block_id: null, risk_class: null, risk_assessed_on: null, last_worked_on: "2026-11-13", last_situation: "worked" };
-  const db = await endemicTablet({ household: { property_type: propertyType, families: [], living_conditions: {}, vector }, ...o });
+  const { household, ...rest } = o;
+  const db = await endemicTablet({ household: { property_type: propertyType, families: [], living_conditions: {}, vector, ...household }, ...rest });
   await db.run("DELETE FROM registrations");
   await db.run("DELETE FROM liraa_items");
   await db.run("DELETE FROM transmission_blocks");
@@ -221,7 +223,7 @@ test("Q59(b): a commerce with no resident, off the due sheet, offers 'Registrar 
 
   // The visit route (app/(main)/visits/new.tsx) gives the form the household's key and the bulletin's start.
   const [params] = nav.onStartPropertyVisit.mock.calls[0];
-  await renderWithServices(<VisitForm start={{ householdKey: params.household_id }} onSaved={jest.fn()} />, fakeServices({ db, now: () => NOW }));
+  await renderWithServices(<VisitForm start={{ householdKey: params.household_id, vector: vectorStart(params) }} onSaved={jest.fn()} />, fakeServices({ db, now: () => NOW }));
   expect(await screen.findByRole("header", { name: "Nova visita" })).toBeTruthy();
   expect(screen.getByRole("checkbox", { name: "Registrar boletim" }).props.accessibilityState.checked).toBe(true);
   expect(screen.getByText("Boletim do agente de endemias")).toBeTruthy();
@@ -237,7 +239,7 @@ test("Q59(b): a strategic point opens the visit with activity pe", async () => {
   expect(params).toEqual({ household_id: HH, vector_activity: "pe" });
   await nav.unmount();
 
-  await renderWithServices(<VisitForm start={{ householdKey: params.household_id, vector: { activity: params.vector_activity as VectorActivity } }} onSaved={jest.fn()} />,
+  await renderWithServices(<VisitForm start={{ householdKey: params.household_id, vector: vectorStart(params) }} onSaved={jest.fn()} />,
     fakeServices({ db, now: () => NOW }));
   const pe = await within(await screen.findByTestId("field-vector_inspection.activity")).findByRole("radio", { name: "PE — Ponto estratégico" });
   expect(pe.props.accessibilityState.checked).toBe(true);
@@ -275,6 +277,77 @@ test("Q59(b): the ACS, the agent without the bulletin and a city with the visit 
     nav = await detail(db);
     expect(await screen.findByText("Microárea 03 · Comércio")).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("button", { name: "Registrar visita" })).toBeNull());
+    await nav.unmount();
+  }
+});
+
+// ── Q59(b), review of 54809e5 ──
+const VECTOR_PAGE_FAMILIES = (example<ChangesResponse>("changes-vector-page.json").items.find((item) => item.type === "household")!.body as HouseholdBody).families;
+const noPropertyVisit = async (db: Db) => {
+  const nav = await detail(db);
+  expect(await screen.findByText(/^Microárea 03/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Registrar visita" })).toBeNull();
+  await nav.unmount();
+};
+
+// I1: the api refuses a visit to an inactive household (household_inactive); the due sheet leaves it out too.
+test("Q59(b): an inactive commerce with no resident shows no property-level 'Registrar visita'", async () => {
+  await noPropertyVisit(await emptyProperty("2", { household: { status: "inactive" } }));
+});
+
+// The complement: with an active family the api drops reasons 34–37 from a visit with no person (Q44).
+test("Q59(b): an active family in the body and no registration on the tablet → no property-level visit; a family that moved out does not hold it", async () => {
+  expect(VECTOR_PAGE_FAMILIES.length).toBeGreaterThan(0);
+  expect(VECTOR_PAGE_FAMILIES.every((family) => !family.moved_out)).toBe(true);
+  await noPropertyVisit(await emptyProperty("1", { household: { families: VECTOR_PAGE_FAMILIES } }));
+
+  const moved = await emptyProperty("1", { household: { families: VECTOR_PAGE_FAMILIES.map((family) => ({ ...family, moved_out: true })) } });
+  const nav = await detail(moved);
+  await fireEvent.press(await screen.findByRole("button", { name: "Registrar visita" }));
+  expect(nav.onStartPropertyVisit).toHaveBeenCalledWith({ household_id: HH });
+});
+
+// M2: through the route's start, saved: a visit with no person and the bulletin's activity.
+test("Q59(b): the property's visit, through the route's start and saved, goes with subject none and the bulletin's activity", async () => {
+  for (const [type, activity] of [["4", "pe"], ["2", "li"]] as const) {
+    const db = await emptyProperty(type);
+    const nav = await detail(db);
+    await fireEvent.press(await screen.findByRole("button", { name: "Registrar visita" }));
+    const [params] = nav.onStartPropertyVisit.mock.calls[0];
+    await nav.unmount();
+
+    const view = await renderWithServices(<VisitForm start={{ householdKey: params.household_id, vector: vectorStart(params) }} onSaved={jest.fn()} />,
+      fakeServices({ db, now: () => NOW }));
+    const activities = within(await screen.findByTestId("field-vector_inspection.activity"));
+    if (activity === "li") await fireEvent.press(activities.getByRole("radio", { name: "LI — Levantamento de índice" }));
+    await fireEvent.press(within(screen.getByTestId("field-vector_inspection.situation")).getByRole("radio", { name: "Recusado" }));
+    await fireEvent.press(screen.getByRole("button", { name: "Registrar visita" }));
+    await waitFor(async () => expect(await outboxRepo.all(db)).toHaveLength(1));
+    const [item] = await outboxRepo.all(db);
+    expect(item.type).toBe("home_visit");
+    expect(item.body).toMatchObject({ household_id: HH, subject: "none", vector_inspection: { activity, situation: "refused" } });
+    expect("patient_id" in item.body || "family_id" in item.body || "new_patient" in item.body).toBe(false);
+    await view.unmount();
+  }
+});
+
+// M3: on the sheet, the detail starts the visit as the card does.
+test("Q59(b): a blocked property and a pending strategic point open from the detail with their due-sheet start", async () => {
+  const blocked = await endemicTablet({ household: { property_type: "2", families: [], living_conditions: {} } });
+  await blocked.run("DELETE FROM registrations");
+  const pending = await emptyProperty("4", {
+    household: { vector: { city_block_id: null, risk_class: null, risk_assessed_on: null, last_worked_on: "2026-11-13", last_situation: "closed" } },
+  });
+  const expected = [
+    [blocked, { household_id: HH, vector_activity: "transmission_block", transmission_block_id: TRANSMISSION_BLOCK }],
+    [pending, { household_id: HH, vector_activity: "pe", work_type: "pending" }],
+  ] as const;
+  for (const [db, start] of expected) {
+    const entry = (await loadDue(db, NOW)).items.find((item) => item.householdKey === HH)!;
+    expect(dueVisitParams(entry)).toEqual(start);
+    const nav = await detail(db);
+    await fireEvent.press(await screen.findByRole("button", { name: "Registrar visita" }));
+    expect(nav.onStartPropertyVisit).toHaveBeenCalledWith(start);
     await nav.unmount();
   }
 });
