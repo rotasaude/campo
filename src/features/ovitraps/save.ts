@@ -8,7 +8,7 @@
 // remove it ignores reinstall, Q7(5)). Nothing of a person: the household by its key or id, the ovitrap by its number.
 import type { OvitrapCollectionItemBody, OvitrapInstallationItemBody } from "../../contract";
 import { dbEvents } from "../../db/events";
-import { outboxRepo } from "../../db/repos/outboxRepo";
+import { outboxRepo, type OutboxItem } from "../../db/repos/outboxRepo";
 import { collectionTarget, vectorRepo } from "../../db/repos/vectorRepo";
 import type { Db } from "../../db/types";
 import type { ReadingCondition } from "../../rules/ovitrap";
@@ -71,6 +71,11 @@ export async function collectOvitrap(db: Db, input: { ovitrapKey: string; condit
   dbEvents.emit("ovitraps");
   return clientUuid;
 }
+
+// The installation refused with ovitrap_number_taken: "Corrigir número" is its way back, a plain resend would be refused
+// the same.
+export const canRenumber = (item: Pick<OutboxItem, "type" | "state" | "error">): boolean =>
+  item.type === "ovitrap_installation" && item.state === "needs_attention" && item.error === "ovitrap_number_taken";
 
 // "Corrigir número" (Q11): the installation refused with ovitrap_number_taken goes back to the line with the new number
 // and the same client_uuid, and the local row takes the number. One transaction.

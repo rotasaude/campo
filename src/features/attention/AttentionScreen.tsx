@@ -24,7 +24,7 @@ import { phraseForItem, type ItemContext } from "../messages/errorPhrases";
 import { DISCARD_WARNING, ITEM_TYPE_LABEL, dependentsWarning } from "../outbox/OutboxScreen";
 import { confirmOtherPerson, confirmSamePerson, discardForExisting } from "../registrations/duplicates";
 import { confirmOtherParticipant } from "./participants";
-import { correctNumber } from "../ovitraps/save";
+import { canRenumber, correctNumber } from "../ovitraps/save";
 import { takenNumbers } from "../ovitraps/view";
 import { installProblems, numberTaken } from "../../rules/ovitrap";
 import { VECTOR_ERRORS } from "../../rules/vectorErrors";
@@ -86,7 +86,7 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
   const candidates = suspected ? ((item.candidates ?? []) as Candidate[]) : [];
   const existingId = registered ? ((item.candidates?.[0] as { registration_id?: string } | undefined)?.registration_id ?? null) : null;
   const hasForm = WITH_FORM.includes(item.type) && item.target_id !== null && !suspected && !registered;
-  const renumber = item.type === "ovitrap_installation" && item.error === "ovitrap_number_taken";
+  const renumber = canRenumber(item);
   const relabel = canRelabel(item);
   const card = { gap: 6, padding: SIZES.gap, borderRadius: SIZES.radius, borderWidth: 1, borderColor: colors.rule, backgroundColor: colors.panel } as const;
 

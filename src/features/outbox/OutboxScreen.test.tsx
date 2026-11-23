@@ -115,3 +115,24 @@ test("the agent's refused household reads the dashboard's phrase in the line too
     await view.unmount();
   }
 });
+
+// Review M6: the two refusals with an action of their own ("Gerar etiquetas novas", "Corrigir número") come back the same
+// if resent; the Envio offers no "Reenviar" for them, only "Corrigir", which opens "Precisa de atenção" where the action is.
+test("sample_label_taken and ovitrap_number_taken: no Reenviar, Corrigir opens the attention screen", async () => {
+  const db = await createTestDb();
+  const visit = await enqueue(db, { type: "home_visit", body: {} }, newUuid);
+  const installation = await enqueue(db, { type: "ovitrap_installation", body: { household_id: HH, number: "OVT-015", consent: true, installed_on: "2026-11-14" } }, newUuid);
+  const other = await enqueue(db, { type: "home_visit", body: {} }, newUuid);
+  await outboxRepo.update(db, visit.seq, { state: "needs_attention", error: "sample_label_taken", path: "vector_inspection.samples" });
+  await outboxRepo.update(db, installation.seq, { state: "needs_attention", error: "ovitrap_number_taken", path: "number" });
+  await outboxRepo.update(db, other.seq, { state: "needs_attention", error: "invalid_request", path: null });
+  const nav = await mount(db);
+  for (const seq of [visit.seq, installation.seq]) {
+    const card = within(await screen.findByTestId(`outbox-item-${seq}`));
+    expect(card.queryByRole("button", { name: "Reenviar" })).toBeNull();
+    await fireEvent.press(card.getByRole("button", { name: "Corrigir" }));
+    expect(nav.onFix).toHaveBeenLastCalledWith(seq);
+  }
+  // Any other refusal keeps its resend.
+  expect(within(row(other.seq)).getByRole("button", { name: "Reenviar" })).toBeTruthy();
+});

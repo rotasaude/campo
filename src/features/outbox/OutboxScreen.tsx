@@ -14,6 +14,8 @@ import { SIZES, useTheme } from "../../theme/theme";
 import { Body, Button, Muted, Notice, Screen } from "../../ui/components";
 import { itemContext } from "../households/view";
 import { phraseForItem, type ItemContext } from "../messages/errorPhrases";
+import { canRenumber } from "../ovitraps/save";
+import { canRelabel } from "../visits/relabel";
 
 export const DISCARD_WARNING = "Este registro nunca chegou ao Rota Saúde e será apagado";
 // Said with the discard warning when other records go with the one being discarded (what cites it, what waits for it).
@@ -70,6 +72,9 @@ function Item({ item, context, confirming, others, onFix, onResolve, onResend, o
   const attention = item.state === "needs_attention";
   // Only what the server never accepted and is not travelling can be thrown away.
   const discardable = attention || item.state === "blocked";
+  // A refusal with an action of its own ("Gerar etiquetas novas", "Corrigir número") would come back the same if resent:
+  // "Corrigir" opens "Precisa de atenção", where the action is.
+  const resendable = attention && !canRelabel(item) && !canRenumber(item);
   return (
     <View testID={`outbox-item-${item.seq}`} style={{ gap: 8, padding: SIZES.gap, borderRadius: SIZES.radius, borderWidth: 1, borderColor: colors.rule, backgroundColor: colors.panel }}>
       <Body>{ITEM_TYPE_LABEL[item.type] ?? item.type}</Body>
@@ -85,7 +90,7 @@ function Item({ item, context, confirming, others, onFix, onResolve, onResend, o
       ) : (
         <View style={{ gap: 8 }}>
           {attention && <Button label="Corrigir" onPress={onFix} />}
-          {attention && <Button label="Reenviar" variant="secondary" onPress={onResend} />}
+          {resendable && <Button label="Reenviar" variant="secondary" onPress={onResend} />}
           {item.state === "conflict" && <Button label="Resolver" onPress={onResolve} />}
           {discardable && <Button label="Descartar" variant="danger" onPress={onAskDiscard} />}
         </View>
