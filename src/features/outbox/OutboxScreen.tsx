@@ -12,7 +12,8 @@ import type { Db } from "../../db/types";
 import { discardImpact, removeUnsent, resend } from "../../sync/outbox";
 import { SIZES, useTheme } from "../../theme/theme";
 import { Body, Button, Muted, Notice, Screen } from "../../ui/components";
-import { phraseForItem } from "../messages/errorPhrases";
+import { itemContext } from "../households/view";
+import { phraseForItem, type ItemContext } from "../messages/errorPhrases";
 
 export const DISCARD_WARNING = "Este registro nunca chegou ao Rota Saúde e será apagado";
 // Said with the discard warning when other records go with the one being discarded (what cites it, what waits for it).
@@ -33,7 +34,11 @@ export const ITEM_STATE_LABEL: Record<OutboxState, string> = {
 };
 
 const TABLES = ["outbox"];
-const readAll = (db: Db) => outboxRepo.all(db);
+// With the context of each refused item's phrase (Q54: the endemic agent's household).
+async function readAll(db: Db): Promise<{ item: OutboxItem; context: ItemContext | undefined }[]> {
+  const items = await outboxRepo.all(db);
+  return Promise.all(items.map(async (item) => ({ item, context: item.state === "needs_attention" ? await itemContext(db, item) : undefined })));
+}
 
 export function OutboxScreen({ onFix, onResolve }: { onFix(seq: number): void; onResolve(seq: number): void }) {
   const { db } = useServices();
@@ -46,8 +51,8 @@ export function OutboxScreen({ onFix, onResolve }: { onFix(seq: number): void; o
   return (
     <Screen title="Envio">
       {items.length === 0 && <Body>{EMPTY_OUTBOX}</Body>}
-      {items.map((item) => (
-        <Item key={item.seq} item={item} confirming={confirming === item.seq} others={confirming === item.seq ? others : 0}
+      {items.map(({ item, context }) => (
+        <Item key={item.seq} item={item} context={context} confirming={confirming === item.seq} others={confirming === item.seq ? others : 0}
           onFix={() => onFix(item.seq)} onResolve={() => onResolve(item.seq)}
           onResend={() => void resend(db, item.seq)}
           onAskDiscard={() => { void discardImpact(db, item.client_uuid).then((count) => { setOthers(count); setConfirming(item.seq); }); }}
@@ -58,8 +63,8 @@ export function OutboxScreen({ onFix, onResolve }: { onFix(seq: number): void; o
   );
 }
 
-function Item({ item, confirming, others, onFix, onResolve, onResend, onAskDiscard, onCancelDiscard, onDiscard }: {
-  item: OutboxItem; confirming: boolean; others: number; onFix(): void; onResolve(): void; onResend(): void; onAskDiscard(): void; onCancelDiscard(): void; onDiscard(): void;
+function Item({ item, context, confirming, others, onFix, onResolve, onResend, onAskDiscard, onCancelDiscard, onDiscard }: {
+  item: OutboxItem; context: ItemContext | undefined; confirming: boolean; others: number; onFix(): void; onResolve(): void; onResend(): void; onAskDiscard(): void; onCancelDiscard(): void; onDiscard(): void;
 }) {
   const { colors } = useTheme();
   const attention = item.state === "needs_attention";
@@ -69,7 +74,7 @@ function Item({ item, confirming, others, onFix, onResolve, onResend, onAskDisca
     <View testID={`outbox-item-${item.seq}`} style={{ gap: 8, padding: SIZES.gap, borderRadius: SIZES.radius, borderWidth: 1, borderColor: colors.rule, backgroundColor: colors.panel }}>
       <Body>{ITEM_TYPE_LABEL[item.type] ?? item.type}</Body>
       <Muted>{ITEM_STATE_LABEL[item.state] ?? item.state}</Muted>
-      {attention && <Notice tone="warn">{phraseForItem(item.error, item)}</Notice>}
+      {attention && <Notice tone="warn">{phraseForItem(item.error, item, context)}</Notice>}
       {confirming ? (
         <View style={{ gap: 8 }}>
           <Notice tone="down">{DISCARD_WARNING}</Notice>

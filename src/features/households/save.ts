@@ -14,7 +14,7 @@ import type { Problem } from "../../rules/registry";
 import { applyHouseholdFields } from "../../sync/editable";
 import { coalesceOrEnqueue, enqueue, type Dep } from "../../sync/outbox";
 import { normalizeText } from "../../sync/text";
-import { ERROR_PHRASES } from "../messages/errorPhrases";
+import { AGENT_CBO_NOT_ALLOWED, AGENT_HAS_RESIDENT, ERROR_PHRASES } from "../messages/errorPhrases";
 import { agentRegistersNonResidential, canEditHousehold, loadSession, myMicroAreas } from "../session";
 import { hasActiveResident } from "./view";
 
@@ -26,14 +26,14 @@ export class HouseholdInConflictError extends Error {
   constructor() { super(CONFLICT_PENDING); }
 }
 
-// The dashboard's phrase for the agent's edit of a property with an active resident (src/lib/territoryRegistry.ts,
-// AGENT_HAS_RESIDENT), word for word.
-export const AGENT_HAS_RESIDENT = "este imóvel tem morador ativo; só a equipe da APS edita";
+// The dashboard's phrase for the agent's edit of a property with an active resident: now with its sibling in errorPhrases (Q54).
+export { AGENT_HAS_RESIDENT };
 
 // Q13(1): what the api would refuse to the endemic agent, refused before anything is enqueued, in the api's order
 // (TerritoryRegistry::Access.endemic_scope, then SaveHousehold#write):
 //   - a micro-area that is not one of his session's → out_of_scope (the api sends no path; here, under Microárea);
-//   - a type out of his list, typed or the one the household has → cbo_not_allowed, under the type;
+//   - a type out of his list, typed or the one the household has → cbo_not_allowed, under the type, with the dashboard's
+//     AGENT_CBO_NOT_ALLOWED (Q54: his CBO is allowed, the type is not);
 //   - an edit of a household with an active resident on the tablet → cbo_not_allowed, with the dashboard's phrase.
 export class HouseholdRefusedError extends Error {
   constructor(readonly problem: Problem) { super(problem.message); }
@@ -48,7 +48,7 @@ async function agentRefusal(
     return new HouseholdRefusedError({ path: "micro_area_id", message: ERROR_PHRASES.out_of_scope });
   }
   if (!o.types.every((type) => canEditHousehold(session, type))) {
-    return new HouseholdRefusedError({ path: "property_type", message: ERROR_PHRASES.cbo_not_allowed });
+    return new HouseholdRefusedError({ path: "property_type", message: AGENT_CBO_NOT_ALLOWED });
   }
   // The api sends no path: the form shows it over the button.
   if (o.householdKey !== undefined && await hasActiveResident(db, o.householdKey)) return new HouseholdRefusedError({ path: "", message: AGENT_HAS_RESIDENT });

@@ -19,7 +19,8 @@ import { discardImpact, removeUnsent, resend } from "../../sync/outbox";
 import { SIZES, useTheme } from "../../theme/theme";
 import { Body, Button, Field, Muted, Notice, Screen, Title } from "../../ui/components";
 import { pathLabel } from "../conflicts/fieldText";
-import { phraseForItem } from "../messages/errorPhrases";
+import { itemContext } from "../households/view";
+import { phraseForItem, type ItemContext } from "../messages/errorPhrases";
 import { DISCARD_WARNING, ITEM_TYPE_LABEL, dependentsWarning } from "../outbox/OutboxScreen";
 import { confirmOtherPerson, confirmSamePerson, discardForExisting } from "../registrations/duplicates";
 import { confirmOtherParticipant } from "./participants";
@@ -51,12 +52,13 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
 }) {
   const { colors } = useTheme();
   const { db, crypto } = useServices();
-  const read = useCallback(async (from: Db): Promise<{ item: OutboxItem | null; others: number; existingKey: string | null }> => {
+  const read = useCallback(async (from: Db): Promise<{ item: OutboxItem | null; others: number; existingKey: string | null; context: ItemContext | undefined }> => {
     const item = await outboxRepo.bySeq(from, seq);
     const existingId = item?.error === "already_registered" ? ((item.candidates?.[0] as { registration_id?: string } | undefined)?.registration_id ?? null) : null;
     return {
       item, others: item ? await discardImpact(from, item.client_uuid) : 0,
       existingKey: existingId === null ? null : await territoryRepo.registrationKey(from, existingId),
+      context: item ? await itemContext(from, item) : undefined,
     };
   }, [seq]);
   const data = useLive(TABLES, read);
@@ -96,7 +98,7 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
   return (
     <Screen title="Precisa de atenção">
       <Body>{ITEM_TYPE_LABEL[item.type] ?? item.type}</Body>
-      <Notice tone="warn">{phraseForItem(item.error, item)}</Notice>
+      <Notice tone="warn">{phraseForItem(item.error, item, data.context)}</Notice>
       {item.path !== null && <Body>{`Campo: ${pathLabel(item.type, item.path)}`}</Body>}
 
       {candidates.map((candidate) => (

@@ -8,7 +8,7 @@ import { mapTapLocation } from "../../location/capture";
 import { applyResults } from "../../sync/dispatch";
 import { applyPage } from "../../sync/download";
 import { accepted, newUuid, rejected } from "../../sync/testing";
-import { ERROR_PHRASES } from "../messages/errorPhrases";
+import { AGENT_CBO_NOT_ALLOWED, ERROR_PHRASES } from "../messages/errorPhrases";
 import { stationChanged } from "../testing";
 import { AGENT_HAS_RESIDENT, CONFLICT_PENDING, HouseholdRefusedError, saveHousehold, type HouseholdFields } from "./save";
 import { listHouseholds, readHousehold } from "./view";
@@ -186,10 +186,11 @@ test("agent saving a residential type is refused on screen and nothing is enqueu
   const before = await db.all("SELECT key FROM households");
   const refusal = saveHousehold(db, { fields: fields({ micro_area_id: AGENT_AREA, property_type: "1" }) }, deps);
   await expect(refusal).rejects.toBeInstanceOf(HouseholdRefusedError);
-  await expect(refusal).rejects.toMatchObject({ problem: { path: "property_type", message: ERROR_PHRASES.cbo_not_allowed } });
+  // Q54: the dashboard's phrase for the agent, not "Seu CBO não permite" (his CBO is allowed, the type is not).
+  await expect(refusal).rejects.toMatchObject({ problem: { path: "property_type", message: AGENT_CBO_NOT_ALLOWED } });
   // Nor a residential one turned into a shop: the api looks at the type the household has too (current_property_type).
   await expect(saveHousehold(db, { key: HH, fields: fields({ property_type: "2", living_conditions: {} }) }, deps))
-    .rejects.toMatchObject({ problem: { path: "property_type", message: ERROR_PHRASES.cbo_not_allowed } });
+    .rejects.toMatchObject({ problem: { path: "property_type", message: AGENT_CBO_NOT_ALLOWED } });
   expect(await outboxRepo.all(db)).toEqual([]);
   expect(await db.all("SELECT key FROM households")).toEqual(before);
 });

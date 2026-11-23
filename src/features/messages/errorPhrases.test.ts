@@ -1,6 +1,7 @@
 import { KNOWN_HTTP_ERRORS, KNOWN_ITEM_ERRORS } from "../../contract";
 import { VECTOR_ERRORS, VECTOR_ERROR_CODES, type VectorErrorCode } from "../../rules/vectorErrors";
-import { ERROR_PHRASES, SHARED_24C_CODES, phraseFor, phraseForItem } from "./errorPhrases";
+import type { ItemType } from "../../contract";
+import { AGENT_CBO_NOT_ALLOWED, AGENT_HAS_RESIDENT, ERROR_PHRASES, SHARED_24C_CODES, phraseFor, phraseForItem, type ItemContext } from "./errorPhrases";
 
 // The 35a item codes take the dashboard's phrase as it is (lowercase, no period): the app does not write them (Q9).
 const VECTOR_ITEM_CODES = new Set<string>(VECTOR_ERROR_CODES.filter((code) => KNOWN_ITEM_ERRORS.includes(code) && !SHARED_24C_CODES.includes(code)));
@@ -88,5 +89,60 @@ describe("phraseForItem", () => {
     expect(phraseForItem("not_found", { type: "ovitrap_collection", path: "ovitrap_client_uuid" })).toBe(ERROR_PHRASES.not_found);
     expect(phraseForItem("no_such_code", { type: "ovitrap_installation", path: null })).toBe(phraseFor("no_such_code"));
     expect(phraseForItem(null, { type: "home_visit", path: null })).toBe(phraseFor(null));
+  });
+});
+
+// Q54 (docs 622c77a): the server's refusal of the endemic agent's household, in the dashboard's words. The api sends
+// cbo_not_allowed with no path both for a residential type and for a property with an active resident
+// (TerritoryRegistry::Access.endemic_scope, SaveHousehold#write): the tablet tells them apart by what it has.
+describe("phraseForItem — the endemic agent's household (Q54)", () => {
+  const household = { type: "household" as const, path: null };
+  const agent = (over: Partial<ItemContext> = {}): ItemContext => ({ agent: true, propertyTypes: ["2", "2"], hasResident: false, ...over });
+
+  test("the dashboard's phrases, byte for byte", () => {
+    expect(AGENT_CBO_NOT_ALLOWED).toBe("só o ACS da microárea, enfermeiro ou médico da equipe grava o cadastro — o agente de endemias, só imóvel não residencial");
+    expect(AGENT_HAS_RESIDENT).toBe("este imóvel tem morador ativo; só a equipe da APS edita");
+  });
+
+  test("cbo_not_allowed on a residential type, sent or current, says AGENT_CBO_NOT_ALLOWED — even with a resident", () => {
+    expect(phraseForItem("cbo_not_allowed", household, agent({ propertyTypes: ["1", null] }))).toBe(AGENT_CBO_NOT_ALLOWED);
+    // The clinic turned the shop into a home while the agent's edit waited: the type, not the resident (offline, the typical case).
+    expect(phraseForItem("cbo_not_allowed", household, agent({ propertyTypes: ["2", "1"], hasResident: true }))).toBe(AGENT_CBO_NOT_ALLOWED);
+  });
+
+  test("cbo_not_allowed on a non-residential property with an active resident on the tablet says AGENT_HAS_RESIDENT", () => {
+    expect(phraseForItem("cbo_not_allowed", household, agent({ hasResident: true }))).toBe(AGENT_HAS_RESIDENT);
+    expect(phraseForItem("cbo_not_allowed", household, agent({ propertyTypes: ["4", null], hasResident: true }))).toBe(AGENT_HAS_RESIDENT);
+  });
+
+  test("cbo_not_allowed the tablet cannot explain says AGENT_CBO_NOT_ALLOWED, never AGENT_HAS_RESIDENT", () => {
+    expect(phraseForItem("cbo_not_allowed", household, agent())).toBe(AGENT_CBO_NOT_ALLOWED);
+    expect(phraseForItem("cbo_not_allowed", household, agent({ propertyTypes: [null, null] }))).toBe(AGENT_CBO_NOT_ALLOWED);
+  });
+
+  test("out_of_scope keeps the 24c phrase, and the other codes are untouched", () => {
+    expect(phraseForItem("out_of_scope", household, agent({ hasResident: true }))).toBe(ERROR_PHRASES.out_of_scope);
+    expect(phraseForItem("out_of_scope", household, agent())).toBe("Esta microárea não está mais no seu território.");
+    expect(phraseForItem("not_found", { type: "household", path: "household_id" }, agent())).toBe(ERROR_PHRASES.not_found);
+  });
+
+  test("the agent's other items keep their phrases", () => {
+    expect(phraseForItem("cbo_not_allowed", { type: "ovitrap_installation", path: null }, agent({ hasResident: true }))).toBe(VECTOR_ERRORS.cbo_not_allowed);
+    expect(phraseForItem("cbo_not_allowed", { type: "family", path: null }, agent({ hasResident: true }))).toBe(ERROR_PHRASES.cbo_not_allowed);
+  });
+
+  test("the ACS and every other caller: the same phrase with or without a context, for every code and item", () => {
+    const types: ItemType[] = ["home_visit", "home_visit_withdrawal", "collective_activity", "patient", "household", "family", "individual_registration", "ovitrap_installation", "ovitrap_collection"];
+    const notAgent: ItemContext = { agent: false, propertyTypes: ["1", "1"], hasResident: true };
+    for (const code of [...Object.keys(ERROR_PHRASES), "no_such_code"]) {
+      for (const type of types) {
+        for (const path of [null, "vector_inspection", "property_type"]) {
+          const item = { type, path };
+          expect([code, type, path, phraseForItem(code, item, notAgent)]).toEqual([code, type, path, phraseForItem(code, item)]);
+        }
+      }
+    }
+    expect(phraseForItem("cbo_not_allowed", household, notAgent)).toBe("Seu CBO não permite este registro.");
+    expect(phraseForItem("cbo_not_allowed", household)).toBe("Seu CBO não permite este registro.");
   });
 });

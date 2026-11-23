@@ -8,6 +8,9 @@ import { outboxRepo, type OutboxItem } from "../../db/repos/outboxRepo";
 import { territoryRepo } from "../../db/repos/territoryRepo";
 import type { Db } from "../../db/types";
 import { dictLabel, type RegistrationDictionaries } from "../../rules/dictionaries";
+import { ENDEMIC_AGENT_CBO } from "../../rules/vectorInspection";
+import type { ItemContext } from "../messages/errorPhrases";
+import { loadSession } from "../session";
 import { applyFamilyItem, applyHouseholdFields, splitItemBody } from "../../sync/editable";
 
 export interface HouseholdView {
@@ -76,6 +79,18 @@ export async function listHouseholds(db: Db, microAreaId?: string): Promise<Hous
 export async function hasActiveResident(db: Db, key: string): Promise<boolean> {
   const rows = await db.all<{ body: string }>("SELECT body FROM registrations WHERE household_key = ?", [key]);
   return rows.some((row) => (JSON.parse(row.body) as { exit?: unknown }).exit == null);
+}
+
+// Q54: what the tablet knows of a refused household item for its phrase (phraseForItem): sent by the endemic agent (the
+// session's CBO: only he can have put a household in this tablet's line), the type sent and the one the household has
+// now, and an active resident here. Undefined for any other item or sender: their phrase does not change.
+export async function itemContext(db: Db, item: Pick<OutboxItem, "type" | "body" | "target_id">): Promise<ItemContext | undefined> {
+  if (item.type !== "household" || (await loadSession(db))?.professional.cbo !== ENDEMIC_AGENT_CBO) return undefined;
+  const sent = typeof item.body.property_type === "string" ? item.body.property_type : null;
+  if (item.target_id === null) return { agent: true, propertyTypes: [sent], hasResident: false };
+  const row = await db.get<{ body: string }>("SELECT body FROM households WHERE key = ?", [item.target_id]);
+  const current = row ? (JSON.parse(row.body) as { property_type?: string | null }).property_type ?? null : null;
+  return { agent: true, propertyTypes: [sent, current], hasResident: await hasActiveResident(db, item.target_id) };
 }
 
 export function addressShort(body: Pick<HouseholdBody, "address">, dict: RegistrationDictionaries | null): string {

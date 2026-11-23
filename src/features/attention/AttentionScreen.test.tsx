@@ -13,9 +13,9 @@ import { saveActivity } from "../activities/save";
 import { pathLabel } from "../conflicts/fieldText";
 import { saveHousehold } from "../households/save";
 import { VECTOR_ERRORS } from "../../rules/vectorErrors";
-import { ERROR_PHRASES, phraseFor } from "../messages/errorPhrases";
+import { AGENT_CBO_NOT_ALLOWED, AGENT_HAS_RESIDENT, ERROR_PHRASES, phraseFor } from "../messages/errorPhrases";
 import { saveRegistration, type RegistrationFields } from "../registrations/save";
-import { AREA, HH, loadedTablet } from "../testing";
+import { AREA, HH, endemicTablet, loadedTablet } from "../testing";
 import { sampleLabel } from "../../rules/vectorInspection";
 import * as relabelModule from "../visits/relabel";
 import { AttentionScreen, EXISTING_NOT_HERE, NOT_WAITING_FOR_YOU, NO_FORM_FOR_THIS } from "./AttentionScreen";
@@ -198,6 +198,47 @@ test("a visit refused at its bulletin says the VECTOR_ERRORS phrase; the same co
   await view?.unmount();
   await mount(db, plain.seq);
   expect(await screen.findByText(ERROR_PHRASES.cbo_not_allowed)).toBeTruthy();
+});
+
+// Q54: the server's cbo_not_allowed on the endemic agent's household, said with the dashboard's phrases; which one comes
+// from the tablet (the api sends no path). HH is a home (type 1) with Joana's active registration on the tablet.
+async function agentHouseholdRefused(db: Db, code: string, body: Record<string, unknown>) {
+  const item = await enqueue(db, { type: "household", body: { household_id: HH, version: 1, micro_area_id: AREA, ...body }, targetId: HH }, newUuid);
+  await applyResults(db, [item], [rejected(item, code)], noStale);
+  return item;
+}
+
+test("agent: the server refused his edit of a property the clinic turned residential — AGENT_CBO_NOT_ALLOWED, not the resident", async () => {
+  const db = await endemicTablet();
+  const item = await agentHouseholdRefused(db, "cbo_not_allowed", { property_type: "2" });
+  await mount(db, item.seq);
+  expect(await screen.findByText(AGENT_CBO_NOT_ALLOWED)).toBeTruthy();
+  expect(screen.queryByText(AGENT_HAS_RESIDENT)).toBeNull();
+  expect(screen.queryByText(ERROR_PHRASES.cbo_not_allowed)).toBeNull();
+});
+
+test("agent: the server refused his edit of a non-residential property with an active resident — AGENT_HAS_RESIDENT", async () => {
+  const db = await endemicTablet({ household: { property_type: "2", living_conditions: {}, families: [] } });
+  const item = await agentHouseholdRefused(db, "cbo_not_allowed", { property_type: "2" });
+  await mount(db, item.seq);
+  expect(await screen.findByText(AGENT_HAS_RESIDENT)).toBeTruthy();
+  expect(screen.queryByText(ERROR_PHRASES.cbo_not_allowed)).toBeNull();
+});
+
+test("agent: out_of_scope keeps the 24c phrase", async () => {
+  const db = await endemicTablet({ household: { property_type: "2", living_conditions: {}, families: [] } });
+  const item = await agentHouseholdRefused(db, "out_of_scope", { property_type: "2" });
+  await mount(db, item.seq);
+  expect(await screen.findByText(ERROR_PHRASES.out_of_scope)).toBeTruthy();
+});
+
+test("the ACS's cbo_not_allowed on a household is unchanged", async () => {
+  const db = await loadedTablet();
+  const item = await agentHouseholdRefused(db, "cbo_not_allowed", { property_type: "1" });
+  await mount(db, item.seq);
+  expect(await screen.findByText(ERROR_PHRASES.cbo_not_allowed)).toBeTruthy();
+  expect(screen.queryByText(AGENT_CBO_NOT_ALLOWED)).toBeNull();
+  expect(screen.queryByText(AGENT_HAS_RESIDENT)).toBeNull();
 });
 
 test("an item that is not waiting for the person says so", async () => {

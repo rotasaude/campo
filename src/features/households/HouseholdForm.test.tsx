@@ -11,7 +11,7 @@ import type { MapCanvasProps } from "../../map/canvas";
 import { AREA, HH, NEIGHBORHOOD, endemicTablet, loadedTablet, stationChanged } from "../testing";
 import { scrollIntoView } from "../../ui/reveal";
 import { newUuid } from "../../sync/testing";
-import { ERROR_PHRASES } from "../messages/errorPhrases";
+import { AGENT_CBO_NOT_ALLOWED, ERROR_PHRASES } from "../messages/errorPhrases";
 import { HouseholdForm, NO_FIX_MARK_ON_MAP, READ_ONLY } from "./HouseholdForm";
 import { AGENT_HAS_RESIDENT, saveHousehold } from "./save";
 
@@ -345,7 +345,7 @@ test("agent: a download that turns the property residential while the form is op
   await mount({ db, householdKey: HH });
   await stationChanged(db, "household", HH, { property_type: "1", families: [] });
   await press("Salvar");
-  expect(await field("property_type").findByText(ERROR_PHRASES.cbo_not_allowed)).toBeTruthy();
+  expect(await field("property_type").findByText(AGENT_CBO_NOT_ALLOWED)).toBeTruthy();
   expect(await outboxRepo.all(db)).toEqual([]);
 });
 

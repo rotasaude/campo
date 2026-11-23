@@ -3,9 +3,11 @@ import { fakeServices, renderWithServices } from "../../app/testing";
 import { outboxRepo } from "../../db/repos/outboxRepo";
 import { createTestDb } from "../../db/testing/sqljsDb";
 import type { Db } from "../../db/types";
-import { phraseFor } from "../messages/errorPhrases";
+import { AGENT_HAS_RESIDENT, ERROR_PHRASES, phraseFor } from "../messages/errorPhrases";
+import { applyResults } from "../../sync/dispatch";
+import { HH, endemicTablet, loadedTablet } from "../testing";
 import { enqueue } from "../../sync/outbox";
-import { newUuid } from "../../sync/testing";
+import { newUuid, rejected } from "../../sync/testing";
 import { DISCARD_WARNING, dependentsWarning, OutboxScreen } from "./OutboxScreen";
 
 async function seeded() {
@@ -98,4 +100,18 @@ test("only needs_attention and blocked can be discarded", async () => {
 test("an empty queue says so", async () => {
   await mount(await createTestDb());
   expect(await screen.findByText("Nada para enviar: tudo o que você registrou já está no Rota Saúde.")).toBeTruthy();
+});
+
+// Q54: the line says the same phrase as "Precisa de atenção" for the endemic agent's refused household; the ACS's is unchanged.
+test("the agent's refused household reads the dashboard's phrase in the line too; the ACS's keeps the 24c one", async () => {
+  for (const [db, phrase] of [
+    [await endemicTablet({ household: { property_type: "2", living_conditions: {}, families: [] } }), AGENT_HAS_RESIDENT],
+    [await loadedTablet(), ERROR_PHRASES.cbo_not_allowed],
+  ] as const) {
+    const item = await enqueue(db, { type: "household", body: { household_id: HH, version: 1, property_type: "2" }, targetId: HH }, newUuid);
+    await applyResults(db, [item], [rejected(item, "cbo_not_allowed")], { onStale: async () => undefined });
+    const view = await renderWithServices(<OutboxScreen onFix={jest.fn()} onResolve={jest.fn()} />, fakeServices({ db }));
+    expect(await within(await screen.findByTestId(`outbox-item-${item.seq}`)).findByText(phrase)).toBeTruthy();
+    await view.unmount();
+  }
 });

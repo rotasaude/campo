@@ -4,6 +4,7 @@
 // code that has no phrase here.
 import type { ItemType } from "../../contract";
 import { VECTOR_ERRORS } from "../../rules/vectorErrors";
+import { AGENT_PROPERTY_TYPES } from "../session";
 
 const CHECK_FIELD = "Confira o campo destacado.";
 
@@ -114,8 +115,28 @@ const BULLETIN = "vector_inspection";
 // the 24c (SHARED_24C_CODES) says the dashboard's VECTOR_ERRORS phrase when it is about the 35a: on an ovitrap item, or
 // on a home_visit refused at its bulletin (`path` vector_inspection or under it). The same code on a home_visit with
 // no path is the 24b's (its own cbo_not_allowed and feature_disabled), and invalid_transition is always the 24c's
-// (the field sync sends it only for the registry). The 403 of the whole request is not an item: phraseFor.
-export function phraseForItem(code: string | null | undefined, item: { type: ItemType; path: string | null | undefined }): string {
+// (the field sync sends it only for the registry). The 403 of the whole request is not an item: phraseFor. `context`
+// (Q54) changes only the agent's household cbo_not_allowed; without it, or for anybody else, nothing changes.
+// The dashboard's phrases for the endemic agent's household (apps/dashboard src/lib/territoryRegistry.ts, commit 0b98ddd,
+// AGENT_CBO_NOT_ALLOWED and AGENT_HAS_RESIDENT), byte for byte (Q54).
+export const AGENT_CBO_NOT_ALLOWED = "só o ACS da microárea, enfermeiro ou médico da equipe grava o cadastro — o agente de endemias, só imóvel não residencial";
+export const AGENT_HAS_RESIDENT = "este imóvel tem morador ativo; só a equipe da APS edita";
+
+// What the tablet knows of a refused item beyond its code and path (Q54): whether the endemic agent sent it, the property
+// types (the one sent and the one the household has now) and whether the household has an active resident here.
+export interface ItemContext { agent: boolean; propertyTypes: readonly (string | null)[]; hasResident: boolean }
+
+// The api refuses the agent's household with cbo_not_allowed and no path both for a residential type (Access.endemic_scope,
+// checked first) and for a non-residential property with an active resident (SaveHousehold#write). A residential type,
+// sent or current, is the type; else a resident on the tablet is the resident; else the type's phrase. Not the
+// dashboard's "every refusal on edit is the resident": offline, the clinic changing the type is the typical case.
+function agentHouseholdRefusal(context: ItemContext): string {
+  const residential = context.propertyTypes.some((type) => type !== null && !(AGENT_PROPERTY_TYPES as readonly string[]).includes(type));
+  return !residential && context.hasResident ? AGENT_HAS_RESIDENT : AGENT_CBO_NOT_ALLOWED;
+}
+
+export function phraseForItem(code: string | null | undefined, item: { type: ItemType; path: string | null | undefined }, context?: ItemContext): string {
+  if (context?.agent === true && item.type === "household" && code === "cbo_not_allowed") return agentHouseholdRefusal(context);
   if (!code || code === "invalid_transition" || !Object.prototype.hasOwnProperty.call(VECTOR_ERRORS, code)) return phraseFor(code);
   const path = item.path ?? "";
   const vector = VECTOR_ITEMS.includes(item.type) || (item.type === "home_visit" && (path === BULLETIN || path.startsWith(`${BULLETIN}.`)));
