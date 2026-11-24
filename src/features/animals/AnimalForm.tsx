@@ -3,7 +3,7 @@
 // - The tutor is one of the residents the tablet has in the household (a resident registered here too, N1/Q29), or
 //   nobody ("tutor não identificado", Q22); "Animal comunitário" takes the tutor off.
 // - The microchip is typed on creation only; after that the form says only that there is one (§16). The species does
-//   not change on an edit, as on the dashboard.
+//   not change on an edit, as on the dashboard. A creation refused at the microchip asks for it again, empty.
 // - The situation only on an edit of an animal the server has, never back to "Ativo" (Q20).
 // animalProblems (Task 5) in the dashboard's words; each refusal under its field (`field-<path>`), brought into sight.
 // The edit opens on the animal with the line on top and keeps the base it opened with (Q41).
@@ -89,7 +89,8 @@ export function AnimalForm({ householdKey, animalKey, onSaved }: { householdKey?
   const save = useCallback(async () => {
     if (loaded === null || loaded === "missing" || loaded.domains === null || busy) return;
     const edit = loaded.view !== null;
-    const typed = edit ? { ...draft, microchip: "" } : draft;
+    const retype = loaded.view?.retypeMicrochip === true;
+    const typed = edit && !retype ? { ...draft, microchip: "" } : draft;
     const found = animalProblems(typed, loaded.domains.limits, loaded.today);
     setProblems(found);
     if (found.length > 0) return;
@@ -99,6 +100,7 @@ export function AnimalForm({ householdKey, animalKey, onSaved }: { householdKey?
       await saveAnimal(db, {
         householdKey: loaded.householdKey, draft: typed, animalKey, newUuid: crypto.randomUUID,
         ...(edit && !loaded.view!.creating && status !== null ? { status } : {}), today: loaded.today, editBase: loaded.view?.base ?? null,
+        ...(retype ? { replaceMicrochip: true } : {}),
       });
       // The number typed leaves the screen with it.
       setDraft((d) => ({ ...d, microchip: "" }));
@@ -140,7 +142,7 @@ export function AnimalForm({ householdKey, animalKey, onSaved }: { householdKey?
         <Field label="Mês de nascimento (estimado)" placeholder="AAAA-MM" value={draft.birthEstimateMonth} maxLength={7} keyboardType="numbers-and-punctuation"
           onChangeText={(text) => set({ birthEstimateMonth: text }, ["birth_estimate_month"])} />
       ))}
-      {edit
+      {edit && !view.retypeMicrochip
         ? view.body.has_microchip && <Body>{HAS_MICROCHIP}</Body>
         : at("microchip", (
           <Field label={`Microchip (${domains.limits.microchip_digits} dígitos)`} value={draft.microchip} maxLength={domains.limits.microchip_digits}

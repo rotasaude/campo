@@ -32,7 +32,11 @@ export interface EditBase { version: number; body: Record<string, unknown> }
 
 // What the form opens with: the animal with the line on top, and the version and body an edit begun NOW is based on
 // (Q41: the form keeps it from the moment it opened). `creating`: born here and not accepted yet — no situation yet.
-export interface AnimalEditView { key: string; id: string | null; householdKey: string; body: AnimalBody; base: EditBase | null; creating: boolean }
+// `retypeMicrochip`: its creation was refused at the microchip (microchip_taken): the same number would be refused
+// forever, so the form asks for it again, empty — the old one is never shown (§16).
+export interface AnimalEditView {
+  key: string; id: string | null; householdKey: string; body: AnimalBody; base: EditBase | null; creating: boolean; retypeMicrochip: boolean;
+}
 
 export const ANIMAL_TABLES = ["animals", "outbox", "local_leish_collections"];
 
@@ -53,6 +57,7 @@ const careOf = (queue: OutboxItem[], names: { key: string; id: string | null; cl
   return (typeof id === "string" && (id === names.id || id === names.key)) || (typeof born === "string" && (born === names.key || born === names.client_uuid));
 });
 
+// A refused vaccine or collar stays on top, with the field's date, until it is discarded: the dose was really applied.
 // Without the collar months (no zoonoses domains) the collar's date stays the row's until the download.
 function withCare(body: AnimalBody, care: OutboxItem[], collarMonths: number | null): AnimalBody {
   let out = body;
@@ -107,6 +112,7 @@ export async function readAnimal(db: Db, key: string): Promise<AnimalEditView | 
     return {
       key, id: row.id, householdKey: row.household_key, body: withCare(await onTop(db, stored, mine), care(row.id), collarMonths),
       base: row.base_version === null ? null : { version: row.base_version, body: stored as unknown as Record<string, unknown> }, creating: row.id === null,
+      retypeMicrochip: row.id === null && mine.some((item) => item.client_uuid === key && item.state === "needs_attention" && item.path === "microchip"),
     };
   }
   // The reset erased the row of a server animal that is only edited in the line (it comes back with the next download):
@@ -120,6 +126,7 @@ export async function readAnimal(db: Db, key: string): Promise<AnimalEditView | 
   return {
     key, id: String(edit.body.animal_id), householdKey, body: withCare(await onTop(db, based, mine), care(String(edit.body.animal_id)), collarMonths),
     base: edit.edit_base_version === null || edit.edit_base_body === null ? null : { version: edit.edit_base_version, body: edit.edit_base_body }, creating: false,
+    retypeMicrochip: false,
   };
 }
 

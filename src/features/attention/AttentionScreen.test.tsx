@@ -1,21 +1,29 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 import { fakeServices, renderWithServices } from "../../app/testing";
-import type { UploadResponse } from "../../contract";
+import type { ChangesResponse, UploadResponse } from "../../contract";
 import { example } from "../../contract/fixtures";
 import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
 import { emptyActivityDraft } from "../../rules/collectiveActivity";
-import { applyResults } from "../../sync/dispatch";
+import { emptyAnimalDraft } from "../../rules/animal";
+import { ZOONOSES_ERRORS } from "../../rules/zoonosesErrors";
+import { applyResults, sendQueue } from "../../sync/dispatch";
+import { applyPage } from "../../sync/download";
+import { handleStale } from "../../sync/stale";
 import { enqueue } from "../../sync/outbox";
 import { loadReference } from "../../sync/reference";
-import { newUuid, rejected } from "../../sync/testing";
+import { accepted, fakeClient, newUuid, rejected } from "../../sync/testing";
 import { saveActivity } from "../activities/save";
+import { AnimalForm } from "../animals/AnimalForm";
+import { saveAnimal, vaccinate } from "../animals/save";
+import { readAnimal } from "../animals/view";
 import { pathLabel } from "../conflicts/fieldText";
 import { saveHousehold } from "../households/save";
 import { VECTOR_ERRORS } from "../../rules/vectorErrors";
 import { AGENT_CBO_NOT_ALLOWED, AGENT_HAS_RESIDENT, ERROR_PHRASES, phraseFor } from "../messages/errorPhrases";
 import { saveRegistration, type RegistrationFields } from "../registrations/save";
-import { AREA, HH, endemicTablet, loadedTablet } from "../testing";
+import { ANIMAL, AREA, HH, JOANA, endemicTablet, loadedTablet, zoonosesTablet } from "../testing";
+import { dependentsWarning } from "../outbox/OutboxScreen";
 import { sampleLabel } from "../../rules/vectorInspection";
 import * as relabelModule from "../visits/relabel";
 import { AttentionScreen, EXISTING_NOT_HERE, NOT_WAITING_FOR_YOU, NO_FORM_FOR_THIS } from "./AttentionScreen";
@@ -356,4 +364,127 @@ test("a relabel that fails says so and leaves the visit waiting, with its labels
   expect(await screen.findByText("Não foi possível concluir. Volte e tente de novo.")).toBeTruthy();
   expect(screen.queryByText(/Etiquete os tubitos/)).toBeNull();
   expect((await outboxRepo.bySeq(db, visit.seq))!).toMatchObject({ client_uuid: LABEL_OLD, state: "needs_attention", error: "sample_label_taken" });
+});
+
+// ── 35b, Task 9: the animal and what cites it in "precisa de atenção" (Review Focus 1, 2 and 5) ──
+const CHIP = "985141000123456";
+const NEW_CHIP = "985141000654321";
+const VAR = "e1f2a3b4-c5d6-4e7f-8a9b-1c2d3e4f5a6b";
+const FIRST = { timeout: 10000 };
+const noAnswer = { onStale: async () => undefined };
+const shown = () => JSON.stringify(screen.toJSON());
+const animalDraft = (name: string) => ({ ...emptyAnimalDraft(), species: "dog", sex: "male", name });
+const vaccinateAnimal = (db: Db, animalKey: string) =>
+  vaccinate(db, { animalKey, productId: VAR, adverseEvent: false, adverseNote: null, today: "2026-11-24", newUuid });
+async function animalForm(db: Db, animalKey: string) {
+  const onSaved = jest.fn();
+  const form = await renderWithServices(<AnimalForm animalKey={animalKey} onSaved={onSaved} />, fakeServices({ db, now: () => NOW }));
+  await screen.findByTestId("field-sex", {}, FIRST);
+  return { onSaved, unmount: () => form.unmount() };
+}
+// A dog registered with a microchip offline, vaccinated, and its creation refused because the number is another animal's.
+async function chipTaken() {
+  const db = await zoonosesTablet();
+  const key = await saveAnimal(db, { householdKey: HH, draft: { ...animalDraft("Rex"), microchip: CHIP }, newUuid });
+  await vaccinateAnimal(db, key);
+  const { client } = fakeClient((items) => items.map((i) => (i.type === "animal"
+    ? rejected(i, "microchip_taken", { path: "microchip" }) : rejected(i, "not_found", { path: "animal_client_uuid" }))));
+  await sendQueue({ db, client, ...noAnswer });
+  return { db, key, creation: (await outboxRepo.byClientUuid(db, key))! };
+}
+
+test("microchip_taken: Corrigir opens the animal form; the attention text never shows the number", async () => {
+  const { db, key, creation } = await chipTaken();
+  expect(creation).toMatchObject({ state: "needs_attention", error: "microchip_taken", path: "microchip" });
+  const nav = await mount(db, creation.seq);
+  expect(await screen.findByText(ZOONOSES_ERRORS.microchip_taken, {}, FIRST)).toBeTruthy();
+  expect(screen.getByText("Campo: Microchip")).toBeTruthy();
+  await press("Corrigir");
+  expect(nav.onFix).toHaveBeenCalledWith({ type: "animal", targetId: key, familyId: null });
+  // Discarding it says the vaccine goes with it (doomedBy).
+  await press("Descartar");
+  expect(screen.getByText(dependentsWarning(1)!)).toBeTruthy();
+  expect(shown()).not.toContain(CHIP);
+});
+
+// Ruling 1 of the controller: the same number would be refused forever, so the form asks for it again — empty, never
+// the old one. Blank takes the number out of the creation; one typed replaces it, checked by the form's own rule.
+test("after microchip_taken the form asks the number again, empty: blank removes it, a typed one replaces it", async () => {
+  const { db, key, creation } = await chipTaken();
+  const form = await animalForm(db, key);
+  expect(screen.getByLabelText(/^Microchip/).props.value).toBe("");
+  expect(shown()).not.toContain(CHIP);
+  await fireEvent.changeText(screen.getByLabelText(/^Microchip/), "123");
+  await press("Salvar alterações");
+  expect(await within(screen.getByTestId("field-microchip")).findByText("microchip: 15 dígitos, sem espaço")).toBeTruthy();
+  await fireEvent.changeText(screen.getByLabelText(/^Microchip/), NEW_CHIP);
+  await press("Salvar alterações");
+  await waitFor(() => expect(form.onSaved).toHaveBeenCalledTimes(1));
+  expect(await outboxRepo.byClientUuid(db, key)).toMatchObject({ state: "pending", error: null, path: null, body: { name: "Rex", microchip: NEW_CHIP } });
+  expect(shown()).not.toContain(NEW_CHIP);
+  await form.unmount();
+
+  // Refused again, left blank this time: the creation goes without a number, and the card no longer says it has one.
+  await outboxRepo.update(db, creation.seq, { state: "needs_attention", error: "microchip_taken", path: "microchip" });
+  const blank = await animalForm(db, key);
+  expect(screen.getByLabelText(/^Microchip/).props.value).toBe("");
+  await press("Salvar alterações");
+  await waitFor(() => expect(blank.onSaved).toHaveBeenCalledTimes(1));
+  const item = (await outboxRepo.byClientUuid(db, key))!;
+  expect(item.state).toBe("pending");
+  expect(item.body).not.toHaveProperty("microchip");
+  expect((await readAnimal(db, key))!.body.has_microchip).toBe(false);
+  expect(JSON.stringify(await db.all("SELECT * FROM animals"))).not.toContain("985141");
+  await blank.unmount();
+
+  // Any other refusal of the creation keeps the number typed and does not ask it again.
+  await outboxRepo.update(db, creation.seq, { state: "needs_attention", error: "invalid_request", path: "name", body: { ...item.body, microchip: CHIP } });
+  const other = await animalForm(db, key);
+  expect(screen.queryByLabelText(/^Microchip/)).toBeNull();
+  await press("Salvar alterações");
+  await waitFor(() => expect(other.onSaved).toHaveBeenCalledTimes(1));
+  expect((await outboxRepo.byClientUuid(db, key))!.body).toMatchObject({ microchip: CHIP });
+});
+
+test("animal in needs_attention after stale_version: Corrigir opens the form on the current version and resends the same client_uuid", async () => {
+  const db = await zoonosesTablet();
+  await saveAnimal(db, { householdKey: HH, animalKey: ANIMAL, draft: { ...animalDraft("Rex"), sex: "female", tutorKey: JOANA }, newUuid });
+  const [edit] = await outboxRepo.all(db);
+  await handleStale(db, edit, answer("upload-response-stale-animal.json"));
+  const nav = await mount(db, edit.seq);
+  expect(await screen.findByText(ZOONOSES_ERRORS.animal_changed, {}, FIRST)).toBeTruthy();
+  await press("Corrigir");
+  expect(nav.onFix).toHaveBeenCalledWith({ type: "animal", targetId: ANIMAL, familyId: null });
+  await view?.unmount();
+
+  // The form shows the station's record (version 3), not the refused edit.
+  const form = await animalForm(db, ANIMAL);
+  expect(screen.getByLabelText("Nome").props.value).toBe("Pipoca");
+  await fireEvent.changeText(screen.getByLabelText("Nome"), "Rei");
+  await press("Salvar alterações");
+  await waitFor(() => expect(form.onSaved).toHaveBeenCalledTimes(1));
+  const items = await outboxRepo.all(db);
+  expect(items.map((i) => [i.client_uuid, i.state, i.edit_base_version])).toEqual([[edit.client_uuid, "pending", 3]]);
+  const { client, batches } = fakeClient((sent) => sent.map((i) => accepted(i, { id: ANIMAL, version: 4 })));
+  await sendQueue({ db, client, ...noAnswer });
+  expect(batches[0]).toEqual([{ client_uuid: edit.client_uuid, type: "animal", body: expect.objectContaining({ animal_id: ANIMAL, version: 3, name: "Rei" }) }]);
+  expect(await outboxRepo.count(db)).toBe(0);
+});
+
+// Review Focus 5 and the Task 3 review: the download took the animal off the tablet with its vaccine still in the line.
+test("a vaccine of an animal the download removed needs attention with the phrase and Descartar", async () => {
+  const db = await zoonosesTablet();
+  const uuid = await vaccinateAnimal(db, ANIMAL);
+  await applyPage(db, { ...example<ChangesResponse>("changes-zoonoses-page.json"), items: [], removals: [{ type: "animal", id: ANIMAL, reason: "out_of_scope" }] });
+  const { client } = fakeClient((items) => items.map((i) => rejected(i, "animal_not_active", { path: "animal_id" })));
+  await sendQueue({ db, client, ...noAnswer });
+  const item = (await outboxRepo.byClientUuid(db, uuid))!;
+  await mount(db, item.seq);
+  expect(await screen.findByText(ZOONOSES_ERRORS.animal_not_active, {}, FIRST)).toBeTruthy();
+  expect(screen.getByText("Campo: Animal")).toBeTruthy();
+  expect(screen.getByText(NO_FORM_FOR_THIS)).toBeTruthy();
+  await press("Descartar");
+  expect(screen.queryByText(/registros? que depende/)).toBeNull();
+  await press("Confirmar descarte");
+  await waitFor(async () => expect(await outboxRepo.count(db)).toBe(0));
 });

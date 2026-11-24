@@ -8,7 +8,10 @@
 // - Edit: the versioned path of the 24c (Q20) — the whole body with animal_id, never the microchip; the base is what the
 //   form opened with (Q41). A change of situation goes as status with status_on, the city's day (Q37), never back to
 //   "active"; a situation that stays is not sent (the schema ties status to status_on). A creation still waiting in
-//   the line takes the edit in its own body (coalesce) and stays a creation.
+//   the line takes the edit in its own body (coalesce) and stays a creation; an edit that went on its own while the
+//   creation was on its way goes, for its older body would overwrite the one just written. After a refusal at the
+//   microchip (microchip_taken) the number typed again replaces the one the creation had, and blank takes it out.
+//   An edit waiting in the line that already says the same situation keeps its day: the day it was told.
 // - Vaccine and collar (Task 7): an item of their own, never an edit of the animal. The animal goes by animal_id, or by
 //   animal_client_uuid with a `cite` while its creation is in the line (Review Focus 2). They change nothing on the row:
 //   its dates show the line on top (view.ts), and an acceptance writes them without a new version (Q29 of 35a).
@@ -70,6 +73,8 @@ export interface SaveAnimalInput {
   today?: string;
   // Edit only: the version and body the form opened with (readAnimal().base). Without it the row's as it is now.
   editBase?: EditBase | null;
+  // Edit of a creation refused at the microchip (readAnimal().retypeMicrochip): draft.microchip replaces its number.
+  replaceMicrochip?: boolean;
   newUuid(): string;
 }
 
@@ -117,16 +122,32 @@ export async function saveAnimal(db: Db, input: SaveAnimalInput): Promise<string
       ? queue.find((item) => item.type === "animal" && item.client_uuid === input.animalKey && item.target_id === input.animalKey) : undefined;
     let body: Body;
     if (creation && (creation.state === "pending" || creation.state === "needs_attention")) {
-      // Not sent yet: the creation takes the edit (coalesce) and keeps the number typed when it was made.
+      // Not sent yet: the creation takes the edit (coalesce) and keeps the number typed when it was made, unless it was
+      // refused for it and typed again.
       body = toAnimalBody(input.draft, { household: householdRef, tutor, edit: null });
-      delete body.microchip;
-      if (typeof creation.body.microchip === "string") body.microchip = creation.body.microchip;
+      if (input.replaceMicrochip === true) {
+        // The row says only whether there is one now (§16).
+        const row = await tx.get<{ body: string }>("SELECT body FROM animals WHERE key = ? AND id IS NULL", [input.animalKey]);
+        const hasMicrochip = typeof body.microchip === "string";
+        if (row) await tx.run("UPDATE animals SET body = ? WHERE key = ?", [JSON.stringify({ ...(JSON.parse(row.body) as Body), has_microchip: hasMicrochip }), input.animalKey]);
+      } else {
+        delete body.microchip;
+        if (typeof creation.body.microchip === "string") body.microchip = creation.body.microchip;
+      }
+      // The edits written while the creation was on its way: this body has what they had and what came after.
+      for (const later of queue) {
+        if (later.type === "animal" && later.target_id === input.animalKey && later.depends_on.some((dep) => dep.client_uuid === creation.client_uuid && dep.kind === "version")) {
+          await outboxRepo.remove(tx, later.seq);
+        }
+      }
     } else {
       // Changed against what the edit is based on (an earlier edit in the line counts: it is the same item).
       const changed = status !== ((view.base?.body.status as AnimalStatus | undefined) ?? "active");
       if (changed && input.today === undefined) throw new Error("informe o dia da mudança de situação");
+      const waiting = queue.find((item) => item.type === "animal" && item.target_id === input.animalKey && (item.state === "pending" || item.state === "needs_attention"));
+      const told = waiting?.body.status === status && typeof waiting.body.status_on === "string" ? waiting.body.status_on : (input.today as string);
       body = toAnimalBody({ ...input.draft, microchip: "" }, {
-        household: householdRef, tutor, edit: { animalId: view.id, status: changed ? { code: status, on: input.today as string } : null },
+        household: householdRef, tutor, edit: { animalId: view.id, status: changed ? { code: status, on: told } : null },
       });
       // On its way: the edit needs the version its acceptance will give.
       if (creation) deps.push({ client_uuid: creation.client_uuid, kind: "version" });

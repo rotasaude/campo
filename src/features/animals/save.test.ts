@@ -317,3 +317,20 @@ test("discarding the collection deletes its local line", async () => {
   await removeUnsent(db, key);
   expect((await lines(db)).map((line) => line.client_uuid)).toEqual([kept]);
 });
+
+// Ruling 2 of the controller (Task 9): the day of a change of situation is the day it was told, not the day of the last
+// touch of the same item — a later correction (also of a refused edit) keeps it; another situation is a new day.
+test("an edit coalesced into a waiting one keeps the status_on it carries when the status is the same", async () => {
+  const db = await zoonosesTablet();
+  await saveAnimal(db, { householdKey: HH, animalKey: ANIMAL, draft: draft({ name: "Pipoca", tutorKey: JOANA }), status: "missing", today: TODAY, newUuid });
+  await saveAnimal(db, { householdKey: HH, animalKey: ANIMAL, draft: draft({ name: "Pipa", tutorKey: JOANA }), today: "2026-11-25", newUuid });
+  expect((await animalItems(db))[0].body).toMatchObject({ name: "Pipa", status: "missing", status_on: TODAY });
+
+  const [refused] = await animalItems(db);
+  await outboxRepo.update(db, refused.seq, { state: "needs_attention", error: "invalid_request", path: "name" });
+  await saveAnimal(db, { householdKey: HH, animalKey: ANIMAL, draft: draft({ name: "Pita", tutorKey: JOANA }), status: "missing", today: "2026-11-26", newUuid });
+  expect((await animalItems(db))[0]).toMatchObject({ client_uuid: refused.client_uuid, state: "pending", body: { name: "Pita", status: "missing", status_on: TODAY } });
+
+  await saveAnimal(db, { householdKey: HH, animalKey: ANIMAL, draft: draft({ name: "Pita", tutorKey: JOANA }), status: "deceased", today: "2026-11-27", newUuid });
+  expect((await animalItems(db))[0].body).toMatchObject({ status: "deceased", status_on: "2026-11-27" });
+});
