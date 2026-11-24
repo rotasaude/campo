@@ -6,6 +6,7 @@ import { loadHome } from "../features/home/homeData";
 import { canRecordInspection, loadSession } from "../features/session";
 import { loadedTablet } from "../features/testing";
 import { ReferenceShapeError } from "../rules/dictionaries";
+import { ANIMAL_SEXES, ANIMAL_SIZES, ANIMAL_SPECIES, ANIMAL_STATUSES, DPP_RESULTS, ZOONOSES_PRODUCT_USES, parseZoonosesDomains } from "../rules/zoonosesDomains";
 import { DEPOSIT_GROUPS, MEASURE_METHODS, RISK_CLASSES, VECTOR_ACTIVITIES, VECTOR_SITUATIONS, VECTOR_WORK_TYPES, parseVectorDomains } from "../rules/vectorDomains";
 import { FieldHttpError } from "./http";
 import { APP_UPDATE_NOTICE, healthUnitOptions, loadReference, parseReference, professionalOptions, referenceNeedsAppUpdate, refreshReference } from "./reference";
@@ -235,6 +236,106 @@ test("a malformed vector block keeps the previous reference (kept_previous)", as
     const stored = (await loadReference(db))!;
     expect(stored.version).toBe(VECTOR.reference_version);
     expect(stored.vectorDomains).toEqual(block);
+  }
+  expect(await referenceNeedsAppUpdate(db)).toBe(true);
+});
+
+// ── 35b: zoonoses_domains ──
+const ZOONOSES = { ...example<ReferenceResponse>("reference-zoonoses.json"), reference_version: "36".repeat(32) };
+
+test("reference without zoonoses_domains parses with zoonosesDomains null", () => {
+  expect(EXAMPLE).not.toHaveProperty("zoonoses_domains");
+  expect(parseReference(EXAMPLE).zoonosesDomains).toBeNull();
+  expect(parseReference(VECTOR).zoonosesDomains).toBeNull();
+  expect(parseReference(referenceFixture()).zoonosesDomains).toBeNull();
+  expect(parseZoonosesDomains(undefined)).toBeNull();
+});
+
+test("zoonoses_domains of the v1.4.0 example is parsed; products only rabies_vaccine and collar", async () => {
+  expect(() => expectValid("reference-response", ZOONOSES)).not.toThrow();
+  const parsed = parseReference(ZOONOSES).zoonosesDomains!;
+  expect(parsed).toEqual(ZOONOSES.zoonoses_domains);
+  expect(parsed.products.map((p) => p.use)).toEqual(["rabies_vaccine", "collar"]);
+  expect(parsed.parameters).toEqual({ collar_months: 6 });
+  expect(parsed.limits).toEqual(domains.zoonoses.limits);
+  const codes = (list: readonly { code: string }[]) => list.map((entry) => entry.code);
+  expect(ANIMAL_SPECIES).toEqual(codes(domains.zoonoses.species));
+  expect(ANIMAL_SEXES).toEqual(codes(domains.zoonoses.sexes));
+  expect(ANIMAL_SIZES).toEqual(codes(domains.zoonoses.sizes));
+  expect(ANIMAL_STATUSES).toEqual(codes(domains.zoonoses.animal_statuses));
+  expect(DPP_RESULTS).toEqual(codes(domains.zoonoses.dpp_results));
+  expect(ZOONOSES_PRODUCT_USES).toEqual(codes(domains.zoonoses.product_uses));
+
+  const db = await createTestDb();
+  expect(await refreshReference(db, clientOf(ZOONOSES), ZOONOSES.reference_version)).toBe("updated");
+  expect((await loadReference(db))!.zoonosesDomains).toEqual(ZOONOSES.zoonoses_domains);
+});
+
+test("open_campaign null is kept as null", async () => {
+  const raw = { ...ZOONOSES.zoonoses_domains!, open_campaign: null };
+  expect(parseZoonosesDomains(raw)!.open_campaign).toBeNull();
+  const body = { ...ZOONOSES, reference_version: "37".repeat(32), zoonoses_domains: raw };
+  expect(() => expectValid("reference-response", body)).not.toThrow();
+  const db = await createTestDb();
+  expect(await refreshReference(db, clientOf(body), body.reference_version)).toBe("updated");
+  expect((await loadReference(db))!.zoonosesDomains!.open_campaign).toBeNull();
+});
+
+test("an unknown species code drops only the zoonoses block; vectorDomains and the forms stay", async () => {
+  const block = ZOONOSES.zoonoses_domains!;
+  const vector = VECTOR.vector_control_domains!;
+  const news: [string, unknown][] = [
+    ["new species", { ...block, species: [...block.species, { code: "bird", label: "Ave" }] }],
+    ["new sex", { ...block, sexes: [...block.sexes, { code: "x", label: "X" }] }],
+    ["new size", { ...block, sizes: [...block.sizes, { code: "giant", label: "Gigante" }] }],
+    ["new status", { ...block, animal_statuses: [...block.animal_statuses, { code: "adopted", label: "Adotado" }] }],
+    ["new dpp result", { ...block, dpp_results: [...block.dpp_results, { code: "weak", label: "Fraco" }] }],
+    ["new product use", { ...block, products: [{ ...block.products[0], use: "dewormer" }] }],
+  ];
+  for (const [index, [label, raw]] of news.entries()) {
+    expect([label, parseZoonosesDomains(raw)]).toEqual([label, null]);
+    const db = await loadedTablet();
+    const body = { ...VECTOR, reference_version: (index + 0xc0).toString(16).repeat(32), zoonoses_domains: raw };
+    expect([label, await refreshReference(db, clientOf(body), body.reference_version)]).toEqual([label, "updated"]);
+    const stored = (await loadReference(db))!;
+    expect([stored.version, stored.zoonosesDomains]).toEqual([body.reference_version, null]);
+    expect(stored.vectorDomains).toEqual(vector);
+    expect(stored.homeVisitDomains).toEqual(VECTOR.home_visit_domains);
+    expect(stored.collectiveDomains).toEqual(VECTOR.collective_activity_domains);
+    expect(await referenceNeedsAppUpdate(db)).toBe(false);
+    expect((await loadHome(db, NOW)).appUpdate).toBe(false);
+  }
+});
+
+test("a malformed zoonoses block keeps the previous reference (kept_previous)", async () => {
+  const db = await createTestDb();
+  expect(await refreshReference(db, clientOf(ZOONOSES), ZOONOSES.reference_version)).toBe("updated");
+  const block = ZOONOSES.zoonoses_domains!;
+  const broken: [string, unknown][] = [
+    ["invalid-reference-zoonoses-campaign-with-goal.json", example<ReferenceResponse>("invalid-reference-zoonoses-campaign-with-goal.json").zoonoses_domains],
+    ["invalid-reference-zoonoses-collar-months-13.json", example<ReferenceResponse>("invalid-reference-zoonoses-collar-months-13.json").zoonoses_domains],
+    ["invalid-reference-zoonoses-species-empty.json", example<ReferenceResponse>("invalid-reference-zoonoses-species-empty.json").zoonoses_domains],
+    ["invalid-reference-zoonoses-without-open-campaign.json", example<ReferenceResponse>("invalid-reference-zoonoses-without-open-campaign.json").zoonoses_domains],
+    ["null block", null],
+    ["list as object", { ...block, sexes: { male: "Macho" } }],
+    ["code not text", { ...block, sizes: [{ code: 1, label: "Pequeno" }] }],
+    ["product without name", { ...block, products: [{ ...block.products[0], name: undefined }] }],
+    ["limit missing", { ...block, limits: { ...block.limits, microchip_digits: undefined } }],
+    ["limit zero", { ...block, limits: { ...block.limits, name_max: 0 } }],
+    ["collar months zero", { ...block, parameters: { collar_months: 0 } }],
+    ["campaign date not a date", { ...block, open_campaign: { ...block.open_campaign, starts_on: "amanha" } }],
+    // Shape wins over news: a new code does not excuse a broken block.
+    ["unknown code and broken shape", { ...block, species: [...block.species, { code: "bird", label: "Ave" }], limits: {} }],
+  ];
+  for (const [index, [label, raw]] of broken.entries()) {
+    let thrown: unknown = null;
+    try { parseZoonosesDomains(raw); } catch (err) { thrown = err; }
+    expect([label, thrown instanceof ReferenceShapeError]).toEqual([label, true]);
+    const body = { ...ZOONOSES, reference_version: index.toString(16).padStart(2, "0").repeat(32), zoonoses_domains: raw };
+    expect([label, await refreshReference(db, clientOf(body), body.reference_version)]).toEqual([label, "kept_previous"]);
+    const stored = (await loadReference(db))!;
+    expect(stored.version).toBe(ZOONOSES.reference_version);
+    expect(stored.zoonosesDomains).toEqual(block);
   }
   expect(await referenceNeedsAppUpdate(db)).toBe(true);
 });

@@ -1,7 +1,7 @@
 // The offline reference: what the forms need without a network (registration
 // dictionaries, neighbourhoods, health units, the team's professionals and the
 // domains of the visit and of the activity, and — where the city's vector_control gate is usable — the vector
-// control domains of the bulletin, 35a). It has no citizen data.
+// control domains of the bulletin, 35a, and the zoonoses domains, 35b). It has no citizen data.
 //
 // The session carries `reference_version` (a SHA-256 the api computes); the
 // tablet only compares, never recomputes, and downloads again when it changes.
@@ -12,6 +12,7 @@ import type { Db } from "../db/types";
 import { ReferenceShapeError, parseRegistrationDictionaries, type RegistrationDictionaries } from "../rules/dictionaries";
 import type { CollectiveDomains, HomeVisitDomains } from "../rules/domains";
 import { parseVectorDomains, type VectorControlDomains } from "../rules/vectorDomains";
+import { parseZoonosesDomains, type ZoonosesDomains } from "../rules/zoonosesDomains";
 import type { FieldClient } from "./http";
 
 export interface Reference {
@@ -24,6 +25,8 @@ export interface Reference {
   collectiveDomains: CollectiveDomains;
   // null = the block did not come (gate off in the city) or carries a code this app does not know (Q44(1)): no bulletin.
   vectorDomains: VectorControlDomains | null;
+  // null = the block did not come (zoonoses gate off) or carries a code this app does not know (Q44(1)): no zoonoses screens (35b).
+  zoonosesDomains: ZoonosesDomains | null;
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -55,6 +58,7 @@ export function parseReference(raw: ReferenceResponse): Reference {
     homeVisitDomains: body.home_visit_domains as unknown as HomeVisitDomains,
     collectiveDomains: body.collective_activity_domains as unknown as CollectiveDomains,
     vectorDomains: parseVectorDomains(body.vector_control_domains),
+    zoonosesDomains: parseZoonosesDomains(body.zoonoses_domains),
   };
 }
 

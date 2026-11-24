@@ -1,7 +1,7 @@
 import type { ReferenceResponse, SessionResponse } from "../contract";
 import { example } from "../contract/fixtures";
 import { parseReference } from "../sync/reference";
-import { AGENT_PROPERTY_TYPES, agentRegistersNonResidential, canEditHousehold, canEditRegistry, canRecordInspection, vectorControlOn } from "./session";
+import { AGENT_PROPERTY_TYPES, ZOONOSES_CBOS, agentRegistersNonResidential, canCollectLeish, canEditHousehold, canEditRegistry, canRecordInspection, canUseZoonoses, vectorControlOn, zoonosesOn } from "./session";
 
 const ACE = example<SessionResponse>("session-endemic-agent.json");
 const ACS = example<SessionResponse>("session-acs.json");
@@ -68,4 +68,51 @@ test("agent without vector_control or without territory_registry edits nothing",
     expect(canEditHousehold(session, "4")).toBe(false);
     expect(canEditHousehold(session, null)).toBe(false);
   }
+});
+
+// ── 35b: who uses the zoonoses ──
+const WITH_ZOONOSES = parseReference(example<ReferenceResponse>("reference-zoonoses.json"));
+const ZOONOSES_AGENT = example<SessionResponse>("session-zoonoses-agent.json");
+
+function zoonosesSession(cbo: string, zoonoses: boolean | undefined): SessionResponse {
+  const { zoonoses: _off, ...features } = ZOONOSES_AGENT.features;
+  return { ...ZOONOSES_AGENT, professional: { ...ZOONOSES_AGENT.professional, cbo },
+    features: zoonoses === undefined ? features : { ...features, zoonoses } };
+}
+
+test("ZOONOSES_CBOS are the endemic agent and the ACS", () => {
+  expect([...ZOONOSES_CBOS]).toEqual(["515140", "515105"]);
+});
+
+test.each([
+  ["515140", true, true, true], ["515105", true, true, true], ["223505", true, true, false],
+  ["515140", false, true, false], ["515140", undefined, true, false], ["515140", true, false, false],
+])("canUseZoonoses(cbo %s, zoonoses %s, domains %s) → %s", (cbo, zoonoses, withDomains, expected) => {
+  const session = zoonosesSession(cbo as string, zoonoses as boolean | undefined);
+  expect(canUseZoonoses(session, withDomains ? WITH_ZOONOSES : WITHOUT_DOMAINS)).toBe(expected);
+});
+
+test("canUseZoonoses without a session or a reference is false; zoonosesOn is only === true", () => {
+  expect(canUseZoonoses(null, WITH_ZOONOSES)).toBe(false);
+  expect(canUseZoonoses(ZOONOSES_AGENT, null)).toBe(false);
+  expect(zoonosesOn(ZOONOSES_AGENT)).toBe(true);
+  expect(zoonosesOn(zoonosesSession("515140", false))).toBe(false);
+  expect(zoonosesOn(zoonosesSession("515140", undefined))).toBe(false);
+  expect(zoonosesOn(null)).toBe(false);
+  expect(zoonosesOn(ACS)).toBe(false);
+});
+
+test("canCollectLeish only for 515140", () => {
+  expect(canCollectLeish(zoonosesSession("515140", true), WITH_ZOONOSES)).toBe(true);
+  expect(canCollectLeish(zoonosesSession("515105", true), WITH_ZOONOSES)).toBe(false);
+  expect(canCollectLeish(zoonosesSession("223505", true), WITH_ZOONOSES)).toBe(false);
+  expect(canCollectLeish(zoonosesSession("515140", false), WITH_ZOONOSES)).toBe(false);
+  expect(canCollectLeish(zoonosesSession("515140", true), WITHOUT_DOMAINS)).toBe(false);
+});
+
+test("zoonoses on and vector_control off: canUseZoonoses true, canRecordInspection false", () => {
+  const { vector_control: _off, ...features } = ZOONOSES_AGENT.features;
+  const session = { ...ZOONOSES_AGENT, features: { ...features, zoonoses: true } };
+  expect(canUseZoonoses(session, WITH_ZOONOSES)).toBe(true);
+  expect(canRecordInspection(session, WITH_ZOONOSES)).toBe(false);
 });

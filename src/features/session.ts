@@ -54,6 +54,26 @@ export function canUseOvitraps(session: SessionResponse | null): boolean {
   return vectorControlOn(session) && session?.professional.cbo === ENDEMIC_AGENT_CBO;
 }
 
+// The city's zoonoses switch (absent = off): Zoonoses::Gate.field_usable? (Q10).
+export function zoonosesOn(session: SessionResponse | null): boolean {
+  return session?.features.zoonoses === true;
+}
+
+// Who works with animals in the field: the endemic agent and the ACS (the api's registrar CBOs).
+export const ZOONOSES_CBOS = [ENDEMIC_AGENT_CBO, ACS_CBO] as const;
+
+// The zoonoses screens: the switch on, one of the two CBOs and the reference's zoonoses domains in hand. Without the
+// domains there are no screens. The other CBOs see nothing new.
+export function canUseZoonoses(session: SessionResponse | null, reference: Reference | null): boolean {
+  return zoonosesOn(session) && (ZOONOSES_CBOS as readonly string[]).includes(session?.professional.cbo ?? "")
+    && (reference?.zoonosesDomains ?? null) !== null;
+}
+
+// Only the endemic agent collects blood for the leishmaniasis survey.
+export function canCollectLeish(session: SessionResponse | null, reference: Reference | null): boolean {
+  return canUseZoonoses(session, reference) && session?.professional.cbo === ENDEMIC_AGENT_CBO;
+}
+
 export interface MyMicroArea { id: string; code: string; name: string; teamId: string }
 export function myMicroAreas(session: SessionResponse | null): MyMicroArea[] {
   return (session?.teams ?? []).flatMap((team) => team.micro_areas.map((area) => ({ id: area.id, code: area.code, name: area.name, teamId: team.id })));
