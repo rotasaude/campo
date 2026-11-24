@@ -6,7 +6,7 @@ import { emptyAnimalDraft, type AnimalDraft } from "../../rules/animal";
 import { enqueue } from "../../sync/outbox";
 import { insertHousehold, newUuid } from "../../sync/testing";
 import { ANIMAL, HH, JOANA, bornResident, zoonosesTablet } from "../testing";
-import { saveAnimal } from "./save";
+import { placeCollar, saveAnimal, vaccinate } from "./save";
 import { readAnimal } from "./view";
 
 const CHIP = "985141000123456";
@@ -181,4 +181,85 @@ test("animal bodies validate against upload-request-v1.json; birth goes as birth
   expect((await rowOf(db, full))!.body.birth_estimate_on).toBe("2022-03-01");
   expectValid("upload-request", { items: [wire(created.client_uuid, created.body), wire(community.client_uuid, community.body), wire(edit.client_uuid, edit.body, 2)] });
   for (const item of [created, community, edit]) expect(item.body).not.toHaveProperty("neutered");
+});
+
+// ── Task 7: the rabies vaccine and the collar ──
+const VAR = "e1f2a3b4-c5d6-4e7f-8a9b-1c2d3e4f5a6b";
+const CDT4 = "f2a3b4c5-d6e7-4f8a-9b0c-2d3e4f5a6b7c";
+const CAMPAIGN = "d0e1f2a3-b4c5-4d6e-9f7a-9b0c1d2e3f4a";
+const SERVER_ANIMAL = "c0ffee75-0000-4000-8000-000000000075";
+const careItems = async (db: Db) => (await outboxRepo.all(db)).filter((item) => item.type === "rabies_vaccination" || item.type === "collar");
+const vaccine = (animalKey: string, over: { adverseEvent?: boolean; adverseNote?: string | null; today?: string } = {}) =>
+  ({ animalKey, productId: VAR, adverseEvent: false, adverseNote: null, today: TODAY, newUuid, ...over });
+
+test("vaccinate an animal born offline: cites animal_client_uuid and waits for it", async () => {
+  const db = await zoonosesTablet();
+  const key = await saveAnimal(db, { householdKey: HH, draft: draft({ name: "Rex" }), newUuid });
+  const vaccination = await vaccinate(db, vaccine(key));
+  const collar = await placeCollar(db, { animalKey: key, productId: CDT4, today: TODAY, newUuid });
+  const [v, c] = await careItems(db);
+  expect(v).toMatchObject({ client_uuid: vaccination, target_id: null, depends_on: [{ client_uuid: key, kind: "cite" }] });
+  expect(v.body).toEqual({ animal_client_uuid: key, campaign_id: CAMPAIGN, vaccinated_on: TODAY, vector_product_id: VAR, adverse_event: false });
+  expect(c).toMatchObject({ client_uuid: collar, target_id: null, depends_on: [{ client_uuid: key, kind: "cite" }] });
+  expect(c.body).toEqual({ animal_client_uuid: key, vector_product_id: CDT4, placed_on: TODAY });
+  // Neither touches the animal's own item nor its row's version.
+  expect((await animalItems(db))[0].body).not.toHaveProperty("last_rabies_vaccination_on");
+  expect(await rowOf(db, key)).toMatchObject({ id: null, version: null });
+
+  // Accepted, the download not yet in: the next ones go by animal_id, with nothing to wait for (Review Focus 2).
+  const creation = (await animalItems(db))[0];
+  await outboxRepo.remove(db, creation.seq);
+  await outboxRepo.mapClientId(db, key, "animal", SERVER_ANIMAL);
+  await db.run("UPDATE animals SET id = ?, version = 1, base_version = 1 WHERE key = ?", [SERVER_ANIMAL, key]);
+  await vaccinate(db, vaccine(key));
+  await placeCollar(db, { animalKey: key, productId: CDT4, today: TODAY, newUuid });
+  const [, , v2, c2] = await careItems(db);
+  expect(v2).toMatchObject({ depends_on: [], body: { animal_id: SERVER_ANIMAL } });
+  expect(v2.body).not.toHaveProperty("animal_client_uuid");
+  expect(c2).toMatchObject({ depends_on: [], body: { animal_id: SERVER_ANIMAL } });
+});
+
+test("the animal is named by what the tablet knows when its row is not the server's", async () => {
+  const db = await zoonosesTablet();
+  // Accepted with the id known only in client_ids (the row still without it): by animal_id.
+  const mapped = await saveAnimal(db, { householdKey: HH, draft: draft(), newUuid });
+  await outboxRepo.remove(db, (await outboxRepo.byClientUuid(db, mapped))!.seq);
+  await outboxRepo.mapClientId(db, mapped, "animal", SERVER_ANIMAL);
+  await vaccinate(db, vaccine(mapped));
+  // Accepted without an id the tablet knows: still by its client_uuid, which the server resolves, with nothing to wait for.
+  const unknown = await saveAnimal(db, { householdKey: HH, draft: draft(), newUuid });
+  await outboxRepo.remove(db, (await outboxRepo.byClientUuid(db, unknown))!.seq);
+  await vaccinate(db, vaccine(unknown));
+  // A server animal whose row is gone (removed by the download, the reset): by its id.
+  await db.run("DELETE FROM animals WHERE key = ?", [ANIMAL]);
+  await placeCollar(db, { animalKey: ANIMAL, productId: CDT4, today: TODAY, newUuid });
+  const [a, b, c] = await careItems(db);
+  expect(a).toMatchObject({ depends_on: [], body: { animal_id: SERVER_ANIMAL } });
+  expect(b).toMatchObject({ depends_on: [], body: { animal_client_uuid: unknown } });
+  expect(c).toMatchObject({ depends_on: [], body: { animal_id: ANIMAL } });
+});
+
+test("vaccination body validates; campaign_id is the open campaign of the reference; no modality key; adverse_note only with adverse_event", async () => {
+  const db = await zoonosesTablet();
+  await vaccinate(db, vaccine(ANIMAL, { adverseEvent: true, adverseNote: "  Inchaço no local da aplicação.  " }));
+  // A note typed and the switch turned off again: the note does not go (Q20).
+  await vaccinate(db, vaccine(ANIMAL, { adverseEvent: false, adverseNote: "Inchaço no local da aplicação." }));
+  await placeCollar(db, { animalKey: ANIMAL, productId: CDT4, today: TODAY, newUuid });
+  const [adverse, plain, collar] = await careItems(db);
+  expect(adverse.body).toEqual({
+    animal_id: ANIMAL, campaign_id: CAMPAIGN, vaccinated_on: TODAY, vector_product_id: VAR, adverse_event: true, adverse_note: "Inchaço no local da aplicação.",
+  });
+  expect(plain.body).toEqual({ animal_id: ANIMAL, campaign_id: CAMPAIGN, vaccinated_on: TODAY, vector_product_id: VAR, adverse_event: false });
+  expect(collar.body).toEqual({ animal_id: ANIMAL, vector_product_id: CDT4, placed_on: TODAY });
+  for (const item of [adverse, plain]) expect(item.body).not.toHaveProperty("modality");
+  expectValid("upload-request", { items: [adverse, plain, collar].map((item) => ({ client_uuid: item.client_uuid, type: item.type, body: item.body })) });
+  // The row is not touched: last_rabies_vaccination_on and collar_due_on change without a version (Q29 of 35a).
+  expect(await rowOf(db, ANIMAL)).toMatchObject({ version: 2, body: { last_rabies_vaccination_on: "2026-11-21", collar_due_on: "2026-12-01" } });
+});
+
+test("without an open campaign nothing is queued", async () => {
+  const db = await zoonosesTablet();
+  await db.run("UPDATE reference SET body = json_set(body, '$.zoonoses_domains.open_campaign', json('null'))");
+  await expect(vaccinate(db, vaccine(ANIMAL))).rejects.toThrow();
+  expect(await careItems(db)).toEqual([]);
 });

@@ -12,8 +12,11 @@ import { AttentionScreen } from "../attention/AttentionScreen";
 import { WAITING } from "../households/HouseholdList";
 import { HouseholdScreen } from "../households/HouseholdScreen";
 import { ANIMAL, COMMUNITY_ANIMAL, HH, JOANA, bornResident, zoonosesTablet } from "../testing";
+import { OutboxScreen } from "../outbox/OutboxScreen";
 import { AnimalForm } from "./AnimalForm";
-import { saveAnimal } from "./save";
+import { CollarForm } from "./CollarForm";
+import { placeCollar, saveAnimal, vaccinate } from "./save";
+import { EATAV_REMINDER, VaccinateForm } from "./VaccinateForm";
 
 const NOW = Date.parse("2026-11-24T15:00:00Z");
 const CHIP = "985141000123456";
@@ -30,7 +33,8 @@ const animalItems = async (db: Db) => (await outboxRepo.all(db)).filter((item) =
 async function household(db: Db) {
   const nav = {
     onEdit: jest.fn(), onNewFamily: jest.fn(), onEditFamily: jest.fn(), onNewResident: jest.fn(), onStartVisit: jest.fn(), onOpenResident: jest.fn(),
-    onInstallOvitrap: jest.fn(), onStartPropertyVisit: jest.fn(), onNewAnimal: jest.fn(), onEditAnimal: jest.fn(),
+    onInstallOvitrap: jest.fn(), onStartPropertyVisit: jest.fn(), onNewAnimal: jest.fn(), onEditAnimal: jest.fn(), onVaccinateAnimal: jest.fn(),
+    onCollarAnimal: jest.fn(),
   };
   const view = await renderWithServices(<HouseholdScreen householdKey={HH} {...nav} />, services(db));
   await screen.findByText(/Microárea/, {}, FIRST);
@@ -167,4 +171,126 @@ test("an animal changed at the station needs attention with the dashboard's phra
   await press("Corrigir");
   expect(onFix).toHaveBeenCalledWith({ type: "animal", targetId: ANIMAL, familyId: null });
   expect(screen.getByRole("button", { name: "Descartar" })).toBeTruthy();
+});
+
+// ── Task 7: "Vacinar" and "Colocar coleira" ──
+const VAR = "e1f2a3b4-c5d6-4e7f-8a9b-1c2d3e4f5a6b";
+const CDT4 = "f2a3b4c5-d6e7-4f8a-9b0c-2d3e4f5a6b7c";
+const careItems = async (db: Db, type: string) => (await outboxRepo.all(db)).filter((item) => item.type === type);
+const card = (key: string) => within(screen.getByTestId(`animal-${key}`));
+const born = (db: Db, species: string, name: string) =>
+  saveAnimal(db, { householdKey: HH, draft: { ...emptyAnimalDraft(), species, sex: "male", name }, newUuid });
+async function vaccinateForm(db: Db, animalKey: string) {
+  const onSaved = jest.fn();
+  const view = await renderWithServices(<VaccinateForm animalKey={animalKey} onSaved={onSaved} />, services(db));
+  await screen.findByTestId("field-vector_product_id", {}, FIRST);
+  return { onSaved, unmount: () => view.unmount() };
+}
+async function collarForm(db: Db, animalKey: string) {
+  const onSaved = jest.fn();
+  const view = await renderWithServices(<CollarForm animalKey={animalKey} onSaved={onSaved} />, services(db));
+  await screen.findByTestId("field-vector_product_id", {}, FIRST);
+  return { onSaved, unmount: () => view.unmount() };
+}
+
+test("adverse event on shows the EATAV reminder", async () => {
+  const db = await zoonosesTablet();
+  const form = await vaccinateForm(db, ANIMAL);
+  expect(screen.getByText("Última vacina antirrábica: 21/11/2026")).toBeTruthy();
+  // One vaccine product in the reference: it comes chosen.
+  expect(field("vector_product_id").getByRole("radio", { name: "Vacina antirrábica animal" }).props.accessibilityState.checked).toBe(true);
+  expect(screen.queryByText(EATAV_REMINDER)).toBeNull();
+  expect(screen.queryByLabelText("Nota do evento adverso")).toBeNull();
+  await fireEvent.press(screen.getByRole("checkbox", { name: "Evento adverso" }));
+  expect(screen.getByText("Notifique o evento adverso no formulário do Ministério da Saúde (EATAV).")).toBeTruthy();
+  await fireEvent.changeText(screen.getByLabelText("Nota do evento adverso"), "Inchou");
+  await press("Vacinar");
+  expect(await field("adverse_note").findByText("escreva de 10 a 500 caracteres")).toBeTruthy();
+  expect(await careItems(db, "rabies_vaccination")).toEqual([]);
+  await fireEvent.changeText(screen.getByLabelText("Nota do evento adverso"), "Inchaço no local da aplicação.");
+  await press("Vacinar");
+  await waitFor(() => expect(form.onSaved).toHaveBeenCalledTimes(1));
+  const [item] = await careItems(db, "rabies_vaccination");
+  expect(item.body).toMatchObject({ animal_id: ANIMAL, vaccinated_on: "2026-11-24", vector_product_id: VAR, adverse_event: true, adverse_note: "Inchaço no local da aplicação." });
+});
+
+test("no open campaign: no Vacinar button", async () => {
+  const db = await zoonosesTablet();
+  const cat = await born(db, "cat", "Mingau");
+  const other = await born(db, "other", "Loro");
+  // An animal whose edit in the line takes it out of "active".
+  await saveAnimal(db, { householdKey: HH, animalKey: COMMUNITY_ANIMAL, draft: { ...emptyAnimalDraft(), species: "dog", sex: "female", community: true }, status: "missing", today: "2026-11-24", newUuid });
+  const nav = await household(db);
+  await screen.findByTestId(`animal-${ANIMAL}`);
+  expect(card(ANIMAL).getByRole("button", { name: "Vacinar" })).toBeTruthy();
+  expect(card(cat).getByRole("button", { name: "Vacinar" })).toBeTruthy();
+  expect(card(other).queryByRole("button", { name: "Vacinar" })).toBeNull();
+  expect(card(COMMUNITY_ANIMAL).queryByRole("button", { name: "Vacinar" })).toBeNull();
+  await fireEvent.press(card(cat).getByRole("button", { name: "Vacinar" }));
+  expect(nav.onVaccinateAnimal).toHaveBeenCalledWith(cat);
+  await vaccinate(db, { animalKey: ANIMAL, productId: VAR, adverseEvent: false, adverseNote: null, today: "2026-11-24", newUuid });
+  await nav.unmount();
+
+  // The campaign closed in the reference: the button goes, the vaccine already in the line stays (Review Focus 5).
+  await db.run("UPDATE reference SET body = json_set(body, '$.zoonoses_domains.open_campaign', json('null'))");
+  await household(db);
+  await screen.findByTestId(`animal-${ANIMAL}`);
+  expect(screen.queryByRole("button", { name: "Vacinar" })).toBeNull();
+  expect(card(ANIMAL).getByRole("button", { name: "Colocar coleira" })).toBeTruthy();
+  expect(await careItems(db, "rabies_vaccination")).toHaveLength(1);
+});
+
+test("a second vaccination of the same campaign is offered; the api decides (Q19)", async () => {
+  const db = await zoonosesTablet();
+  await vaccinate(db, { animalKey: ANIMAL, productId: VAR, adverseEvent: false, adverseNote: null, today: "2026-11-24", newUuid });
+  const nav = await household(db);
+  await screen.findByTestId(`animal-${ANIMAL}`);
+  expect(card(ANIMAL).getByRole("button", { name: "Vacinar" })).toBeTruthy();
+  await nav.unmount();
+  const form = await vaccinateForm(db, ANIMAL);
+  expect(screen.getByText("Última vacina antirrábica: 24/11/2026")).toBeTruthy();
+  await press("Vacinar");
+  await waitFor(() => expect(form.onSaved).toHaveBeenCalledTimes(1));
+  expect(await careItems(db, "rabies_vaccination")).toHaveLength(2);
+});
+
+test("collar only for an active dog; a cat has no Colocar coleira", async () => {
+  const db = await zoonosesTablet();
+  const cat = await born(db, "cat", "Mingau");
+  const dog = await born(db, "dog", "Rex");
+  const nav = await household(db);
+  await screen.findByTestId(`animal-${dog}`);
+  expect(card(cat).queryByRole("button", { name: "Colocar coleira" })).toBeNull();
+  expect(card(ANIMAL).getByRole("button", { name: "Colocar coleira" })).toBeTruthy();
+  await fireEvent.press(card(dog).getByRole("button", { name: "Colocar coleira" }));
+  expect(nav.onCollarAnimal).toHaveBeenCalledWith(dog);
+  await nav.unmount();
+
+  const form = await collarForm(db, dog);
+  expect(field("vector_product_id").getByRole("radio", { name: "Coleira deltametrina 4%" }).props.accessibilityState.checked).toBe(true);
+  // Touching the chosen one clears it: the dashboard's phrase, nothing saved.
+  await choose("vector_product_id", "Coleira deltametrina 4%");
+  await press("Colocar coleira");
+  expect(await field("vector_product_id").findByText("escolha a coleira")).toBeTruthy();
+  expect(await careItems(db, "collar")).toEqual([]);
+  await choose("vector_product_id", "Coleira deltametrina 4%");
+  await press("Colocar coleira");
+  await waitFor(() => expect(form.onSaved).toHaveBeenCalledTimes(1));
+  const [item] = await careItems(db, "collar");
+  expect(item).toMatchObject({ depends_on: [{ client_uuid: dog, kind: "cite" }], body: { animal_client_uuid: dog, vector_product_id: CDT4, placed_on: "2026-11-24" } });
+  await form.unmount();
+
+  // The collar form of a cat refuses with the api's phrase, as the dashboard.
+  await collarForm(db, cat);
+  await press("Colocar coleira");
+  expect(await field("animal_id").findByText(ZOONOSES_ERRORS.animal_not_dog)).toBeTruthy();
+  expect(await careItems(db, "collar")).toHaveLength(1);
+});
+
+test("a vaccine whose animal row is gone is still in the line, on Envio", async () => {
+  const db = await zoonosesTablet();
+  await placeCollar(db, { animalKey: ANIMAL, productId: CDT4, today: "2026-11-24", newUuid });
+  await db.run("DELETE FROM animals WHERE key = ?", [ANIMAL]);
+  await renderWithServices(<OutboxScreen onFix={jest.fn()} onResolve={jest.fn()} />, services(db));
+  expect(await screen.findByText("Coleira", {}, FIRST)).toBeTruthy();
 });

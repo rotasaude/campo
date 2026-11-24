@@ -4,11 +4,14 @@
 // sent lives only in the line and is read from there. An edit sent back as animal_changed (stale_version, never merged)
 // is not put on top: the row is the current version, and "Corrigir" opens the form on it.
 // Never the number of the microchip: the row has only has_microchip, and so does every view (§16).
+// The vaccine and the collar in the line (Task 7) go on top of the dates: the vaccine puts its vaccinated_on, the collar
+// placed_on + collar_months (the api's due_on). They count as something of the animal waiting, and refused, held.
 import type { AnimalBody } from "../../contract";
 import { outboxRepo, type OutboxItem } from "../../db/repos/outboxRepo";
 import { territoryRepo } from "../../db/repos/territoryRepo";
 import { applyAnimalItem, tutorOf, zoonosesRepo } from "../../db/repos/zoonosesRepo";
 import type { Db } from "../../db/types";
+import { collarDueOn } from "../../rules/animal";
 import { loadReference } from "../../sync/reference";
 import { ANIMAL_CHANGED } from "../../sync/stale";
 
@@ -39,6 +42,25 @@ export const blankAnimal = (id: string, householdId: string): AnimalBody => ({
 const mineOf = (queue: OutboxItem[], key: string) => queue.filter((item) => item.type === "animal" && item.target_id === key);
 const changedAtStation = (item: OutboxItem) => item.state === "needs_attention" && item.error === ANIMAL_CHANGED;
 
+// The vaccines and collars in the line that name this animal: by its server id or its local key (animal_id), or by the
+// client_uuid it was born under (animal_client_uuid).
+const careOf = (queue: OutboxItem[], names: { key: string; id: string | null; client_uuid: string | null }) => queue.filter((item) => {
+  if (item.type !== "rabies_vaccination" && item.type !== "collar") return false;
+  const { animal_id: id, animal_client_uuid: born } = item.body;
+  return (typeof id === "string" && (id === names.id || id === names.key)) || (typeof born === "string" && (born === names.key || born === names.client_uuid));
+});
+
+// Without the collar months (no zoonoses domains) the collar's date stays the row's until the download.
+function withCare(body: AnimalBody, care: OutboxItem[], collarMonths: number | null): AnimalBody {
+  let out = body;
+  for (const item of care) {
+    const { vaccinated_on: vaccinatedOn, placed_on: placedOn } = item.body;
+    if (item.type === "rabies_vaccination" && typeof vaccinatedOn === "string") out = { ...out, last_rabies_vaccination_on: vaccinatedOn };
+    if (item.type === "collar" && typeof placedOn === "string" && collarMonths !== null) out = { ...out, collar_due_on: collarDueOn(placedOn, collarMonths) };
+  }
+  return out;
+}
+
 async function onTop(db: Db, body: AnimalBody, mine: OutboxItem[]): Promise<AnimalBody> {
   let out = body;
   for (const item of mine) if (!changedAtStation(item)) out = applyAnimalItem(out, item.body, await tutorOf(db, item.body, out.tutor));
@@ -51,11 +73,14 @@ const heldOf = (mine: OutboxItem[]): AnimalView["held"] =>
 export async function readAnimals(db: Db, householdKey: string): Promise<AnimalView[]> {
   const rows = await zoonosesRepo.animalsOf(db, householdKey);
   const queue = await outboxRepo.all(db);
-  const sexes = (await loadReference(db).catch(() => null))?.zoonosesDomains?.sexes ?? [];
+  const domains = (await loadReference(db).catch(() => null))?.zoonosesDomains ?? null;
+  const sexes = domains?.sexes ?? [];
   const views: AnimalView[] = [];
   for (const row of rows) {
-    const mine = mineOf(queue, row.key);
-    const body = await onTop(db, row.body, mine);
+    const own = mineOf(queue, row.key);
+    const care = careOf(queue, row);
+    const mine = [...own, ...care];
+    const body = withCare(await onTop(db, row.body, own), care, domains?.parameters.collar_months ?? null);
     views.push({
       key: row.key, id: row.id, species: body.species, name: body.name, sexLabel: sexes.find((sex) => sex.code === body.sex)?.label ?? body.sex,
       status: body.status, tutorName: body.tutor?.display_name || null, community: body.community, hasMicrochip: body.has_microchip,
@@ -68,11 +93,14 @@ export async function readAnimals(db: Db, householdKey: string): Promise<AnimalV
 export async function readAnimal(db: Db, key: string): Promise<AnimalEditView | null> {
   const row = await db.get<{ id: string | null; household_key: string; base_version: number | null; body: string }>(
     "SELECT id, household_key, base_version, body FROM animals WHERE key = ?", [key]);
-  const mine = mineOf(await outboxRepo.all(db), key);
+  const queue = await outboxRepo.all(db);
+  const mine = mineOf(queue, key);
+  const collarMonths = (await loadReference(db).catch(() => null))?.zoonosesDomains?.parameters.collar_months ?? null;
+  const care = (id: string | null) => careOf(queue, { key, id, client_uuid: key });
   if (row) {
     const stored = JSON.parse(row.body) as AnimalBody;
     return {
-      key, id: row.id, householdKey: row.household_key, body: await onTop(db, stored, mine),
+      key, id: row.id, householdKey: row.household_key, body: withCare(await onTop(db, stored, mine), care(row.id), collarMonths),
       base: row.base_version === null ? null : { version: row.base_version, body: stored as unknown as Record<string, unknown> }, creating: row.id === null,
     };
   }
@@ -85,7 +113,7 @@ export async function readAnimal(db: Db, key: string): Promise<AnimalEditView | 
     : (await territoryRepo.householdKey(db, householdId)) ?? householdId;
   const based = (edit.edit_base_body as unknown as AnimalBody | null) ?? blankAnimal(String(edit.body.animal_id), householdId ?? householdKey);
   return {
-    key, id: String(edit.body.animal_id), householdKey, body: await onTop(db, based, mine),
+    key, id: String(edit.body.animal_id), householdKey, body: withCare(await onTop(db, based, mine), care(String(edit.body.animal_id)), collarMonths),
     base: edit.edit_base_version === null || edit.edit_base_body === null ? null : { version: edit.edit_base_version, body: edit.edit_base_body }, creating: false,
   };
 }

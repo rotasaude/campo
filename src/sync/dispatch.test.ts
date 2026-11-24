@@ -1,7 +1,10 @@
 import type { ChangesResponse, UploadItem, UploadResult } from "../contract";
 import { example } from "../contract/fixtures";
 import { collectOvitrap, installOvitrap } from "../features/ovitraps/save";
-import { saveAnimal } from "../features/animals/save";
+import { placeCollar, saveAnimal, vaccinate } from "../features/animals/save";
+import { pathLabel } from "../features/conflicts/fieldText";
+import { phraseForItem } from "../features/messages/errorPhrases";
+import { ZOONOSES_ERRORS, type ZoonosesErrorCode } from "../rules/zoonosesErrors";
 import { ANIMAL, HH, JOANA, endemicTablet, zoonosesTablet } from "../features/testing";
 import { emptyAnimalDraft, type AnimalDraft } from "../rules/animal";
 import { outboxRepo, type OutboxItem } from "../db/repos/outboxRepo";
@@ -10,7 +13,7 @@ import type { Db } from "../db/types";
 import { MAX_BATCH, applyResults, refreshBlocked, resolveVersion, selectBatch, sendQueue } from "./dispatch";
 import { applyPage } from "./download";
 import { FieldHttpError } from "./http";
-import { enqueue, recoverSending, resend } from "./outbox";
+import { discardImpact, enqueue, recoverSending, resend } from "./outbox";
 import { SERVER_ID, accepted, exampleItems, fakeClient, insertHousehold, insertRegistration, newUuid, rejected } from "./testing";
 
 const VISIT = exampleItems("upload-home-visit-resident.json")[0];
@@ -483,4 +486,94 @@ describe("animals", () => {
     await sendQueue({ db, client, ...noStale });
     expect(await db.get("SELECT needs_reload FROM animals WHERE key = ?", [ANIMAL])).toEqual({ needs_reload: 1 });
   });
+});
+
+describe("rabies vaccination and collar", () => {
+  const NEW_ANIMAL = "c0ffee73-0000-4000-8000-000000000073";
+  const VAR = "e1f2a3b4-c5d6-4e7f-8a9b-1c2d3e4f5a6b";
+  const CDT4 = "f2a3b4c5-d6e7-4f8a-9b0c-2d3e4f5a6b7c";
+  const TODAY = "2026-11-24";
+  const draft = (over: Partial<AnimalDraft> = {}): AnimalDraft => ({ ...emptyAnimalDraft(), species: "dog", sex: "female", ...over });
+  const care = async (db: Db, animalKey: string) => {
+    await vaccinate(db, { animalKey, productId: VAR, adverseEvent: false, adverseNote: null, today: TODAY, newUuid });
+    await placeCollar(db, { animalKey, productId: CDT4, today: TODAY, newUuid });
+  };
+  const animalRow = async (db: Db, key: string) => {
+    const r = await db.get<{ id: string | null; version: number | null; base_version: number | null; body: string }>(
+      "SELECT id, version, base_version, body FROM animals WHERE key = ?", [key]);
+    return r ? { ...r, body: JSON.parse(r.body) as Record<string, unknown> } : null;
+  };
+
+  test("accepted vaccination and collar update the row until the download brings the animal", async () => {
+    const db = await zoonosesTablet();
+    await care(db, ANIMAL);
+    const { client, batches } = fakeClient((items) => items.map((i) => accepted(i, { id: newUuid() })));
+    await sendQueue({ db, client, ...noStale });
+    expect(batches.map(byType)).toEqual([["rabies_vaccination", "collar"]]);
+    expect(await outboxRepo.count(db)).toBe(0);
+    // The dates change, the version does not (Q29 of 35a): no edit is based on anything new.
+    expect(await animalRow(db, ANIMAL)).toMatchObject({
+      version: 2, base_version: 2, body: { version: 2, last_rabies_vaccination_on: TODAY, collar_due_on: "2027-05-24" },
+    });
+    // The download overwrites the row with what the server has (Q20).
+    await applyPage(db, example<ChangesResponse>("changes-zoonoses-page.json"));
+    expect((await animalRow(db, ANIMAL))!.body).toMatchObject({ last_rabies_vaccination_on: "2026-11-21", collar_due_on: "2026-12-01" });
+
+    // An animal born here: its creation, the vaccine and the collar go in one batch (cite), and its row gets the dates.
+    const key = await saveAnimal(db, { householdKey: HH, draft: draft({ name: "Rex" }), newUuid });
+    await care(db, key);
+    const born = fakeClient((items) => items.map((i) => (i.type === "animal" ? accepted(i, { id: NEW_ANIMAL, version: 1 }) : accepted(i, { id: newUuid() }))));
+    await sendQueue({ db, client: born.client, ...noStale });
+    expect(born.batches.map(byType)).toEqual([["animal", "rabies_vaccination", "collar"]]);
+    expect(born.batches[0][1].body).toMatchObject({ animal_client_uuid: key });
+    expect(await animalRow(db, key)).toMatchObject({
+      id: NEW_ANIMAL, version: 1, body: { last_rabies_vaccination_on: TODAY, collar_due_on: "2027-05-24" },
+    });
+  });
+
+  test("an item whose animal row is gone still travels and is accepted", async () => {
+    const db = await zoonosesTablet();
+    await care(db, ANIMAL);
+    await db.run("DELETE FROM animals WHERE key = ?", [ANIMAL]);
+    const { client, batches } = fakeClient((items) => items.map((i) => accepted(i, { id: newUuid() })));
+    await sendQueue({ db, client, ...noStale });
+    expect(batches[0].map((i) => (i.body as Record<string, unknown>).animal_id)).toEqual([ANIMAL, ANIMAL]);
+    expect(await outboxRepo.count(db)).toBe(0);
+    expect(await animalRow(db, ANIMAL)).toBeNull();
+  });
+
+  test("a refused animal blocks its vaccination and collar (selectBatch + refreshBlocked of the 24c)", async () => {
+    const db = await zoonosesTablet();
+    const key = await saveAnimal(db, { householdKey: HH, draft: draft({ name: "Rex" }), newUuid });
+    await care(db, key);
+    const { client, batches } = fakeClient((items) => items.map((i) => (i.type === "animal"
+      ? rejected(i, "tutor_not_found", { path: "tutor_client_uuid" }) : rejected(i, "not_found", { path: "animal_client_uuid" }))));
+    await sendQueue({ db, client, ...noStale });
+    expect(await states(db)).toEqual([["animal", "needs_attention"], ["rabies_vaccination", "blocked"], ["collar", "blocked"]]);
+    // Held until the animal is fixed: the next round sends nothing.
+    await sendQueue({ db, client, ...noStale });
+    expect(batches).toHaveLength(1);
+    // A creation still waiting holds them from the start, too.
+    await outboxRepo.update(db, (await outboxRepo.byClientUuid(db, key))!.seq, { state: "needs_attention" });
+    await refreshBlocked(db);
+    expect(await states(db)).toEqual([["animal", "needs_attention"], ["rabies_vaccination", "blocked"], ["collar", "blocked"]]);
+    // Discarding the animal takes both (doomedBy): the person is told 2 more go.
+    expect(await discardImpact(db, key)).toBe(2);
+  });
+
+  const COLLAR_ONLY = new Set(["placed_on"]);
+  test.each([["campaign_not_open", "campaign_id"], ["already_vaccinated_in_campaign", "campaign_id"], ["animal_not_active", "animal_id"],
+    ["animal_not_dog", "animal_id"], ["date_out_of_range", "vaccinated_on"], ["date_out_of_range", "placed_on"]])(
+    "server refusal %s at %s goes to attention with its phrase and the field in words", async (code, path) => {
+      const db = await zoonosesTablet();
+      await care(db, ANIMAL);
+      const type = COLLAR_ONLY.has(path) || code === "animal_not_dog" ? "collar" : "rabies_vaccination";
+      const { client } = fakeClient((items) => items.map((i) => (i.type === type ? rejected(i, code, { path }) : accepted(i, { id: newUuid() }))));
+      await sendQueue({ db, client, ...noStale });
+      const [refused] = await outboxRepo.all(db);
+      expect(refused).toMatchObject({ type, state: "needs_attention", error: code, path });
+      expect(phraseForItem(refused.error, refused)).toBe(ZOONOSES_ERRORS[code as ZoonosesErrorCode]);
+      const words = { campaign_id: "Campanha", animal_id: "Animal", vaccinated_on: "Data da vacinação", placed_on: "Data da colocação" }[path];
+      expect(pathLabel(refused.type, path)).toBe(words);
+    });
 });

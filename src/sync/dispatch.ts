@@ -14,8 +14,10 @@ import { vectorRepo } from "../db/repos/vectorRepo";
 import { zoonosesRepo } from "../db/repos/zoonosesRepo";
 import type { Db } from "../db/types";
 import { log } from "../log";
+import { collarDueOn } from "../rules/animal";
 import { FieldHttpError, type FieldClient, type HttpFailure } from "./http";
 import { targetTable } from "./outbox";
+import { loadReference } from "./reference";
 
 export const MAX_BATCH = 50;
 export const MAX_BATCHES_PER_ROUND = 100;
@@ -103,6 +105,17 @@ async function accept(db: Db, item: OutboxItem, result: UploadResult): Promise<v
   } else if (item.type === "ovitrap_collection") {
     await vectorRepo.acceptCollection(db, item.body);
     dbEvents.emit("ovitraps");
+  } else if (item.type === "rabies_vaccination") {
+    // The animal's row shows the vaccine until the download brings the animal (Q20); its version does not move.
+    await zoonosesRepo.acceptVaccination(db, item.body);
+    dbEvents.emit("animals");
+  } else if (item.type === "collar") {
+    // The answer has no due date: the reference's collar_months gives it. Without them the download brings it.
+    const months = (await loadReference(db).catch(() => null))?.zoonosesDomains?.parameters.collar_months;
+    if (months !== undefined && typeof item.body.placed_on === "string") {
+      await zoonosesRepo.acceptCollar(db, item.body, collarDueOn(item.body.placed_on, months));
+    }
+    dbEvents.emit("animals");
   }
 
   const table = targetTable(item.type);

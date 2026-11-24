@@ -2,7 +2,7 @@ import { outboxRepo } from "../../db/repos/outboxRepo";
 import { emptyAnimalDraft, type AnimalDraft } from "../../rules/animal";
 import { newUuid } from "../../sync/testing";
 import { ANIMAL, COMMUNITY_ANIMAL, HH, JOANA, zoonosesTablet } from "../testing";
-import { saveAnimal } from "./save";
+import { placeCollar, saveAnimal, vaccinate } from "./save";
 import { ANIMAL_TABLES, readAnimal, readAnimals } from "./view";
 
 const CHIP = "985141000123456";
@@ -46,4 +46,35 @@ test("an edit sent back as animal_changed is not shown on top: the form opens on
   await outboxRepo.update(db, edit.seq, { state: "needs_attention", error: "animal_changed" });
   expect((await readAnimals(db, HH)).find((v) => v.key === ANIMAL)).toMatchObject({ name: "Pipoca", held: "needs_attention", waiting: true });
   expect((await readAnimal(db, ANIMAL))!.body.name).toBe("Pipoca");
+});
+
+// ── Task 7: the vaccine and the collar in the line go on top ──
+const VAR = "e1f2a3b4-c5d6-4e7f-8a9b-1c2d3e4f5a6b";
+const CDT4 = "f2a3b4c5-d6e7-4f8a-9b0c-2d3e4f5a6b7c";
+
+test("queued collar shows the new due date: placed 2026-08-31 with 6 months → 2027-02-28", async () => {
+  const db = await zoonosesTablet();
+  await placeCollar(db, { animalKey: ANIMAL, productId: CDT4, today: "2026-08-31", newUuid });
+  expect((await readAnimals(db, HH)).find((v) => v.key === ANIMAL)).toMatchObject({ collarDueOn: "2027-02-28", lastVaccinationOn: "2026-11-21", waiting: true, held: null });
+  // The row itself keeps the server's dates and version until an acceptance or the download.
+  const row = await db.get<{ version: number; body: string }>("SELECT version, body FROM animals WHERE key = ?", [ANIMAL]);
+  expect(row!.version).toBe(2);
+  expect(JSON.parse(row!.body)).toMatchObject({ collar_due_on: "2026-12-01" });
+});
+
+test("a queued vaccine puts its day on top, for the card and the form; a refused one marks the card", async () => {
+  const db = await zoonosesTablet();
+  const born = await saveAnimal(db, { householdKey: HH, draft: draft({ name: "Mingau", species: "cat", sex: "male" }), newUuid });
+  await vaccinate(db, { animalKey: born, productId: VAR, adverseEvent: false, adverseNote: null, today: "2026-11-24", newUuid });
+  await vaccinate(db, { animalKey: ANIMAL, productId: VAR, adverseEvent: false, adverseNote: null, today: "2026-11-24", newUuid });
+  const views = await readAnimals(db, HH);
+  expect(views.find((v) => v.key === born)).toMatchObject({ lastVaccinationOn: "2026-11-24", collarDueOn: null, waiting: true });
+  expect(views.find((v) => v.key === ANIMAL)).toMatchObject({ lastVaccinationOn: "2026-11-24", collarDueOn: "2026-12-01", waiting: true });
+  expect((await readAnimal(db, ANIMAL))!.body.last_rabies_vaccination_on).toBe("2026-11-24");
+  // The other animal of the household is not touched.
+  expect(views.find((v) => v.key === COMMUNITY_ANIMAL)).toMatchObject({ lastVaccinationOn: null, waiting: false });
+
+  const vaccination = (await outboxRepo.all(db)).find((item) => item.type === "rabies_vaccination" && item.body.animal_id === ANIMAL)!;
+  await outboxRepo.update(db, vaccination.seq, { state: "needs_attention", error: "already_vaccinated_in_campaign", path: "campaign_id" });
+  expect((await readAnimals(db, HH)).find((v) => v.key === ANIMAL)).toMatchObject({ held: "needs_attention" });
 });

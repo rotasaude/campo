@@ -2,6 +2,8 @@
 // at the gate — species, name, the tutor or "comunitário", whether it has a microchip (never the number, §16), whether
 // something of it still waits in the line — and the dashboard's "Cadastrar animal". The household screen shows it only
 // with canUseZoonoses and an active household.
+// Task 7: "Vacinar" on an active dog or cat while the reference has an open campaign (no check of a dose already given in
+// it: the api's, Q19), "Colocar coleira" on an active dog — the animal as the line leaves it.
 import { useCallback } from "react";
 import { View } from "react-native";
 import { useLive } from "../../db/events";
@@ -17,8 +19,10 @@ export const ANIMALS_TITLE = "Animais";
 export const NEW_ANIMAL = "Cadastrar animal";
 export const HAS_MICROCHIP = "Tem microchip";
 export const COMMUNITY = "Comunitário";
+export const VACCINATE = "Vacinar";
+export const PLACE_COLLAR = "Colocar coleira";
 
-interface Card extends AnimalView { speciesLabel: string; statusLabel: string | null }
+interface Card extends AnimalView { speciesLabel: string; statusLabel: string | null; vaccinates: boolean; collars: boolean }
 
 const TABLES = [...ANIMAL_TABLES, "reference", "registrations"];
 
@@ -27,10 +31,14 @@ async function read(db: Db, householdKey: string): Promise<Card[]> {
   const label = (list: { code: string; label: string }[] | undefined, code: string) => list?.find((entry) => entry.code === code)?.label ?? code;
   return (await readAnimals(db, householdKey)).map((view) => ({
     ...view, speciesLabel: label(domains?.species, view.species), statusLabel: view.status === "active" ? null : label(domains?.animal_statuses, view.status),
+    vaccinates: view.status === "active" && (view.species === "dog" || view.species === "cat") && (domains?.open_campaign ?? null) !== null,
+    collars: view.status === "active" && view.species === "dog",
   }));
 }
 
-export function AnimalSection({ householdKey, onNew, onEdit }: { householdKey: string; onNew(): void; onEdit(animalKey: string): void }) {
+export function AnimalSection({ householdKey, onNew, onEdit, onVaccinate, onCollar }: {
+  householdKey: string; onNew(): void; onEdit(animalKey: string): void; onVaccinate(animalKey: string): void; onCollar(animalKey: string): void;
+}) {
   const { colors } = useTheme();
   const load = useCallback((db: Db) => read(db, householdKey), [householdKey]);
   const cards = useLive(TABLES, load) ?? [];
@@ -46,6 +54,8 @@ export function AnimalSection({ householdKey, onNew, onEdit }: { householdKey: s
           {card.hasMicrochip && <Muted>{HAS_MICROCHIP}</Muted>}
           {card.statusLabel !== null && <Muted>{card.statusLabel}</Muted>}
           {card.held !== null ? <Notice tone="warn">{ITEM_STATE_LABEL[card.held]}</Notice> : card.waiting && <Muted>{WAITING}</Muted>}
+          {card.vaccinates && <Button label={VACCINATE} variant="secondary" onPress={() => onVaccinate(card.key)} />}
+          {card.collars && <Button label={PLACE_COLLAR} variant="secondary" onPress={() => onCollar(card.key)} />}
           <Button label="Editar" variant="secondary" onPress={() => onEdit(card.key)} />
         </View>
       ))}

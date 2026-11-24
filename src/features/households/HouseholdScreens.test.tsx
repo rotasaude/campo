@@ -33,7 +33,7 @@ async function list(db: Db) {
   return { ...nav, unmount: () => view.unmount() };
 }
 async function detail(db: Db, key = HH) {
-  const nav = { onEdit: jest.fn(), onNewFamily: jest.fn(), onEditFamily: jest.fn(), onNewResident: jest.fn(), onStartVisit: jest.fn(), onOpenResident: jest.fn(), onInstallOvitrap: jest.fn(), onStartPropertyVisit: jest.fn<void, [DueVisitParams]>(), onNewAnimal: jest.fn(), onEditAnimal: jest.fn() };
+  const nav = { onEdit: jest.fn(), onNewFamily: jest.fn(), onEditFamily: jest.fn(), onNewResident: jest.fn(), onStartVisit: jest.fn(), onOpenResident: jest.fn(), onInstallOvitrap: jest.fn(), onStartPropertyVisit: jest.fn<void, [DueVisitParams]>(), onNewAnimal: jest.fn(), onEditAnimal: jest.fn(), onVaccinateAnimal: jest.fn(), onCollarAnimal: jest.fn() };
   const view = await renderWithServices(<HouseholdScreen householdKey={key} {...nav} />, fakeServices({ db, now: () => NOW }));
   return { ...nav, unmount: () => view.unmount() };
 }

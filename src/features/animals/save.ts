@@ -9,13 +9,17 @@
 //   form opened with (Q41). A change of situation goes as status with status_on, the city's day (Q37), never back to
 //   "active"; a situation that stays is not sent (the schema ties status to status_on). A creation still waiting in
 //   the line takes the edit in its own body (coalesce) and stays a creation.
+// - Vaccine and collar (Task 7): an item of their own, never an edit of the animal. The animal goes by animal_id, or by
+//   animal_client_uuid with a `cite` while its creation is in the line (Review Focus 2). They change nothing on the row:
+//   its dates show the line on top (view.ts), and an acceptance writes them without a new version (Q29 of 35a).
 import { dbEvents } from "../../db/events";
 import { outboxRepo } from "../../db/repos/outboxRepo";
 import { applyAnimalItem, tutorOf, zoonosesRepo } from "../../db/repos/zoonosesRepo";
 import type { Db } from "../../db/types";
 import type { AnimalDraft } from "../../rules/animal";
 import type { AnimalStatus } from "../../rules/zoonosesDomains";
-import { coalesceOrEnqueue, enqueue, type Dep } from "../../sync/outbox";
+import { coalesceOrEnqueue, enqueue, type Dep, type OutboxItem } from "../../sync/outbox";
+import { loadReference } from "../../sync/reference";
 import { blankAnimal, readAnimal, type EditBase } from "./view";
 
 type Body = Record<string, unknown>;
@@ -136,4 +140,62 @@ export async function saveAnimal(db: Db, input: SaveAnimalInput): Promise<string
   dbEvents.emit("animals");
   dbEvents.emit("outbox");
   return key;
+}
+
+export type AnimalRef = { animal_id: string } | { animal_client_uuid: string };
+
+// How an item names the animal of `animalKey` (the local key: the server id, or the creation's client_uuid).
+// - The row has the server's id: by it.
+// - Born here and its creation still in the line: by its client_uuid, waiting for it (cite: it may go in the same batch).
+// - Born here and accepted: by the id client_ids has; without one, by its client_uuid, which the server resolves by its
+//   ledger, with nothing to wait for.
+// - No row (removed by the download, erased by the reset) and nothing born under that key: the server's id is the key.
+async function animalRefOf(tx: Db, animalKey: string, queue: OutboxItem[]): Promise<{ ref: AnimalRef; deps: Dep[] }> {
+  const row = await tx.get<{ id: string | null; client_uuid: string | null }>("SELECT id, client_uuid FROM animals WHERE key = ?", [animalKey]);
+  if (row?.id) return { ref: { animal_id: row.id }, deps: [] };
+  const born = row?.client_uuid ?? animalKey;
+  if (queue.some((item) => item.type === "animal" && item.client_uuid === born && item.target_id === born)) {
+    return { ref: { animal_client_uuid: born }, deps: [{ client_uuid: born, kind: "cite" }] };
+  }
+  const mapped = await tx.get<{ id: string }>("SELECT id FROM client_ids WHERE client_uuid = ? AND type = 'animal'", [born]);
+  if (mapped) return { ref: { animal_id: mapped.id }, deps: [] };
+  return { ref: row ? { animal_client_uuid: born } : { animal_id: animalKey }, deps: [] };
+}
+
+export interface VaccinateInput {
+  animalKey: string; productId: string; adverseEvent: boolean; adverseNote: string | null;
+  // The city's day (cityTodayOf).
+  today: string;
+  newUuid(): string;
+}
+
+// "Vacinar" (§3, §11): the dose of the reference's open campaign, at home — the item carries no modality, the api sets
+// house. adverse_note only with adverse_event (Q20). The second dose in the campaign is the api's call (Q19).
+export async function vaccinate(db: Db, input: VaccinateInput): Promise<string> {
+  const uuid = await db.tx(async (tx) => {
+    const campaign = (await loadReference(tx).catch(() => null))?.zoonosesDomains?.open_campaign ?? null;
+    if (campaign === null) throw new Error("sem campanha aberta");
+    const { ref, deps } = await animalRefOf(tx, input.animalKey, await outboxRepo.all(tx));
+    const note = input.adverseNote?.trim() ?? "";
+    const body = {
+      ...ref, campaign_id: campaign.id, vaccinated_on: input.today, vector_product_id: input.productId, adverse_event: input.adverseEvent,
+      ...(input.adverseEvent && note !== "" ? { adverse_note: note } : {}),
+    };
+    return (await enqueue(tx, { type: "rabies_vaccination", body, deps }, input.newUuid)).client_uuid;
+  });
+  dbEvents.emit("outbox");
+  return uuid;
+}
+
+export interface PlaceCollarInput { animalKey: string; productId: string; today: string; newUuid(): string }
+
+// "Colocar coleira" (§11): the due date is the api's (placed_on + collar_months), never in the body.
+export async function placeCollar(db: Db, input: PlaceCollarInput): Promise<string> {
+  const uuid = await db.tx(async (tx) => {
+    const { ref, deps } = await animalRefOf(tx, input.animalKey, await outboxRepo.all(tx));
+    const body = { ...ref, vector_product_id: input.productId, placed_on: input.today };
+    return (await enqueue(tx, { type: "collar", body, deps }, input.newUuid)).client_uuid;
+  });
+  dbEvents.emit("outbox");
+  return uuid;
 }

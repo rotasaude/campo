@@ -26,7 +26,7 @@ const press = (name: string) => fireEvent.press(screen.getByRole("button", { nam
 const items = (db: Db) => outboxRepo.all(db);
 
 async function household(db: Db) {
-  const nav = { onEdit: jest.fn(), onNewFamily: jest.fn(), onEditFamily: jest.fn(), onNewResident: jest.fn(), onStartVisit: jest.fn(), onOpenResident: jest.fn(), onInstallOvitrap: jest.fn(), onStartPropertyVisit: jest.fn(), onNewAnimal: jest.fn(), onEditAnimal: jest.fn() };
+  const nav = { onEdit: jest.fn(), onNewFamily: jest.fn(), onEditFamily: jest.fn(), onNewResident: jest.fn(), onStartVisit: jest.fn(), onOpenResident: jest.fn(), onInstallOvitrap: jest.fn(), onStartPropertyVisit: jest.fn(), onNewAnimal: jest.fn(), onEditAnimal: jest.fn(), onVaccinateAnimal: jest.fn(), onCollarAnimal: jest.fn() };
   const view = await renderWithServices(<HouseholdScreen householdKey={HH} {...nav} />, services(db));
   await screen.findByText(/Microárea/);
   return { ...nav, unmount: () => view.unmount() };

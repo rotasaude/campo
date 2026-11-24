@@ -61,6 +61,26 @@ export async function tutorOf(db: Db, item: Body, before: AnimalTutor): Promise<
   return { patient_id: ref, display_name: name ?? "" };
 }
 
+// The row an item of the animal names: by animal_id (the server's, or the tablet-born row its creation was given to),
+// or by animal_client_uuid (the row born under it).
+async function citedKey(db: Db, item: Body): Promise<string | null> {
+  if (typeof item.animal_id === "string") return animalKey(db, item.animal_id);
+  if (typeof item.animal_client_uuid !== "string") return null;
+  const born = await db.get<{ key: string }>("SELECT key FROM animals WHERE key = ? OR client_uuid = ?", [item.animal_client_uuid, item.animal_client_uuid]);
+  return born?.key ?? null;
+}
+
+async function setCareDate(db: Db, item: Body, field: "last_rabies_vaccination_on" | "collar_due_on", date: string): Promise<void> {
+  const key = await citedKey(db, item);
+  if (key === null) return;
+  const row = await db.get<{ body: string }>("SELECT body FROM animals WHERE key = ?", [key]);
+  if (!row) return;
+  const body = JSON.parse(row.body) as AnimalBody;
+  const current = body[field];
+  if (current !== null && current >= date) return;
+  await db.run("UPDATE animals SET body = ? WHERE key = ?", [JSON.stringify({ ...body, [field]: date }), key]);
+}
+
 export const zoonosesRepo = {
   // Filed under the household's local key, which is not the server id when the household was born on the tablet.
   async putAnimal(db: Db, a: AnimalBody): Promise<void> {
@@ -98,6 +118,18 @@ export const zoonosesRepo = {
     const body: AnimalBody = { ...applyAnimalItem(before, itemBody, await tutorOf(db, itemBody, before.tutor)), version: result.version, ...(id === null ? {} : { id }) };
     await db.run("UPDATE animals SET id = ?, species = ?, status = ?, version = ?, base_version = ?, needs_reload = 0, body = ? WHERE key = ?",
       [id, body.species, body.status, result.version, result.version, JSON.stringify(body), key]);
+  },
+
+  // An accepted vaccine or collar (Q20): until the download brings the animal, the row shows its date. Only the body
+  // changes: these dates move without a new version (Q29 of 35a), so the base of an edit stays. A later date already
+  // there stays (an old duplicate answered after a newer download). A row the tablet no longer has stays absent.
+  async acceptVaccination(db: Db, itemBody: Body): Promise<void> {
+    if (typeof itemBody.vaccinated_on === "string") await setCareDate(db, itemBody, "last_rabies_vaccination_on", itemBody.vaccinated_on);
+  },
+
+  // `dueOn`: placed_on + collar_months (collarDueOn), which the answer does not carry.
+  async acceptCollar(db: Db, itemBody: Body, dueOn: string): Promise<void> {
+    await setCareDate(db, itemBody, "collar_due_on", dueOn);
   },
 
   async removeAnimal(db: Db, id: string): Promise<void> {

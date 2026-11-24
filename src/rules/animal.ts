@@ -9,7 +9,7 @@
 // never kept (§16); toAnimalBody(draft, ctx) is built in src/features/animals/save.ts.
 import type { LeishSurveyBody } from "../contract";
 import type { AnimalRow } from "../db/repos/zoonosesRepo";
-import type { ZoonosesDomains, ZoonosesLimits } from "./zoonosesDomains";
+import type { ZoonosesDomains, ZoonosesLimits, ZoonosesProductUse } from "./zoonosesDomains";
 import { ZOONOSES_ERRORS, type ZoonosesErrorCode } from "./zoonosesErrors";
 
 export type ZooProblem = { code: string | null; path: string; text: string };
@@ -64,6 +64,7 @@ export function vaccinationProblems(
   animal: AnimalRow, domains: ZoonosesDomains, d: { adverseEvent: boolean; adverseNote: string | null }
 ): ZooProblem[] {
   const out: ZooProblem[] = [];
+  // A backstop: the app offers "Vacinar" only on a dog or a cat (AnimalSection); this answers the form opened some other way.
   if (animal.species !== "dog" && animal.species !== "cat") out.push(local("animal_id", "escolha a espécie: cão ou gato"));
   if (animal.status !== "active") out.push(coded("animal_not_active", "animal_id"));
   if (domains.open_campaign === null) out.push(coded("campaign_not_open", "campaign_id"));
@@ -80,6 +81,22 @@ const dogProblems = (animal: AnimalRow): ZooProblem[] => [
 
 // Collar: a dog, active.
 export const collarProblems = (animal: AnimalRow): ZooProblem[] => dogProblems(animal);
+
+// The product of the vaccine or the collar, chosen from the reference's list of that use; the dashboard's phrases
+// (VaccinationForm and CollarsPanel, main 51b1871).
+export const productProblems = (productId: string, use: ZoonosesProductUse): ZooProblem[] =>
+  (productId !== "" ? [] : [local("vector_product_id", use === "collar" ? "escolha a coleira" : "escolha o produto")]);
+
+// When a collar placed on `placedOn` falls due: `months` calendar months later, on the day that exists (31 → the month's
+// last day). The api's rule (due_on = placed_on + collar_months), so the tablet shows it before the download.
+export function collarDueOn(placedOn: string, months: number): string {
+  const [year, month, day] = placedOn.split("-").map(Number);
+  const total = month - 1 + months;
+  const y = year + Math.floor(total / 12);
+  const m = (total % 12) + 1;
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${y}-${String(m).padStart(2, "0")}-${String(Math.min(day, last)).padStart(2, "0")}`;
+}
 
 // Blood collection: a dog, active; a survey the tablet no longer has (it closed or left the agent's scope) is survey_not_open.
 export function collectionProblems(animal: AnimalRow, surveyId: string | null, surveys: LeishSurveyBody[]): ZooProblem[] {

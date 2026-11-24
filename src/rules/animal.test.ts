@@ -1,4 +1,4 @@
-import { animalProblems, collarProblems, collectionProblems, emptyAnimalDraft, vaccinationProblems, type AnimalDraft } from "./animal";
+import { animalProblems, collarDueOn, collarProblems, collectionProblems, emptyAnimalDraft, productProblems, vaccinationProblems, type AnimalDraft } from "./animal";
 import { ZOONOSES_ERRORS } from "./zoonosesErrors";
 import { TODAY_ZOO, ZOO_DOMAINS, ZOO_LIMITS, animalRow, leishSurvey } from "./testing/zoonosesFixtures";
 
@@ -124,4 +124,19 @@ test("no phrase of these rules carries a value (name, microchip)", () => {
   ];
   expect(out.length).toBeGreaterThan(2);
   for (const p of out) expect(p.text).not.toMatch(/Rex|Pipoca|98514100012345|p-9f2|inchou/);
+});
+
+// Task 7: placed_on + collar_months, in calendar months, on the day that exists (31 → the month's last day).
+test.each([
+  ["2026-08-31", 6, "2027-02-28"], ["2027-08-31", 6, "2028-02-29"], ["2026-01-31", 1, "2026-02-28"], ["2026-03-15", 12, "2027-03-15"],
+  ["2026-11-24", 6, "2027-05-24"], ["2026-12-31", 3, "2027-03-31"],
+])("collarDueOn(%s, %i) = %s", (placedOn, months, due) => {
+  expect(collarDueOn(placedOn, months)).toBe(due);
+});
+
+// The dashboard's phrases for a missing product (VaccinationForm and CollarsPanel, main 51b1871).
+test("a product must be chosen, in the dashboard's words", () => {
+  expect(productProblems("", "rabies_vaccine")).toEqual([{ code: null, path: "vector_product_id", text: "escolha o produto" }]);
+  expect(productProblems("", "collar")).toEqual([{ code: null, path: "vector_product_id", text: "escolha a coleira" }]);
+  expect(productProblems("e1f2a3b4-c5d6-4e7f-8a9b-1c2d3e4f5a6b", "collar")).toEqual([]);
 });
