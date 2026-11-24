@@ -10,10 +10,12 @@ import type { Db } from "../db/types";
 export type { Dep, OutboxItem, OutboxState };
 type Body = Record<string, unknown>;
 
-// The table of the row an item edits. A family has no row of its own: it lives in its household's body.
-export function targetTable(type: ItemType): "households" | "registrations" | null {
+// The table of the row an item edits. A family has no row of its own: it lives in its household's body. The animal (35b)
+// is edited by the same versioned path (Q20).
+export function targetTable(type: ItemType): "households" | "registrations" | "animals" | null {
   if (type === "household" || type === "family") return "households";
   if (type === "individual_registration") return "registrations";
+  if (type === "animal") return "animals";
   return null;
 }
 
@@ -95,6 +97,9 @@ async function forget(tx: Db, item: OutboxItem): Promise<void> {
     if (born.changes > 0) await tx.run("DELETE FROM families WHERE household_key = ?", [item.target_id]);
   } else if (item.type === "individual_registration" && item.target_id !== null) {
     await tx.run("DELETE FROM registrations WHERE key = ? AND id IS NULL AND client_uuid = ?", [item.target_id, item.client_uuid]);
+  } else if (item.type === "animal" && item.target_id !== null) {
+    // The same for the animal (35b): only its creation owns the row.
+    await tx.run("DELETE FROM animals WHERE key = ? AND id IS NULL AND client_uuid = ?", [item.target_id, item.client_uuid]);
   } else if (item.type === "family" && typeof item.body.family_id !== "string") {
     // A family that was being created: who had been put in it is in no family again.
     for (const row of await tx.all<{ key: string; body: string }>("SELECT key, body FROM registrations WHERE family_id = ?", [item.client_uuid])) {
@@ -111,7 +116,7 @@ export async function removeUnsent(db: Db, clientUuid: string): Promise<void> {
       await forget(tx, item);
     }
   });
-  for (const table of ["households", "registrations", "local_visits", "local_activities", "ovitraps"]) dbEvents.emit(table);
+  for (const table of ["households", "registrations", "local_visits", "local_activities", "ovitraps", "animals"]) dbEvents.emit(table);
 }
 
 // After a fix in the form: the same item goes back to the line with the new body and the same client_uuid.

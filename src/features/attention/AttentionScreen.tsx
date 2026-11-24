@@ -36,7 +36,8 @@ export const EXISTING_NOT_HERE = "O cadastro que esta pessoa já tem não está 
 
 // What "Corrigir" opens: the form of the record the item edits.
 export interface FixTarget { type: ItemType; targetId: string; familyId: string | null }
-const WITH_FORM: ItemType[] = ["household", "family", "individual_registration"];
+// The animal (35b): its form on the version the row has now — after animal_changed, the current one (Q20).
+const WITH_FORM: ItemType[] = ["household", "family", "individual_registration", "animal"];
 
 const TABLES = ["outbox"];
 

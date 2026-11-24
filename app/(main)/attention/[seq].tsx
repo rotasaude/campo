@@ -11,6 +11,7 @@ export default function AttentionRoute() {
       onFix={(target) => {
         if (target.type === "household") router.push({ pathname: "/households/[key]/edit", params: { key: target.targetId } });
         else if (target.type === "individual_registration") router.push({ pathname: "/registrations/[key]/edit", params: { key: target.targetId } });
+        else if (target.type === "animal") router.push({ pathname: "/animals/[key]/edit", params: { key: target.targetId } });
         else if (target.familyId !== null) router.push({ pathname: "/families/[id]/edit", params: { id: target.familyId, household: target.targetId } });
       }} />
   );

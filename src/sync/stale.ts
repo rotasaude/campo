@@ -6,10 +6,15 @@
 //
 // Only the fields the item sends are compared: a key absent from an upload
 // means "keep what the server has", so it can never be a conflict.
-import type { HouseholdBody, RegistrationBody, UploadResult } from "../contract";
+//
+// The animal (35b, Q20) is never merged: the row becomes the current record and the item waits for the person with
+// the tablet's body as it was typed — "Corrigir" opens the form on the current version, "Reenviar" sends the same body
+// on it, "Descartar" drops it.
+import type { AnimalBody, HouseholdBody, RegistrationBody, UploadResult } from "../contract";
 import { dbEvents } from "../db/events";
 import { outboxRepo, type OutboxItem } from "../db/repos/outboxRepo";
 import { territoryRepo } from "../db/repos/territoryRepo";
+import { zoonosesRepo } from "../db/repos/zoonosesRepo";
 import type { Db } from "../db/types";
 import { familyEditable, householdEditable, registrationEditable, splitItemBody } from "./editable";
 import { applyChoices, merge } from "./merge";
@@ -25,8 +30,12 @@ async function writeCurrent(db: Db, item: OutboxItem, current: Body): Promise<vo
   const table = targetTable(item.type);
   if (table === "households") await territoryRepo.putHousehold(db, current as unknown as HouseholdBody);
   else if (table === "registrations") await territoryRepo.putRegistration(db, current as unknown as RegistrationBody);
+  else if (table === "animals") await zoonosesRepo.putAnimal(db, current as unknown as AnimalBody);
   if (table !== null) dbEvents.emit(table);
 }
+
+// The phrase of the animal changed at the station (ZOONOSES_ERRORS.animal_changed): the code the item waits under.
+export const ANIMAL_CHANGED = "animal_changed";
 
 export async function handleStale(db: Db, item: OutboxItem, result: UploadResult): Promise<void> {
   const current = result.current as Body | undefined;
@@ -35,6 +44,18 @@ export async function handleStale(db: Db, item: OutboxItem, result: UploadResult
   if (table === null || current === undefined || current === null || typeof version !== "number") {
     // Nothing to merge with: never guess.
     await outboxRepo.update(db, item.seq, { state: "needs_attention", error: "invalid_request", path: null });
+    return;
+  }
+
+  if (item.type === "animal") {
+    // Only the schema's keys: a number the current record should never carry stays out of the edit base too (§16).
+    const { microchip: _microchip, registry_number: _registry, ...station } = current;
+    await db.tx(async (tx) => {
+      await writeCurrent(tx, item, station);
+      await outboxRepo.update(tx, item.seq, {
+        state: "needs_attention", error: ANIMAL_CHANGED, path: null, edit_base_version: version, edit_base_body: station, conflicts: null,
+      });
+    });
     return;
   }
 

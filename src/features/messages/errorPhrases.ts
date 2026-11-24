@@ -128,7 +128,10 @@ const VECTOR_ITEMS: readonly ItemType[] = ["ovitrap_installation", "ovitrap_coll
 // The four items of the 35b. product_not_allowed is a 35a code too (the ovitrap's product): on these items it says the
 // dashboard's zoonoses phrase, and the table keeps the vector one for the others.
 const ZOONOSES_ITEMS: readonly ItemType[] = ["animal", "rabies_vaccination", "leish_collection", "collar"];
+// animal_changed is not an item code of the api: the tablet waits under it after a stale_version of an animal, which
+// is never merged (Q20, src/sync/stale.ts), and says the dashboard's phrase for the animal changed meanwhile.
 const ZOONOSES_OWN: readonly string[] = [
+  "animal_changed",
   "microchip_taken", "registry_number_taken", "already_vaccinated_in_campaign", "campaign_not_open", "survey_not_open", "animal_not_dog",
   "animal_not_active", "date_out_of_range", "household_not_in_survey", "tutor_not_found", "product_not_allowed",
 ];

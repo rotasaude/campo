@@ -2,6 +2,9 @@ import { outboxRepo } from "../db/repos/outboxRepo";
 import { createTestDb } from "../db/testing/sqljsDb";
 import { coalesceOrEnqueue, enqueue, pendingCount, recoverSending, removeUnsent, resend, targetTable } from "./outbox";
 import { exampleItems, newUuid } from "./testing";
+import { saveAnimal } from "../features/animals/save";
+import { ANIMAL, HH, zoonosesTablet } from "../features/testing";
+import { emptyAnimalDraft } from "../rules/animal";
 
 const VISIT = exampleItems("upload-home-visit-resident.json")[0];
 const EDIT = exampleItems("upload-household-update.json")[0];
@@ -108,4 +111,23 @@ test("resend after fix keeps the same client_uuid and frees what waited for it",
   // Only what needs attention is resent: a pending item is left as it is.
   await resend(db, visit.seq, { changed: true });
   expect((await outboxRepo.bySeq(db, visit.seq))!.body).toEqual({});
+});
+
+test("targetTable: the animal lives in animals (35b)", () => {
+  expect(targetTable("animal")).toBe("animals");
+  for (const type of ["rabies_vaccination", "leish_collection", "collar"] as const) expect(targetTable(type)).toBeNull();
+});
+
+// Only the creation owns the row: the edit of a server animal leaves it, and the next download is the truth.
+test("discarding an animal's creation takes the row born here; discarding an edit leaves the row", async () => {
+  const db = await zoonosesTablet();
+  const draft = { ...emptyAnimalDraft(), species: "dog", sex: "female" };
+  const born = await saveAnimal(db, { householdKey: HH, draft, newUuid });
+  await saveAnimal(db, { householdKey: HH, animalKey: ANIMAL, draft, newUuid });
+  const edit = (await outboxRepo.all(db)).find((item) => item.target_id === ANIMAL)!;
+  await removeUnsent(db, edit.client_uuid);
+  expect(await db.get("SELECT key FROM animals WHERE key = ?", [ANIMAL])).toEqual({ key: ANIMAL });
+  await removeUnsent(db, born);
+  expect(await db.get("SELECT key FROM animals WHERE key = ?", [born])).toBeNull();
+  expect(await outboxRepo.count(db)).toBe(0);
 });

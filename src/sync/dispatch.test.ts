@@ -1,7 +1,9 @@
 import type { ChangesResponse, UploadItem, UploadResult } from "../contract";
 import { example } from "../contract/fixtures";
 import { collectOvitrap, installOvitrap } from "../features/ovitraps/save";
-import { HH, endemicTablet } from "../features/testing";
+import { saveAnimal } from "../features/animals/save";
+import { ANIMAL, HH, JOANA, endemicTablet, zoonosesTablet } from "../features/testing";
+import { emptyAnimalDraft, type AnimalDraft } from "../rules/animal";
 import { outboxRepo, type OutboxItem } from "../db/repos/outboxRepo";
 import { createTestDb } from "../db/testing/sqljsDb";
 import type { Db } from "../db/types";
@@ -427,5 +429,58 @@ describe("ovitraps", () => {
     await applyPage(db, { ...page, items: [{ ...ov, id: NEW_ID, version: 1, body }] } as unknown as ChangesResponse);
     const rows = await db.all<{ key: string; id: string; version: number; body: string }>("SELECT key, id, version, body FROM ovitraps WHERE number = 'OVT-015'");
     expect(rows.map((r) => [r.key, r.id, r.version, JSON.parse(r.body)])).toEqual([[U1, NEW_ID, 1, body]]);
+  });
+});
+
+describe("animals", () => {
+  const NEW_ANIMAL = "c0ffee73-0000-4000-8000-000000000073";
+  const draft = (over: Partial<AnimalDraft> = {}): AnimalDraft => ({ ...emptyAnimalDraft(), species: "dog", sex: "female", ...over });
+
+  test("accepted animal maps client_ids, gives the row id and version, and the next edit goes by animal_id", async () => {
+    const db = await zoonosesTablet();
+    const key = await saveAnimal(db, { householdKey: HH, draft: { ...draft({ name: "Rex", tutorKey: JOANA }), microchip: "985141000123456" }, newUuid });
+    const { client, batches } = fakeClient((items, call) => items.map((i) => accepted(i, { id: NEW_ANIMAL, version: call })));
+    await sendQueue({ db, client, ...noStale });
+    expect(batches[0][0]).toEqual({
+      client_uuid: key, type: "animal",
+      body: { household_id: HH, species: "dog", sex: "female", name: "Rex", tutor_patient_id: JOANA, community: false, microchip: "985141000123456" },
+    });
+    expect((await outboxRepo.mappedIds(db)).get(key)).toBe(NEW_ANIMAL);
+    const accepted1 = await db.get<{ id: string; version: number; base_version: number; needs_reload: number; body: string }>(
+      "SELECT id, version, base_version, needs_reload, body FROM animals WHERE key = ?", [key]);
+    expect(accepted1).toMatchObject({ id: NEW_ANIMAL, version: 1, base_version: 1, needs_reload: 0 });
+    expect(JSON.parse(accepted1!.body)).toMatchObject({ id: NEW_ANIMAL, version: 1, name: "Rex", has_microchip: true, tutor: { patient_id: JOANA, display_name: "Joana Conceição" } });
+    expect(accepted1!.body).not.toContain("985141000123456");
+
+    await saveAnimal(db, { householdKey: HH, animalKey: key, draft: draft({ name: "Rei", tutorKey: JOANA }), newUuid });
+    await sendQueue({ db, client, ...noStale });
+    expect(batches[1][0].body).toEqual({
+      animal_id: NEW_ANIMAL, version: 1, household_id: HH, species: "dog", sex: "female", name: "Rei", tutor_patient_id: JOANA, community: false,
+    });
+    expect(await db.get("SELECT id, version, base_version FROM animals WHERE key = ?", [key])).toEqual({ id: NEW_ANIMAL, version: 2, base_version: 2 });
+  });
+
+  test("an edit made while the creation is on its way waits for its version and then names the animal by its id", async () => {
+    const db = await zoonosesTablet();
+    const key = await saveAnimal(db, { householdKey: HH, draft: draft({ name: "Rex" }), newUuid });
+    const [creation] = await outboxRepo.all(db);
+    await outboxRepo.update(db, creation.seq, { state: "sending" });
+    await saveAnimal(db, { householdKey: HH, animalKey: key, draft: draft({ name: "Rei" }), newUuid });
+    const edit = (await outboxRepo.all(db))[1];
+    expect(edit.depends_on).toEqual([{ client_uuid: key, kind: "version" }]);
+    expect(edit.body).not.toHaveProperty("animal_id");
+
+    await applyResults(db, [{ ...creation, state: "sending" }], [accepted(creation, { id: NEW_ANIMAL, version: 1 })], noStale);
+    const { client, batches } = fakeClient((items) => items.map((i) => accepted(i, { id: NEW_ANIMAL, version: 2 })));
+    await sendQueue({ db, client, ...noStale });
+    expect(batches[0][0].body).toMatchObject({ animal_id: NEW_ANIMAL, version: 1, name: "Rei" });
+  });
+
+  test("a duplicate without version marks the animal for reload (Q5)", async () => {
+    const db = await zoonosesTablet();
+    await saveAnimal(db, { householdKey: HH, animalKey: ANIMAL, draft: draft({ name: "Rei" }), newUuid });
+    const { client } = fakeClient((items) => items.map((i) => ({ ...accepted(i, { id: ANIMAL }), status: "duplicate" as const })));
+    await sendQueue({ db, client, ...noStale });
+    expect(await db.get("SELECT needs_reload FROM animals WHERE key = ?", [ANIMAL])).toEqual({ needs_reload: 1 });
   });
 });

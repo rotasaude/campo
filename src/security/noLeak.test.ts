@@ -12,12 +12,12 @@ const LEAK = /rsf_|\b\d{11}\b|\b\d{15}\b|-25\.\d{3,}|-49\.\d{3,}|Rosângela|Joan
 const SESSION = example<SessionResponse>("session-acs.json");
 const NOW = Date.parse("2026-11-12T12:00:00Z");
 
-async function roundWith(o: { results?: (items: UploadItem[]) => UploadResult[]; failAt?: "session" | "changes" } = {}) {
+async function roundWith(o: { results?: (items: UploadItem[]) => UploadResult[]; failAt?: "session" | "changes"; files?: string[] } = {}) {
   const db = await createTestDb();
   // A person with CPF and name, a household with its point, a visit with the GPS reading.
-  for (const item of [
-    ...exampleItems("upload-registration-same-batch.json"), ...exampleItems("upload-home-visit-location.json"), ...exampleItems("upload-household-location.json"),
-  ]) await enqueue(db, { type: item.type, body: item.body }, newUuid);
+  for (const item of (o.files ?? ["upload-registration-same-batch.json", "upload-home-visit-location.json", "upload-household-location.json"]).flatMap(exampleItems)) {
+    await enqueue(db, { type: item.type, body: item.body }, newUuid);
+  }
   const pages = [example<ChangesResponse>("changes-first-page.json"), example<ChangesResponse>("changes-last-page.json")];
   const client: FieldClient = {
     session: async () => { if (o.failAt === "session") throw new FieldHttpError({ kind: "server", status: 503, code: "city_schema_behind" }); return SESSION; },
@@ -57,6 +57,21 @@ test("no log line contains names, CPF, CNS, coordinates or the token", async () 
 
   expect(captured.length).toBeGreaterThan(0);
   for (const line of captured) expect(line).not.toMatch(LEAK);
+});
+
+// 35b (§16): the number of the microchip goes in the animal's creation and nowhere else — not when it is accepted, not
+// when the api refuses it as taken (the path names the field, never the value).
+test("a round with an animal carrying a microchip logs no 15-digit number", async () => {
+  const files = ["upload-animal-new.json", "upload-zoonoses-same-batch.json"];
+  const chip = (exampleItems("upload-animal-new.json")[0].body as { microchip: string }).microchip;
+  expect(chip).toMatch(/^\d{15}$/);
+  expect(await roundWith({ files })).toEqual({ kind: "ok", downloaded: true });
+  await roundWith({ files, results: (items) => items.map((i) => (i.type === "animal" ? rejected(i, "microchip_taken", { path: "microchip" }) : accepted(i))) });
+  expect(captured.length).toBeGreaterThan(0);
+  for (const line of captured) {
+    expect(line).not.toMatch(LEAK);
+    expect(line).not.toContain(chip);
+  }
 });
 
 test("what is logged is enough to follow a round: its start, each item's verdict and how it ended", async () => {

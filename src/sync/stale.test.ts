@@ -1,4 +1,4 @@
-import type { HouseholdBody, RegistrationBody, UploadResponse, UploadResult } from "../contract";
+import type { AnimalBody, HouseholdBody, RegistrationBody, UploadResponse, UploadResult } from "../contract";
 import { example } from "../contract/fixtures";
 import { outboxRepo } from "../db/repos/outboxRepo";
 import { createTestDb } from "../db/testing/sqljsDb";
@@ -8,6 +8,11 @@ import { MissingChoiceError } from "./merge";
 import { enqueue } from "./outbox";
 import { handleStale, resolveConflict } from "./stale";
 import { insertHousehold, insertRegistration, newUuid } from "./testing";
+import { saveAnimal } from "../features/animals/save";
+import { phraseForItem } from "../features/messages/errorPhrases";
+import { ANIMAL, HH as ZOO_HH, JOANA, zoonosesTablet } from "../features/testing";
+import { emptyAnimalDraft } from "../rules/animal";
+import { ZOONOSES_ERRORS } from "../rules/zoonosesErrors";
 
 const result = (file: string) => example<UploadResponse>(file).results[0];
 const STALE_HOUSEHOLD = result("upload-response-stale-household.json");
@@ -170,4 +175,51 @@ test("an answer without the current record cannot be merged: the item asks for a
   const broken = { client_uuid: item.client_uuid, status: "stale_version", type: "household", id: HH.id } as UploadResult;
   await handleStale(db, item, broken);
   expect(await outboxRepo.bySeq(db, item.seq)).toMatchObject({ state: "needs_attention", error: "invalid_request" });
+});
+
+describe("animal (Q20: no merge)", () => {
+  const STALE_ANIMAL = result("upload-response-stale-animal.json");
+  const CURRENT = STALE_ANIMAL.current as unknown as AnimalBody; // the station's animal, version 3
+
+  test("stale_version on an animal replaces the row by current, keeps the tablet body, no merge, needs attention on current_version", async () => {
+    const db = await zoonosesTablet();
+    await saveAnimal(db, {
+      householdKey: ZOO_HH, animalKey: ANIMAL, newUuid,
+      draft: { ...emptyAnimalDraft(), species: "dog", sex: "female", name: "Rex", tutorKey: JOANA }, status: "missing", today: "2026-11-24",
+    });
+    const [item] = await outboxRepo.all(db);
+    await outboxRepo.update(db, item.seq, { state: "sending", sent_version: 2 });
+    await handleStale(db, (await outboxRepo.bySeq(db, item.seq))!, STALE_ANIMAL);
+
+    const row = await db.get<{ version: number; base_version: number; body: string }>("SELECT version, base_version, body FROM animals WHERE key = ?", [ANIMAL]);
+    expect(row).toMatchObject({ version: 3, base_version: 3 });
+    expect(JSON.parse(row!.body)).toEqual(CURRENT);
+    const after = (await outboxRepo.bySeq(db, item.seq))!;
+    expect(after).toMatchObject({
+      client_uuid: item.client_uuid, state: "needs_attention", error: "animal_changed", path: null, edit_base_version: 3, conflicts: null,
+    });
+    expect(after.edit_base_body).toEqual(CURRENT);
+    // The tablet's body as it was typed: nothing of the station's is merged into it.
+    expect(after.body).toEqual(item.body);
+    expect(phraseForItem(after.error, after)).toBe(ZOONOSES_ERRORS.animal_changed);
+  });
+
+  test("the current record never brings a microchip number into the row or the edit base", async () => {
+    const db = await zoonosesTablet();
+    await saveAnimal(db, { householdKey: ZOO_HH, animalKey: ANIMAL, newUuid, draft: { ...emptyAnimalDraft(), species: "dog", sex: "female" } });
+    const [item] = await outboxRepo.all(db);
+    const leaky = { ...STALE_ANIMAL, current: { ...CURRENT, microchip: "985141000123456", registry_number: "R-1" } } as unknown as UploadResult;
+    await handleStale(db, item, leaky);
+    expect(JSON.stringify(await db.all("SELECT * FROM animals"))).not.toContain("985141000123456");
+    expect(JSON.stringify(await db.all("SELECT * FROM outbox"))).not.toContain("985141000123456");
+    expect(JSON.stringify(await db.all("SELECT * FROM outbox"))).not.toContain("R-1");
+  });
+
+  test("stale_version on a household still merges as in the 24c", async () => {
+    const { db, item, after } = await staleHousehold({ contact_phone: "41999990000" }, baseOf({}));
+    expect(after).toMatchObject({ client_uuid: item.client_uuid, state: "pending", edit_base_version: 4, conflicts: null, error: null });
+    expect(after.body.contact_phone).toBe("41999990000");
+    expect(after.edit_base_body).toEqual(householdEditable(HH));
+    expect(await rowOf<Row>(db, "households", "hh-key")).toMatchObject({ version: 4, needs_reload: 0 });
+  });
 });

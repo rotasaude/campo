@@ -29,6 +29,37 @@ async function animalKey(db: Db, id: string): Promise<string | null> {
 }
 
 type RawAnimal = Omit<AnimalRow, "body"> & { body: string };
+type Body = Record<string, unknown>;
+
+// What the tablet tells of the tutor: the patient's id, or (born here, N1/Q29) the key of the registration, with the name
+// the local registry has. Never a document.
+export type AnimalTutor = AnimalBody["tutor"];
+
+// The animal item's fields over the row's body (D4: the body is whole, absent = empty). Only the download's keys are
+// written, one by one: the number of the microchip an item of creation carries never reaches the row (§16), only that
+// there is one. The status changes only by an edit that sends it.
+export function applyAnimalItem(body: AnimalBody, item: Body, tutor: AnimalTutor): AnimalBody {
+  const text = (value: unknown): string | null => (typeof value === "string" && value.trim() !== "" ? value.trim() : null);
+  return {
+    ...body,
+    species: item.species as AnimalBody["species"], sex: item.sex as AnimalBody["sex"],
+    size: (typeof item.size === "string" ? item.size : null) as AnimalBody["size"],
+    name: text(item.name), coat: text(item.coat), breed: text(item.breed),
+    birth_estimate_on: typeof item.birth_estimate_month === "string" ? `${item.birth_estimate_month}-01` : null,
+    community: item.community === true, tutor: item.community === true ? null : tutor,
+    status: typeof item.status === "string" ? (item.status as AnimalBody["status"]) : body.status,
+    has_microchip: body.has_microchip || (typeof item.microchip === "string" && item.microchip.trim() !== ""),
+  };
+}
+
+// The tutor an animal item names, as the row shows it. A tutor the local registry no longer has keeps the name the
+// row had for the same person.
+export async function tutorOf(db: Db, item: Body, before: AnimalTutor): Promise<AnimalTutor> {
+  const ref = typeof item.tutor_patient_id === "string" ? item.tutor_patient_id : typeof item.tutor_client_uuid === "string" ? item.tutor_client_uuid : null;
+  if (ref === null || item.community === true) return null;
+  const name = (await territoryRepo.personName(db, ref)) ?? (before?.patient_id === ref ? before.display_name : null);
+  return { patient_id: ref, display_name: name ?? "" };
+}
 
 export const zoonosesRepo = {
   // Filed under the household's local key, which is not the server id when the household was born on the tablet.
@@ -46,6 +77,27 @@ export const zoonosesRepo = {
        ON CONFLICT (key) DO UPDATE SET id = excluded.id, household_key = excluded.household_key, species = excluded.species,
          status = excluded.status, version = excluded.version, base_version = excluded.base_version, needs_reload = 0, body = excluded.body`,
       [key ?? a.id, a.id, householdKey, a.species, a.status, a.version, a.version, JSON.stringify(safe)]);
+  },
+
+  // The animal registered on the tablet: its row under the creation's client_uuid, with no id and no version until the
+  // server accepts it. `body` is the download's shape (applyAnimalItem), without the number.
+  async putBorn(db: Db, input: { clientUuid: string; householdKey: string; body: AnimalBody }): Promise<void> {
+    await db.run(
+      `INSERT INTO animals (key, id, client_uuid, household_key, species, status, version, base_version, needs_reload, body)
+       VALUES (?, NULL, ?, ?, ?, ?, NULL, NULL, 0, ?)`,
+      [input.clientUuid, input.clientUuid, input.householdKey, input.body.species, input.body.status, JSON.stringify(input.body)]);
+  },
+
+  // The server accepted an animal item (Q20): the row carries what was accepted — id, version (also as the base of the
+  // next edit), the fields — until the next download brings the record itself. A row the reset erased stays erased.
+  async acceptAnimal(db: Db, key: string, itemBody: Body, result: { id: string | null; version: number }): Promise<void> {
+    const row = await db.get<{ id: string | null; body: string }>("SELECT id, body FROM animals WHERE key = ?", [key]);
+    if (!row) return;
+    const before = JSON.parse(row.body) as AnimalBody;
+    const id = result.id ?? row.id;
+    const body: AnimalBody = { ...applyAnimalItem(before, itemBody, await tutorOf(db, itemBody, before.tutor)), version: result.version, ...(id === null ? {} : { id }) };
+    await db.run("UPDATE animals SET id = ?, species = ?, status = ?, version = ?, base_version = ?, needs_reload = 0, body = ? WHERE key = ?",
+      [id, body.species, body.status, result.version, result.version, JSON.stringify(body), key]);
   },
 
   async removeAnimal(db: Db, id: string): Promise<void> {

@@ -11,6 +11,7 @@ import { dbEvents } from "../db/events";
 import { outboxRepo, type OutboxItem } from "../db/repos/outboxRepo";
 import { territoryRepo } from "../db/repos/territoryRepo";
 import { vectorRepo } from "../db/repos/vectorRepo";
+import { zoonosesRepo } from "../db/repos/zoonosesRepo";
 import type { Db } from "../db/types";
 import { log } from "../log";
 import { FieldHttpError, type FieldClient, type HttpFailure } from "./http";
@@ -78,7 +79,7 @@ export async function refreshBlocked(db: Db): Promise<void> {
 export type ApplySignal = { stop: "rate_limited" | null; progressed: boolean; deferred: string[] };
 export interface ApplyHooks { onStale(item: OutboxItem, result: UploadResult): Promise<void> }
 
-const VERSIONED = new Set(["household", "family", "individual_registration"]);
+const VERSIONED = new Set(["household", "family", "individual_registration", "animal"]);
 
 async function accept(db: Db, item: OutboxItem, result: UploadResult): Promise<void> {
   await outboxRepo.remove(db, item.seq);
@@ -121,6 +122,9 @@ async function accept(db: Db, item: OutboxItem, result: UploadResult): Promise<v
   } else if (item.type === "household") {
     // The row shows what was accepted until the next download brings the record itself.
     await territoryRepo.acceptHousehold(db, item.target_id, item.body, { id: result.id ?? null, version: result.version });
+  } else if (item.type === "animal") {
+    // The same for the animal (Q20): the accepted answer carries its version.
+    await zoonosesRepo.acceptAnimal(db, item.target_id, item.body, { id: result.id ?? null, version: result.version });
   } else {
     await territoryRepo.acceptRegistration(db, item.target_id, item.body, { id: result.id ?? null, version: result.version });
   }
@@ -206,7 +210,7 @@ async function targetRow(db: Db, item: OutboxItem): Promise<{ id: string | null;
 }
 
 // The key that names an existing record in the body. The schema ties it to `version`: one never travels without the other.
-const ID_KEY: Record<string, string> = { household: "household_id", individual_registration: "registration_id" };
+const ID_KEY: Record<string, string> = { household: "household_id", individual_registration: "registration_id", animal: "animal_id" };
 
 // An item that names an existing record and carries no base of its own reads the version from the row at send time: a
 // family (its version is the household's) or an edit written without an edit base.

@@ -7,6 +7,7 @@ import type { Db } from "../db/types";
 import fullDictionaries from "../rules/testing/registrationDictionaries.json";
 import { COLLECTIVE_DOMAINS } from "../rules/testing/visitFixtures";
 import { applyPage } from "../sync/download";
+import { enqueue } from "../sync/outbox";
 import { referenceFixture } from "../sync/testing";
 
 export const HH = "8c9d0e1f-2a3b-4c4d-8e5f-6a7b8c9d0e1f";
@@ -65,4 +66,33 @@ export async function endemicTablet(o: {
   const other = { type: "city_block", id: OTHER_NEIGHBORHOOD_BLOCK, version: 1, body: { id: OTHER_NEIGHBORHOOD_BLOCK, neighborhood_id: "c0ffee42-0000-4000-8000-000000000042", number: "7", active: true, neighbor_ids: [], version: 1 } };
   await applyPage(db, { ...page, items: [...items, other] } as unknown as ChangesResponse);
   return db;
+}
+
+// ── 35b: zoonoses ──
+// The animals of the zoonoses page, both in HH: Pipoca (Joana's dog, with a microchip, version 2) and a community dog.
+export const ANIMAL = "a7b8c9d0-e1f2-4a3b-8c4d-6e7f8a9b0c1d";
+export const COMMUNITY_ANIMAL = "b8c9d0e1-f2a3-4b4c-9d5e-7f8a9b0c1d2e";
+// Joana Conceição, the resident of HH the download brings: her patient id.
+export const JOANA = "0e1f2a3b-4c5d-4e6f-8a7b-8c9d0e1f2a3b";
+
+// A tablet with the zoonoses switch on, the v1.4.0 zoonoses domains (`domains: null`: without them) and the zoonoses page.
+// `cbo`: the professional's (the ACS's 515105 by default); `zoonoses`: the switch.
+export async function zoonosesTablet(o: { cbo?: string; zoonoses?: boolean; domains?: null } = {}): Promise<Db> {
+  const acs = example<SessionResponse>("session-acs.json");
+  const session = { ...acs, professional: { ...acs.professional, cbo: o.cbo ?? acs.professional.cbo }, features: { ...acs.features, zoonoses: o.zoonoses ?? true } };
+  const domains = o.domains === null ? undefined : example<ReferenceResponse>("reference-zoonoses.json").zoonoses_domains;
+  const db = await loadedTablet({ session, reference: { zoonoses_domains: domains } });
+  await applyPage(db, example<ChangesResponse>("changes-zoonoses-page.json"));
+  return db;
+}
+
+// A resident registered on this tablet (new_patient), not yet known to the server: the registration row and its item.
+export async function bornResident(db: Db, o: { key: string; name: string; householdKey?: string; queued?: boolean }): Promise<void> {
+  const body = { id: o.key, patient: { id: o.key, display_name: o.name }, household_id: o.householdKey ?? HH, family_id: null, is_responsible: false, exit: null };
+  await db.run(
+    "INSERT INTO registrations (key, id, client_uuid, household_key, patient_id, version, body, name_norm) VALUES (?, NULL, ?, ?, NULL, NULL, ?, ?)",
+    [o.key, o.key, o.householdKey ?? HH, JSON.stringify(body), o.name.toLowerCase()]);
+  if (o.queued !== false) {
+    await enqueue(db, { type: "individual_registration", body: { new_patient: { full_name: o.name } }, targetId: o.key, clientUuid: o.key }, () => o.key);
+  }
 }

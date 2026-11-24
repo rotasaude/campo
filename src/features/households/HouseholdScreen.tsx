@@ -3,6 +3,7 @@
 // still in the line is shown as it was typed, and marked. The endemic agent
 // (35a, Q13(1)) edits a non-residential property, never a family or a resident;
 // with the bulletin, he visits a property nobody lives in from here (Q59(b)).
+// 35b: the animals of an active household, for who uses the zoonoses screens (canUseZoonoses).
 import { useCallback } from "react";
 import { View } from "react-native";
 import { useServices } from "../../app/services";
@@ -15,7 +16,8 @@ import { loadReference } from "../../sync/reference";
 import { SIZES, useTheme } from "../../theme/theme";
 import { VECTOR_ERRORS } from "../../rules/vectorErrors";
 import { Body, Button, Muted, Notice, Screen, Title } from "../../ui/components";
-import { canEditHousehold, canEditRegistry, canRecordInspection, canUseOvitraps, loadSession } from "../session";
+import { AnimalSection } from "../animals/AnimalSection";
+import { canEditHousehold, canEditRegistry, canRecordInspection, canUseOvitraps, canUseZoonoses, loadSession } from "../session";
 import { DUE_TABLES, loadDue } from "../vector/dueData";
 import { propertyVisitParams, type DueVisitParams } from "../vector/DueScreen";
 import { readProfile } from "../vector/profile";
@@ -46,6 +48,8 @@ interface Loaded {
   propertyVisit: DueVisitParams | null;
   // The hours of the visits made there today on this tablet (withdrawn ones left out).
   visitsToday: string[];
+  // 35b: the "Animais" section (canUseZoonoses, an active household).
+  animals: boolean;
 }
 
 const TABLES = [...new Set([...HOUSEHOLD_TABLES, "registrations", "reference", "session", "local_visits", "meta", ...DUE_TABLES])];
@@ -81,12 +85,15 @@ async function read(db: Db, key: string, now: number): Promise<Loaded | "missing
     propertyVisit: await propertyVisitOf(db, view, now, session?.features.home_visits === true && canRecordInspection(session, reference)),
     takesFamilies: dict !== null && createRegistryRules(dict).allowsFamilies(view.body.property_type) && !view.body.refused,
     visitsToday: (await todayVisits(db, now)).filter((visit) => visit.householdKey === key && visit.state !== "withdrawn").map((visit) => visit.time),
+    animals: canUseZoonoses(session, reference) && view.body.status === "active",
   };
 }
 
-export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamily, onNewResident, onStartVisit, onOpenResident, onInstallOvitrap, onStartPropertyVisit }: {
+export function HouseholdScreen({
+  householdKey, onEdit, onNewFamily, onEditFamily, onNewResident, onStartVisit, onOpenResident, onInstallOvitrap, onStartPropertyVisit, onNewAnimal, onEditAnimal,
+}: {
   householdKey: string; onEdit(): void; onNewFamily(): void; onEditFamily(familyId: string): void; onInstallOvitrap(): void;
-  onStartPropertyVisit(params: DueVisitParams): void;
+  onStartPropertyVisit(params: DueVisitParams): void; onNewAnimal(): void; onEditAnimal(animalKey: string): void;
   // `familyId`: the family the new resident enters; null for somebody outside any family (or the head of one yet to be registered).
   onNewResident(familyId: string | null): void; onStartVisit(start: VisitStart): void; onOpenResident(registrationKey: string): void;
 }) {
@@ -151,6 +158,7 @@ export function HouseholdScreen({ householdKey, onEdit, onNewFamily, onEditFamil
         </View>
       ))}
       {data.canEdit && <Button label="Novo morador" variant="secondary" onPress={() => onNewResident(null)} />}
+      {data.animals && <AnimalSection householdKey={view.key} onNew={onNewAnimal} onEdit={onEditAnimal} />}
       <Muted>{AT_THE_DASHBOARD}</Muted>
     </Screen>
   );
