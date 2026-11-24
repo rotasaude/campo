@@ -59,6 +59,27 @@ const OVITRAP_LABEL: Record<string, string> = {
 };
 const OVITRAP_ITEMS: readonly ItemType[] = ["ovitrap_installation", "ovitrap_collection"];
 
+// The paths of the four items of the 35b, with the labels of the dashboard's forms (apps/dashboard, main 51b1871,
+// src/modules/zoonoses/{AnimalForm,VaccinationForm,CollarsPanel,TestsPanel}.tsx). They are keyed by item because `status`
+// and `collected_on` mean other things on the household and the ovitrap.
+const ANIMAL_LABEL: Record<string, string> = {
+  animal_id: "Animal", animal_client_uuid: "Animal", species: "Espécie", name: "Nome", sex: "Sexo", size: "Porte", coat: "Pelagem", breed: "Raça",
+  birth_estimate_month: "Mês de nascimento (estimado)", microchip: "Microchip", tutor_patient_id: "Tutor", tutor_client_uuid: "Tutor",
+  community: "Comunitário", household_id: "Domicílio", household_client_uuid: "Domicílio", status: "Nova situação",
+};
+const VACCINATION_LABEL: Record<string, string> = {
+  animal_id: "Animal", animal_client_uuid: "Animal", campaign_id: "Campanha", vaccinated_on: "Data da vacinação", vector_product_id: "Produto",
+  adverse_note: "Nota do evento adverso",
+};
+const COLLECTION_LABEL: Record<string, string> = {
+  animal_id: "Animal", animal_client_uuid: "Animal", leish_survey_id: "Inquérito", collected_on: "Data da coleta", dpp_result: "Resultado do TR-DPP",
+  dpp_on: "Data do TR-DPP",
+};
+const COLLAR_LABEL: Record<string, string> = { animal_id: "Animal", animal_client_uuid: "Animal", vector_product_id: "Produto", placed_on: "Data da colocação" };
+const ZOONOSES_LABEL: Partial<Record<ItemType, Record<string, string>>> = {
+  animal: ANIMAL_LABEL, rabies_vaccination: VACCINATION_LABEL, leish_collection: COLLECTION_LABEL, collar: COLLAR_LABEL,
+};
+
 // The bulletin's paths (35a, M5 of the Task 7 review) with the labels of its section on the visit form (InspectionSection,
 // copied from the dashboard): a deposit by "Depósitos" and its counter, a measure or a sample by "Medida n" / "Amostra n"
 // and its field, as participants[i]. The LIRAa draw and the transmission block are refused under "Atividade", where the
@@ -89,6 +110,8 @@ function inspectionLabel(path: string): string {
 // The field a refusal of the server points to (its `path`), in words: "participants[1].new_patient.cpf" → "Participante 2: CPF".
 export function pathLabel(type: ItemType, path: string): string {
   if (OVITRAP_ITEMS.includes(type)) return OVITRAP_LABEL[path] ?? path;
+  const zoonoses = ZOONOSES_LABEL[type];
+  if (zoonoses) return zoonoses[path] ?? path;
   if (path === BULLETIN) return BULLETIN_TITLE;
   if (path.startsWith(`${BULLETIN}.`)) return inspectionLabel(path.slice(BULLETIN.length + 1));
   const participant = /^participants\[(\d+)\](?:\.(.*))?$/.exec(path);

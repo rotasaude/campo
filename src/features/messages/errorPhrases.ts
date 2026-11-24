@@ -4,6 +4,7 @@
 // code that has no phrase here.
 import type { ItemType } from "../../contract";
 import { VECTOR_ERRORS } from "../../rules/vectorErrors";
+import { ZOONOSES_ERRORS } from "../../rules/zoonosesErrors";
 import { AGENT_PROPERTY_TYPES } from "../session";
 
 const CHECK_FIELD = "Confira o campo destacado.";
@@ -93,6 +94,20 @@ export const ERROR_PHRASES: Record<string, string> = {
   reading_not_open: VECTOR_ERRORS.reading_not_open,
   ovitrap_not_active: VECTOR_ERRORS.ovitrap_not_active,
   sample_label_taken: VECTOR_ERRORS.sample_label_taken,
+
+  // ── errors.item of the 35b (field-sync v1.4.0): the dashboard's phrase, byte for byte (Q24) ────────────────
+  // not_found, feature_disabled, cbo_not_allowed, invalid_transition and client_uuid_conflict keep the phrases above.
+  // client_uuid_conflict: the dashboard's says the screen made a new identifier, and the tablet keeps its own.
+  microchip_taken: ZOONOSES_ERRORS.microchip_taken,
+  registry_number_taken: ZOONOSES_ERRORS.registry_number_taken,
+  already_vaccinated_in_campaign: ZOONOSES_ERRORS.already_vaccinated_in_campaign,
+  campaign_not_open: ZOONOSES_ERRORS.campaign_not_open,
+  survey_not_open: ZOONOSES_ERRORS.survey_not_open,
+  animal_not_dog: ZOONOSES_ERRORS.animal_not_dog,
+  animal_not_active: ZOONOSES_ERRORS.animal_not_active,
+  date_out_of_range: ZOONOSES_ERRORS.date_out_of_range,
+  household_not_in_survey: ZOONOSES_ERRORS.household_not_in_survey,
+  tutor_not_found: ZOONOSES_ERRORS.tutor_not_found,
 };
 
 // Codes the 35a items share with the 24c (registry, home visit, HTTP): the table is keyed by code alone, so they keep
@@ -110,6 +125,13 @@ export function phraseFor(code: string | null | undefined): string {
 }
 
 const VECTOR_ITEMS: readonly ItemType[] = ["ovitrap_installation", "ovitrap_collection"];
+// The four items of the 35b. product_not_allowed is a 35a code too (the ovitrap's product): on these items it says the
+// dashboard's zoonoses phrase, and the table keeps the vector one for the others.
+const ZOONOSES_ITEMS: readonly ItemType[] = ["animal", "rabies_vaccination", "leish_collection", "collar"];
+const ZOONOSES_OWN: readonly string[] = [
+  "microchip_taken", "registry_number_taken", "already_vaccinated_in_campaign", "campaign_not_open", "survey_not_open", "animal_not_dog",
+  "animal_not_active", "date_out_of_range", "household_not_in_survey", "tutor_not_found", "product_not_allowed",
+];
 const BULLETIN = "vector_inspection";
 
 // The phrase of an item the server refused, read by the item it came on (review of Task 6). A code the 35a shares with
@@ -138,6 +160,7 @@ function agentHouseholdRefusal(context: ItemContext): string {
 
 export function phraseForItem(code: string | null | undefined, item: { type: ItemType; path: string | null | undefined }, context?: ItemContext): string {
   if (context?.agent === true && item.type === "household" && code === "cbo_not_allowed") return agentHouseholdRefusal(context);
+  if (code && ZOONOSES_ITEMS.includes(item.type) && ZOONOSES_OWN.includes(code)) return ZOONOSES_ERRORS[code as keyof typeof ZOONOSES_ERRORS];
   if (!code || code === "invalid_transition" || !Object.prototype.hasOwnProperty.call(VECTOR_ERRORS, code)) return phraseFor(code);
   const path = item.path ?? "";
   const vector = VECTOR_ITEMS.includes(item.type) || (item.type === "home_visit" && (path === BULLETIN || path.startsWith(`${BULLETIN}.`)));

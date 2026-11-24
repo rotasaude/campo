@@ -1,10 +1,15 @@
 import { KNOWN_HTTP_ERRORS, KNOWN_ITEM_ERRORS } from "../../contract";
 import { VECTOR_ERRORS, VECTOR_ERROR_CODES, type VectorErrorCode } from "../../rules/vectorErrors";
 import type { ItemType } from "../../contract";
+import { ZOONOSES_ERRORS, type ZoonosesErrorCode } from "../../rules/zoonosesErrors";
 import { AGENT_CBO_NOT_ALLOWED, AGENT_HAS_RESIDENT, ERROR_PHRASES, SHARED_24C_CODES, phraseFor, phraseForItem, type ItemContext } from "./errorPhrases";
 
 // The 35a item codes take the dashboard's phrase as it is (lowercase, no period): the app does not write them (Q9).
 const VECTOR_ITEM_CODES = new Set<string>(VECTOR_ERROR_CODES.filter((code) => KNOWN_ITEM_ERRORS.includes(code) && !SHARED_24C_CODES.includes(code)));
+
+// The 35b item codes take the dashboard's phrase as it is (lowercase, no period): the app does not write them (Q24).
+const ZOONOSES_NEW = ["microchip_taken", "registry_number_taken", "already_vaccinated_in_campaign", "campaign_not_open", "survey_not_open",
+  "animal_not_dog", "animal_not_active", "date_out_of_range", "household_not_in_survey", "tutor_not_found"] as const;
 
 test("every known http and item code has its own phrase", () => {
   for (const code of [...KNOWN_HTTP_ERRORS, ...KNOWN_ITEM_ERRORS]) expect([code, Boolean(ERROR_PHRASES[code])]).toEqual([code, true]);
@@ -18,7 +23,7 @@ test("no phrase for a code the contract does not have", () => {
 test("phrases never echo values", () => {
   for (const [code, phrase] of Object.entries(ERROR_PHRASES)) {
     expect(phrase).not.toMatch(/\$\{|%s/);
-    if (!VECTOR_ITEM_CODES.has(code)) expect(phrase).toMatch(/^[A-ZÁÉÍÓÚ].*\.$/);
+    if (!VECTOR_ITEM_CODES.has(code) && !(ZOONOSES_NEW as readonly string[]).includes(code)) expect(phrase).toMatch(/^[A-ZÁÉÍÓÚ].*\.$/);
   }
 });
 
@@ -144,5 +149,48 @@ describe("phraseForItem — the endemic agent's household (Q54)", () => {
     }
     expect(phraseForItem("cbo_not_allowed", household, notAgent)).toBe("Seu CBO não permite este registro.");
     expect(phraseForItem("cbo_not_allowed", household)).toBe("Seu CBO não permite este registro.");
+  });
+});
+
+describe("the zoonoses items (35b, Q24)", () => {
+  test("every zoonoses item code of the contract has the dashboard phrase", () => {
+    for (const code of ZOONOSES_NEW) {
+      expect(KNOWN_ITEM_ERRORS).toContain(code);
+      expect(ERROR_PHRASES[code]).toBe(ZOONOSES_ERRORS[code as ZoonosesErrorCode]);
+    }
+  });
+
+  test("the codes shared with the 24c keep the 24c phrase on every zoonoses item, as the contract fixes", () => {
+    for (const type of ["animal", "rabies_vaccination", "leish_collection", "collar"] as const) {
+      expect(phraseForItem("not_found", { type, path: "animal_client_uuid" })).toBe(ERROR_PHRASES.not_found);
+      expect(phraseForItem("feature_disabled", { type, path: null })).toBe(ERROR_PHRASES.feature_disabled);
+      expect(phraseForItem("cbo_not_allowed", { type, path: null })).toBe(ERROR_PHRASES.cbo_not_allowed);
+      expect(phraseForItem("invalid_transition", { type, path: "status" })).toBe(ERROR_PHRASES.invalid_transition);
+      expect(phraseForItem("client_uuid_conflict", { type, path: null })).toBe(ERROR_PHRASES.client_uuid_conflict);
+    }
+    expect(ERROR_PHRASES.client_uuid_conflict).toBe("Este registro já foi enviado com outro conteúdo. Confira os dados e grave de novo.");
+  });
+
+  test("phraseForItem: not_found on a collar keeps the 24c phrase; animal_not_dog on a collar is the zoonoses one", () => {
+    expect(phraseForItem("not_found", { type: "collar", path: "animal_client_uuid" })).toBe(ERROR_PHRASES.not_found);
+    expect(phraseForItem("animal_not_dog", { type: "collar", path: "animal_id" })).toBe(ZOONOSES_ERRORS.animal_not_dog);
+    expect(phraseForItem("animal_not_dog", { type: "leish_collection", path: "animal_id" })).toBe(ZOONOSES_ERRORS.animal_not_dog);
+  });
+
+  test("product_not_allowed reads by the item: the zoonoses phrase on a vaccine or a collar, the vector one on an ovitrap", () => {
+    expect(phraseForItem("product_not_allowed", { type: "rabies_vaccination", path: "vector_product_id" })).toBe(ZOONOSES_ERRORS.product_not_allowed);
+    expect(phraseForItem("product_not_allowed", { type: "collar", path: "vector_product_id" })).toBe(ZOONOSES_ERRORS.product_not_allowed);
+    expect(phraseForItem("product_not_allowed", { type: "ovitrap_installation", path: null })).toBe(VECTOR_ERRORS.product_not_allowed);
+    expect(phraseForItem("product_not_allowed", { type: "home_visit", path: "vector_inspection.measures[0].vector_product_id" })).toBe(VECTOR_ERRORS.product_not_allowed);
+  });
+
+  test("a 35b code on another item reads as the table's phrase, and an unknown code on a zoonoses item too", () => {
+    expect(phraseForItem("animal_not_active", { type: "household", path: null })).toBe(ZOONOSES_ERRORS.animal_not_active);
+    expect(phraseForItem("no_such_code", { type: "animal", path: null })).toBe(phraseFor("no_such_code"));
+    expect(phraseForItem(null, { type: "collar", path: null })).toBe(phraseFor(null));
+  });
+
+  test("no phrase of a zoonoses code carries a value", () => {
+    for (const code of ZOONOSES_NEW) expect(ERROR_PHRASES[code]).not.toMatch(/\d{5,}|_|\$\{/);
   });
 });
