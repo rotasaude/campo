@@ -37,7 +37,7 @@ test("creates a 32-byte key once and keys the database before anything else", as
   expect(key).toHaveLength(64);
   expect(sqls[0]).toContain(key);
   // Opened and migrated: the schema answers.
-  expect(await db.get<{ value: string }>("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "2" });
+  expect(await db.get<{ value: string }>("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "3" });
 });
 
 test("refuses an unencrypted build: no row from cipher_version", async () => {

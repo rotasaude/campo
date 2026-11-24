@@ -8,7 +8,7 @@ import { wipeAll, wipeOwed, wipeTerritory } from "./wipe";
 const KEPT = ["outbox", "client_ids", "reference", "map_file", "session"];
 const WIPED = [
   "micro_areas", "households", "families", "registrations", "who_to_visit", "local_visits", "local_activities",
-  "city_blocks", "liraa_items", "ovitraps", "transmission_blocks",
+  "city_blocks", "liraa_items", "ovitraps", "transmission_blocks", "animals", "leish_surveys", "local_leish_collections",
 ];
 
 async function fill(db: Db): Promise<void> {
@@ -29,6 +29,9 @@ async function fill(db: Db): Promise<void> {
     INSERT INTO liraa_items (id, survey_id, household_id, city_block_id, status, version, body) VALUES ('li1', 'sv1', 'hh1', 'cb1', 'pending', 1, '{}');
     INSERT INTO ovitraps (key, id, household_key, number, status, version, body) VALUES ('ov1', 'ov1', 'hh1', 'OVT-1', 'active', 1, '{}');
     INSERT INTO transmission_blocks (id, status, version, body) VALUES ('tb1', 'active', 1, '{}');
+    INSERT INTO animals (key, id, household_key, species, status, version, body) VALUES ('an1', 'an1', 'hh1', 'dog', 'active', 1, '{}');
+    INSERT INTO leish_surveys (id, version, body) VALUES ('ls1', 1, '{}');
+    INSERT INTO local_leish_collections (client_uuid, animal_key, city_day, state) VALUES ('lc1', 'an1', '2026-11-24', 'accepted');
     INSERT INTO meta (key, value) VALUES ('cursor', 'abc'), ('last_download_ok_at', 't'), ('last_download_horizon_at', 't'), ('session_host', 'curitiba.rotasaude.app');
   `);
 }
@@ -50,8 +53,9 @@ test("wipeTerritory for the restart keeps the accepted visits and the last downl
   const db = await createTestDb();
   await fill(db);
   await wipeTerritory(db, { restart: true });
-  for (const table of WIPED.filter((t) => !["local_visits", "local_activities"].includes(t))) expect([table, await count(db, table)]).toEqual([table, 0]);
-  for (const table of [...KEPT, "local_visits", "local_activities"]) expect([table, await count(db, table)]).toEqual([table, 1]);
+  const KEPT_ON_RESTART = ["local_visits", "local_activities", "local_leish_collections"];
+  for (const table of WIPED.filter((t) => !KEPT_ON_RESTART.includes(t))) expect([table, await count(db, table)]).toEqual([table, 0]);
+  for (const table of [...KEPT, ...KEPT_ON_RESTART]) expect([table, await count(db, table)]).toEqual([table, 1]);
   const meta = (await db.all<{ key: string }>("SELECT key FROM meta ORDER BY key")).map((row) => row.key);
   expect(meta).toEqual(["clock_skew_ms", "last_download_horizon_at", "last_download_ok_at", "mobile_data", "schema_version", "session_host"]);
 });
@@ -88,6 +92,44 @@ test("wipeTerritory empties the vector tables but keeps an ovitrap the queue sti
   await wipeTerritory(db);
   expect(await db.all("SELECT key FROM ovitraps ORDER BY key")).toEqual([{ key: "collecting" }, { key: "installing" }]);
   for (const table of ["city_blocks", "liraa_items", "transmission_blocks"]) expect([table, await count(db, table)]).toEqual([table, 0]);
+});
+
+// An animal born on this tablet exists nowhere else until its item is accepted: its creation is in the line, or any item
+// in the line (a vaccination, a collar, a collection) names it by animal_client_uuid.
+test("wipeTerritory empties animals and leish surveys but keeps an animal the queue creates or cites by animal_client_uuid", async () => {
+  const db = await createTestDb();
+  await fill(db);
+  const animal = (key: string, id: string | null, clientUuid: string | null) => db.run(
+    "INSERT INTO animals (key, id, client_uuid, household_key, species, status, body) VALUES (?, ?, ?, 'hh1', 'dog', 'active', '{}')",
+    [key, id, clientUuid]);
+  const item = (clientUuid: string, type: string, body: object) => db.run(
+    "INSERT INTO outbox (client_uuid, type, body, state, created_at, updated_at) VALUES (?, ?, ?, 'pending', 't', 't')",
+    [clientUuid, type, JSON.stringify(body)]);
+  await animal("creating", null, "creating"); // its creation is still in the line
+  await item("creating", "animal", { household_id: "hh1", species: "dog" });
+  await animal("vaccinating", "srv2", "vaccinating"); // creation accepted, a vaccination still names it
+  await item("v1", "rabies_vaccination", { animal_client_uuid: "vaccinating", vaccinated_on: "2026-11-24" });
+  await animal("collecting", "srv3", "collecting"); // the same for a collection
+  await item("lc9", "leish_collection", { animal_client_uuid: "collecting", collected_on: "2026-11-24" });
+  await animal("done", "srv4", "done"); // born here, accepted, nothing left in the line
+  await item("v2", "rabies_vaccination", { animal_id: "srv4", vaccinated_on: "2026-11-24" });
+  await animal("srv", "srv", null); // the server's: comes back with the next download
+  await wipeTerritory(db);
+  expect(await db.all("SELECT key FROM animals ORDER BY key")).toEqual([{ key: "collecting" }, { key: "creating" }, { key: "vaccinating" }]);
+  expect(await count(db, "leish_surveys")).toBe(0);
+});
+
+test("the Q42 restart keeps local_leish_collections; a server reset keeps only the ones the queue still has", async () => {
+  const db = await createTestDb();
+  await fill(db);
+  await db.exec(`
+    INSERT INTO local_leish_collections (client_uuid, animal_key, city_day, state) VALUES ('lc2', 'an1', '2026-11-24', 'pending');
+    INSERT INTO outbox (client_uuid, type, body, state, created_at, updated_at) VALUES ('lc2', 'leish_collection', '{}', 'pending', 't', 't');
+  `);
+  await wipeTerritory(db, { restart: true });
+  expect(await count(db, "local_leish_collections")).toBe(2);
+  await wipeTerritory(db);
+  expect(await db.all("SELECT client_uuid FROM local_leish_collections")).toEqual([{ client_uuid: "lc2" }]);
 });
 
 test("wipeAll deletes the db file, map dir and every secure key", async () => {

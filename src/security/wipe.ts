@@ -3,7 +3,7 @@
 // owes the server — the queue, and what the queue points to on the tablet. wipeAll is the end of this installation: manual revocation
 // (device_revoked) or a confirmed "Sair".
 import { DB_NAME } from "../db/open";
-import { QUEUED_OVITRAP } from "../db/repos/queued";
+import { QUEUED_ANIMAL, QUEUED_OVITRAP } from "../db/repos/queued";
 import type { Db } from "../db/types";
 import { HORIZON_KEY } from "../sync/download";
 import { SECURE_KEYS, type SecureStorePort } from "./secureStore";
@@ -18,8 +18,8 @@ export interface FsPort {
 // activity still to be sent.
 const QUEUED_ROW = "client_uuid IS NOT NULL AND key IN (SELECT target_id FROM outbox WHERE target_id IS NOT NULL)";
 
-// Keeps outbox, client_ids, reference, map_file and session — and the rows the outbox still needs (see QUEUED_ROW and
-// QUEUED_OVITRAP). In meta only the download's cursor and date go: the trusted clock (clock_skew_ms and the high water,
+// Keeps outbox, client_ids, reference, map_file and session — and the rows the outbox still needs (see QUEUED_ROW,
+// QUEUED_OVITRAP and QUEUED_ANIMAL). In meta only the download's cursor and date go: the trusted clock (clock_skew_ms and the high water,
 // campo#2) is not territory.
 //
 // restart: the first page of a download that began without a cursor (Q42). Only the territory and the cursor go: the
@@ -37,11 +37,14 @@ export async function wipeTerritory(db: Db, options: { restart?: boolean } = {})
     await tx.exec("DELETE FROM liraa_items");
     await tx.exec("DELETE FROM transmission_blocks");
     await tx.exec(`DELETE FROM ovitraps WHERE NOT (${QUEUED_OVITRAP})`);
+    await tx.exec(`DELETE FROM animals WHERE NOT (${QUEUED_ANIMAL})`);
+    await tx.exec("DELETE FROM leish_surveys");
     await tx.run("DELETE FROM meta WHERE key = ?", ["cursor"]);
     if (options.restart === true) return;
     await tx.run("DELETE FROM meta WHERE key IN (?, ?)", ["last_download_ok_at", HORIZON_KEY]);
     await tx.exec("DELETE FROM local_visits WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
     await tx.exec("DELETE FROM local_activities WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
+    await tx.exec("DELETE FROM local_leish_collections WHERE client_uuid NOT IN (SELECT client_uuid FROM outbox)");
   });
 }
 

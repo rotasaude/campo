@@ -4,7 +4,7 @@
 // is what the tablet still owes it.
 import type { Db } from "./types";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const FLAG = (column: string) => `${column} INTEGER NOT NULL DEFAULT 0 CHECK (${column} IN (0, 1))`;
 
@@ -71,6 +71,22 @@ const STATEMENTS_V2 = [
   `CREATE INDEX IF NOT EXISTS idx_liraa_items_household ON liraa_items (household_id)`,
 ];
 
+// v3 (35b): the zoonoses copies of the server and what the tablet keeps of its own.
+const STATEMENTS_V3 = [
+  // key: the server id, or the client_uuid of the animal born on the tablet. body never holds the microchip number (§16).
+  `CREATE TABLE IF NOT EXISTS animals (
+     key TEXT PRIMARY KEY NOT NULL, id TEXT UNIQUE, client_uuid TEXT, household_key TEXT NOT NULL,
+     species TEXT NOT NULL CHECK (species IN ('dog', 'cat', 'other')), status TEXT NOT NULL, version INTEGER, base_version INTEGER,
+     ${FLAG("needs_reload")}, body TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS leish_surveys (id TEXT PRIMARY KEY NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL)`,
+  // The collections made on the tablet today: the label comes with the acceptance (Q21).
+  `CREATE TABLE IF NOT EXISTS local_leish_collections (
+     client_uuid TEXT PRIMARY KEY NOT NULL, animal_key TEXT NOT NULL, city_day TEXT NOT NULL, label TEXT,
+     state TEXT NOT NULL CHECK (state IN ('pending', 'accepted')), accepted_at TEXT)`,
+  `CREATE INDEX IF NOT EXISTS idx_animals_household ON animals (household_key)`,
+  `CREATE INDEX IF NOT EXISTS idx_local_leish_collections_day ON local_leish_collections (city_day)`,
+];
+
 // Values every installation starts with; the session ones (host, user, city offset) are written at registration.
 const META_DEFAULTS: [string, string][] = [
   ["schema_version", String(SCHEMA_VERSION)],
@@ -81,22 +97,21 @@ const META_DEFAULTS: [string, string][] = [
 export class UnknownSchemaError extends Error {}
 
 // Idempotent: runs at every open, in one transaction — an upgrade that fails leaves the database as it was.
-// 1 → 2 never deletes a row: the queue and the territory stay. Only the cursor goes (Q6): the next download is a full
-// one, and brings the new entities and the `vector` of the households downloaded before. last_download_ok_at stays,
-// so the 30 days do not start over and the tablet is not taken for a first load waiting for Wi-Fi (Q13(4)).
+// 1 → 3 and 2 → 3 never delete a row: the queue and the territory stay. Only the cursor goes (Q6, Q13(4)): the next
+// download is a full one, and brings the new entities. last_download_ok_at and its horizon stay, so the 30 days do not
+// start over and the tablet is not taken for a first load waiting for Wi-Fi.
 export async function migrate(db: Db): Promise<void> {
   await db.tx(async (tx) => {
     for (const statement of STATEMENTS_V1) await tx.exec(statement);
     for (const [key, value] of META_DEFAULTS) await tx.run("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)", [key, value]);
     const row = await tx.get<{ value: string }>("SELECT value FROM meta WHERE key = ?", ["schema_version"]);
-    if (row?.value === "1") {
-      for (const statement of STATEMENTS_V2) await tx.exec(statement);
-      await tx.run("DELETE FROM meta WHERE key = ?", ["cursor"]);
-      await tx.run("UPDATE meta SET value = ? WHERE key = ?", [String(SCHEMA_VERSION), "schema_version"]);
-      return;
-    }
+    const from = row?.value;
     // A database written by a newer app: never guess its shape.
-    if (row?.value !== String(SCHEMA_VERSION)) throw new UnknownSchemaError(`esquema local ${row?.value ?? "ausente"}: atualize o app`);
-    for (const statement of STATEMENTS_V2) await tx.exec(statement);
+    if (from !== "1" && from !== "2" && from !== String(SCHEMA_VERSION)) throw new UnknownSchemaError(`esquema local ${from ?? "ausente"}: atualize o app`);
+    if (from !== "2") for (const statement of STATEMENTS_V2) await tx.exec(statement);
+    for (const statement of STATEMENTS_V3) await tx.exec(statement);
+    if (from === "3") return;
+    await tx.run("DELETE FROM meta WHERE key = ?", ["cursor"]);
+    await tx.run("UPDATE meta SET value = ? WHERE key = ?", [String(SCHEMA_VERSION), "schema_version"]);
   });
 }

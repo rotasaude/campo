@@ -1,17 +1,17 @@
 import { HIGH_WATER_KEY } from "../sync/trustedTime";
 import { dbEvents } from "./events";
 import { SCHEMA_VERSION, UnknownSchemaError, migrate } from "./migrations";
-import { SCHEMA_V1 } from "./testing/schemaV1";
+import { SCHEMA_V1, SCHEMA_V2 } from "./testing/schemaV2";
 import { createEmptyTestDb, createTestDb } from "./testing/sqljsDb";
 import type { Db } from "./types";
 
 const TABLES = [
-  "city_blocks", "client_ids", "families", "households", "liraa_items", "local_activities", "local_visits", "map_file", "meta",
+  "animals", "city_blocks", "client_ids", "families", "households", "leish_surveys", "liraa_items", "local_activities", "local_leish_collections", "local_visits", "map_file", "meta",
   "micro_areas", "outbox", "ovitraps", "reference", "registrations", "session", "transmission_blocks", "who_to_visit",
 ];
 const INDEXES = [
-  "idx_city_blocks_neighborhood", "idx_households_address", "idx_households_micro_area", "idx_liraa_items_household",
-  "idx_outbox_state", "idx_ovitraps_household", "idx_registrations_household", "idx_registrations_person",
+  "idx_animals_household", "idx_city_blocks_neighborhood", "idx_households_address", "idx_households_micro_area",
+  "idx_liraa_items_household", "idx_local_leish_collections_day", "idx_outbox_state", "idx_ovitraps_household", "idx_registrations_household", "idx_registrations_person",
 ];
 
 const names = async (db: Db, type: string) =>
@@ -37,24 +37,56 @@ async function v1Db(): Promise<Db> {
   return db;
 }
 
-test("creates every table and index of the local schema v2", async () => {
+// A tablet of the 35a, mid-work: the v1 seed plus what the vector control keeps.
+async function seedV2(db: Db): Promise<void> {
+  await seedV1(db);
+  await db.exec(`
+    INSERT INTO ovitraps (key, id, household_key, number, status, version, body) VALUES ('ov1', 'ov1', 'hh1', 'OVT-1', 'active', 1, '{}');
+  `);
+}
+
+async function v2Db(): Promise<Db> {
+  const db = await createEmptyTestDb();
+  await db.tx(async (tx) => { for (const s of [...SCHEMA_V1, ...SCHEMA_V2]) await tx.exec(s); });
+  await db.run("INSERT INTO meta (key, value) VALUES ('schema_version', '2'), ('cursor', 'c2'), ('last_download_ok_at', '2026-11-20T10:00:00Z'), ('last_download_horizon_at', '2026-11-20T09:59:58Z')");
+  return db;
+}
+
+test("creates every table and index of the local schema v3", async () => {
   const db = await createTestDb();
   expect(await names(db, "table")).toEqual(TABLES);
   expect(await names(db, "index")).toEqual(INDEXES);
 });
 
-test("upgrades a v1 database with data to v2, keeps everything and resets the cursor (Q6)", async () => {
+test("upgrades a v2 database with data to v3, keeps everything and resets the cursor", async () => {
+  const db = await v2Db();
+  await seedV2(db);
+  await migrate(db);
+  expect(await db.get("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "3" });
+  expect(await db.get("SELECT value FROM meta WHERE key = 'cursor'")).toBeNull();
+  expect(await db.get("SELECT value FROM meta WHERE key = 'last_download_ok_at'")).toEqual({ value: "2026-11-20T10:00:00Z" });
+  expect(await db.get("SELECT value FROM meta WHERE key = 'last_download_horizon_at'")).toEqual({ value: "2026-11-20T09:59:58Z" });
+  expect(await db.all("SELECT seq, state FROM outbox ORDER BY seq")).toEqual([{ seq: 1, state: "pending" }, { seq: 2, state: "needs_attention" }]);
+  expect(await db.get("SELECT count(*) AS n FROM households")).toEqual({ n: 1 });
+  expect(await db.get("SELECT count(*) AS n FROM ovitraps")).toEqual({ n: 1 });
+  expect(await db.get("SELECT count(*) AS n FROM local_visits")).toEqual({ n: 1 });
+  expect(await names(db, "table")).toEqual(TABLES);
+  expect(await names(db, "index")).toEqual(INDEXES);
+});
+
+test("a v1 database goes straight to v3, keeps everything and resets the cursor (Q6)", async () => {
   const db = await createEmptyTestDb();
   await db.tx(async (tx) => { for (const s of SCHEMA_V1) await tx.exec(s); });
   await db.run("INSERT INTO meta (key, value) VALUES ('schema_version', '1'), ('cursor', 'c1'), ('last_download_ok_at', '2026-11-15T10:00:00Z')");
   await seedV1(db);
   await migrate(db);
-  expect(await db.get("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "2" });
+  expect(await db.get("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "3" });
   expect(await db.get("SELECT value FROM meta WHERE key = 'cursor'")).toBeNull();
   expect(await db.get("SELECT value FROM meta WHERE key = 'last_download_ok_at'")).toEqual({ value: "2026-11-15T10:00:00Z" });
   expect(await db.all("SELECT seq, state FROM outbox ORDER BY seq")).toEqual([{ seq: 1, state: "pending" }, { seq: 2, state: "needs_attention" }]);
   expect(await db.get("SELECT count(*) AS n FROM households")).toEqual({ n: 1 });
-  expect(await names(db, "table")).toEqual(expect.arrayContaining(["city_blocks", "liraa_items", "ovitraps", "transmission_blocks"]));
+  expect(await names(db, "table")).toEqual(TABLES);
+  expect(await names(db, "index")).toEqual(INDEXES);
 });
 
 test("the upgrade keeps every row of the v1 tables and the whole v1 meta but the cursor", async () => {
@@ -69,7 +101,7 @@ test("the upgrade keeps every row of the v1 tables and the whole v1 meta but the
     ...kept,
     meta: (kept.meta as { key: string; value: string }[])
       .filter((row) => row.key !== "cursor")
-      .map((row) => (row.key === "schema_version" ? { key: "schema_version", value: "2" } : row)),
+      .map((row) => (row.key === "schema_version" ? { key: "schema_version", value: "3" } : row)),
   });
   expect(await names(db, "table")).toEqual(TABLES);
   expect(await names(db, "index")).toEqual(INDEXES);
@@ -84,20 +116,31 @@ test("the upgrade keeps the trusted clock (high water and skew)", async () => {
   expect(await db.get("SELECT value FROM meta WHERE key = 'clock_skew_ms'")).toEqual({ value: "-5000" });
 });
 
-test("migrating a v2 database again keeps its cursor", async () => {
+test("migrating a v3 database again keeps its cursor", async () => {
   const db = await createTestDb();
-  await db.run("INSERT INTO meta (key, value) VALUES ('cursor', 'c2')");
+  await db.run("INSERT INTO meta (key, value) VALUES ('cursor', 'c3')");
   await migrate(db);
-  expect(await db.get("SELECT value FROM meta WHERE key = 'cursor'")).toEqual({ value: "c2" });
-  expect(await db.get("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "2" });
+  expect(await db.get("SELECT value FROM meta WHERE key = 'cursor'")).toEqual({ value: "c3" });
+  expect(await db.get("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "3" });
 });
 
-test("a fresh install starts at 2", async () => {
+test("a fresh install starts at 3", async () => {
   const db = await createEmptyTestDb();
   await migrate(db);
-  expect(SCHEMA_VERSION).toBe(2);
-  expect(await db.get("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "2" });
+  expect(SCHEMA_VERSION).toBe(3);
+  expect(await db.get("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "3" });
   expect(await db.get("SELECT value FROM meta WHERE key = 'cursor'")).toBeNull();
+});
+
+test("an upgrade of a v2 database that fails halfway leaves it as it was", async () => {
+  const db = await v2Db();
+  await seedV2(db);
+  // A table of the v3 already there with another shape: its index cannot be made, and the whole upgrade goes back.
+  await db.exec("CREATE TABLE animals (key TEXT PRIMARY KEY NOT NULL)");
+  await expect(migrate(db)).rejects.toThrow();
+  expect(await db.get("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "2" });
+  expect(await db.get("SELECT value FROM meta WHERE key = 'cursor'")).toEqual({ value: "c2" });
+  expect(await names(db, "table")).not.toContain("leish_surveys");
 });
 
 test("an upgrade that fails halfway leaves the v1 database as it was", async () => {
@@ -109,6 +152,28 @@ test("an upgrade that fails halfway leaves the v1 database as it was", async () 
   expect(await db.get("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "1" });
   expect(await db.get("SELECT value FROM meta WHERE key = 'cursor'")).toEqual({ value: "c1" });
   expect(await names(db, "table")).not.toContain("city_blocks");
+});
+
+test("the zoonoses tables keep their rules", async () => {
+  const db = await createTestDb();
+  const columns = async (table: string) => (await db.all<{ name: string }>(`PRAGMA table_info(${table})`)).map((c) => c.name);
+  expect(await columns("animals")).toEqual([
+    "key", "id", "client_uuid", "household_key", "species", "status", "version", "base_version", "needs_reload", "body",
+  ]);
+  expect(await columns("leish_surveys")).toEqual(["id", "version", "body"]);
+  expect(await columns("local_leish_collections")).toEqual(["client_uuid", "animal_key", "city_day", "label", "state", "accepted_at"]);
+  const animal = (key: string, species: string, id: string | null = null) => db.run(
+    "INSERT INTO animals (key, id, household_key, species, status, body) VALUES (?, ?, 'hh1', ?, 'active', '{}')", [key, id, species]);
+  for (const species of ["dog", "cat", "other"]) await animal(`k-${species}`, species);
+  await expect(animal("k-x", "bird")).rejects.toThrow();
+  await animal("k-a", "dog", "srv1");
+  await expect(animal("k-b", "dog", "srv1")).rejects.toThrow();
+  expect(await db.get("SELECT needs_reload FROM animals WHERE key = 'k-dog'")).toEqual({ needs_reload: 0 });
+  const collection = (uuid: string, state: string) => db.run(
+    "INSERT INTO local_leish_collections (client_uuid, animal_key, city_day, state) VALUES (?, 'k-dog', '2026-11-24', ?)", [uuid, state]);
+  await collection("c1", "pending");
+  await collection("c2", "accepted");
+  await expect(collection("c3", "withdrawn")).rejects.toThrow();
 });
 
 test("the vector tables keep their rules", async () => {
@@ -140,11 +205,11 @@ test("migrating twice changes nothing and keeps the data", async () => {
 
 test("a database from a newer app is refused, untouched", async () => {
   const db = await createTestDb();
-  await db.run("UPDATE meta SET value = '3' WHERE key = 'schema_version'");
-  await db.run("INSERT INTO meta (key, value) VALUES ('cursor', 'c3')");
+  await db.run("UPDATE meta SET value = '4' WHERE key = 'schema_version'");
+  await db.run("INSERT INTO meta (key, value) VALUES ('cursor', 'c4')");
   await expect(migrate(db)).rejects.toBeInstanceOf(UnknownSchemaError);
-  expect(await db.get("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "3" });
-  expect(await db.get("SELECT value FROM meta WHERE key = 'cursor'")).toEqual({ value: "c3" });
+  expect(await db.get("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: "4" });
+  expect(await db.get("SELECT value FROM meta WHERE key = 'cursor'")).toEqual({ value: "c4" });
 });
 
 test("the columns the sync depends on exist with their rules", async () => {
