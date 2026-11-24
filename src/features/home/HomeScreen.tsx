@@ -12,16 +12,17 @@ import type { Db } from "../../db/types";
 import { APP_UPDATE_NOTICE } from "../../sync/reference";
 import { CONTRACT_UPDATE_NOTICE } from "../../sync/round";
 import { Body, Button, Muted, Notice, Screen } from "../../ui/components";
+import { COLLARS_TABLES } from "../animals/collars";
 import { DUE_TABLES } from "../vector/dueData";
 import { loadHome } from "./homeData";
 
 export const VISITS_OFF = "Visita desligada pela secretaria";
 // meta: the last sync and the clock; session: the switches of the city and the micro-areas.
-// reference and the vector tables (DUE_TABLES): the endemic agent's properties due.
-const TABLES = [...new Set(["outbox", "who_to_visit", "micro_areas", "households", "meta", "session", ...DUE_TABLES])];
+// reference and the vector tables (DUE_TABLES): the endemic agent's properties due; COLLARS_TABLES: the collars due (35b).
+const TABLES = [...new Set(["outbox", "who_to_visit", "micro_areas", "households", "meta", "session", ...DUE_TABLES, ...COLLARS_TABLES])];
 
-export function HomeScreen({ onOpenWho, onOpenToday, onOpenDue, onOpenOvitraps, onNewActivity, onOpenHouseholds, onOpenMap, onOpenOutbox, onOpenAbout }: {
-  onOpenWho(): void; onOpenToday(): void; onOpenDue(): void; onOpenOvitraps(): void; onNewActivity(): void; onOpenHouseholds(): void; onOpenMap(): void; onOpenOutbox(): void; onOpenAbout(): void;
+export function HomeScreen({ onOpenWho, onOpenToday, onOpenDue, onOpenOvitraps, onOpenCollars, onNewActivity, onOpenHouseholds, onOpenMap, onOpenOutbox, onOpenAbout }: {
+  onOpenWho(): void; onOpenToday(): void; onOpenDue(): void; onOpenOvitraps(): void; onOpenCollars(): void; onNewActivity(): void; onOpenHouseholds(): void; onOpenMap(): void; onOpenOutbox(): void; onOpenAbout(): void;
 }) {
   const { now } = useServices();
   const sync = useSyncState();
@@ -46,6 +47,7 @@ export function HomeScreen({ onOpenWho, onOpenToday, onOpenDue, onOpenOvitraps, 
         </View>
       )}
       <View style={{ gap: 8 }}>
+        {home.collarsDue !== null && <Body>{`Coleiras a trocar: ${home.collarsDue}`}</Body>}
         <Body>{`Pendentes de envio: ${home.pending}`}</Body>
         <Body>{`Precisam de atenção: ${home.attention}`}</Body>
         <Body>{`Conflitos: ${home.conflicts}`}</Body>
@@ -56,6 +58,7 @@ export function HomeScreen({ onOpenWho, onOpenToday, onOpenDue, onOpenOvitraps, 
       {!home.visitsOff && <Button label="Quem visitar" variant="secondary" onPress={onOpenWho} />}
       {home.vectorDue !== null && <Button label="Imóveis a visitar" variant="secondary" onPress={onOpenDue} />}
       {home.ovitrapsOn && <Button label="Ovitrampas" variant="secondary" onPress={onOpenOvitraps} />}
+      {home.collarsDue !== null && <Button label="Coleiras a trocar" variant="secondary" onPress={onOpenCollars} />}
       {!home.visitsOff && <Button label="Minhas visitas de hoje" variant="secondary" onPress={onOpenToday} />}
       {home.activitiesOn && <Button label="Nova atividade coletiva" variant="secondary" onPress={onNewActivity} />}
       {home.registryOn && <Button label="Domicílios" variant="secondary" onPress={onOpenHouseholds} />}

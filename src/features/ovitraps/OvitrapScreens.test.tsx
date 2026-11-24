@@ -32,7 +32,7 @@ async function household(db: Db) {
   return { ...nav, unmount: () => view.unmount() };
 }
 async function home(db: Db) {
-  const nav = { onOpenWho: jest.fn(), onOpenToday: jest.fn(), onOpenDue: jest.fn(), onOpenOvitraps: jest.fn(), onNewActivity: jest.fn(), onOpenHouseholds: jest.fn(), onOpenMap: jest.fn(), onOpenOutbox: jest.fn(), onOpenAbout: jest.fn() };
+  const nav = { onOpenWho: jest.fn(), onOpenToday: jest.fn(), onOpenDue: jest.fn(), onOpenOvitraps: jest.fn(), onOpenCollars: jest.fn(), onNewActivity: jest.fn(), onOpenHouseholds: jest.fn(), onOpenMap: jest.fn(), onOpenOutbox: jest.fn(), onOpenAbout: jest.fn() };
   const state = { running: false, lastOutcome: null, run: jest.fn() } as never;
   const view = await renderWithServices(<SyncContext.Provider value={state}><HomeScreen {...nav} /></SyncContext.Provider>, services(db));
   await screen.findByText(/Pendentes de envio/);

@@ -10,7 +10,7 @@ import type { Db } from "../../db/types";
 import { enqueue } from "../../sync/outbox";
 import { APP_UPDATE_NOTICE } from "../../sync/reference";
 import { newUuid } from "../../sync/testing";
-import { endemicTablet } from "../testing";
+import { ANIMAL, endemicTablet, zoonosesTablet } from "../testing";
 import { HomeScreen } from "./HomeScreen";
 
 const SESSION = example<SessionResponse>("session-acs.json");
@@ -28,7 +28,7 @@ async function seeded(session: SessionResponse = SESSION): Promise<Db> {
 }
 async function mount(db: Db, sync: Partial<SyncState> = {}) {
   const state: SyncState = { running: false, lastOutcome: null, run: jest.fn(), ...sync };
-  const nav = { onOpenWho: jest.fn(), onOpenToday: jest.fn(), onOpenDue: jest.fn(), onOpenOvitraps: jest.fn(), onNewActivity: jest.fn(), onOpenHouseholds: jest.fn(), onOpenMap: jest.fn(), onOpenOutbox: jest.fn(), onOpenAbout: jest.fn() };
+  const nav = { onOpenWho: jest.fn(), onOpenToday: jest.fn(), onOpenDue: jest.fn(), onOpenOvitraps: jest.fn(), onOpenCollars: jest.fn(), onNewActivity: jest.fn(), onOpenHouseholds: jest.fn(), onOpenMap: jest.fn(), onOpenOutbox: jest.fn(), onOpenAbout: jest.fn() };
   await renderWithServices(<SyncContext.Provider value={state}><HomeScreen {...nav} /></SyncContext.Provider>, fakeServices({ db, now: () => NOW }));
   return { state, nav };
 }
@@ -153,4 +153,38 @@ test.each([
   await screen.findByRole("button", { name: "Sincronizar" });
   expect(screen.queryByText(/Imóveis a visitar/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Imóveis a visitar" })).toBeNull();
+});
+
+// 35b (Q23): the collars to replace are their own list in the animals area, only for who uses the zoonoses screens.
+// The home's day is 2026-11-14: the example's collar (2026-12-01) is not due yet, so the dog's date is brought forward.
+async function collarDue(db: Db): Promise<Db> {
+  await db.run("UPDATE animals SET body = json_set(body, '$.collar_due_on', '2026-11-20') WHERE key = ?", [ANIMAL]);
+  return db;
+}
+
+test("whoever uses zoonoses sees how many collars are due and opens the list", async () => {
+  const t = await mount(await collarDue(await zoonosesTablet()));
+  expect(await screen.findByText("Coleiras a trocar: 1")).toBeTruthy();
+  await fireEvent.press(screen.getByRole("button", { name: "Coleiras a trocar" }));
+  expect(t.nav.onOpenCollars).toHaveBeenCalledTimes(1);
+});
+
+test("without canUseZoonoses the home has neither the counter nor the button", async () => {
+  for (const db of [await zoonosesTablet({ zoonoses: false }), await zoonosesTablet({ cbo: "225125" }), await zoonosesTablet({ domains: null })]) {
+    await collarDue(db);
+    await mount(db);
+    await screen.findByRole("button", { name: "Sincronizar" });
+    expect(screen.queryByText(/Coleiras a trocar/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Coleiras a trocar" })).toBeNull();
+  }
+});
+
+test("the collar counter does not depend on the visit switch and does not touch Imóveis a visitar", async () => {
+  const db = await collarDue(await zoonosesTablet({ cbo: "515140" }));
+  const row = await db.get<{ body: string }>("SELECT body FROM session WHERE id = 1");
+  const session = JSON.parse(row!.body);
+  await db.run("UPDATE session SET body = ?", [JSON.stringify({ ...session, features: { ...session.features, home_visits: false } })]);
+  await mount(db);
+  expect(await screen.findByText("Coleiras a trocar: 1")).toBeTruthy();
+  expect(screen.queryByText(/Imóveis a visitar/)).toBeNull();
 });

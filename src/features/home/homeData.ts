@@ -6,7 +6,8 @@ import { formatCityDate, formatCityDateTime, needsClockWarning } from "../../syn
 import { loadReference, referenceNeedsAppUpdate } from "../../sync/reference";
 import { TERRITORY_MAX_DAYS, territoryAge } from "../../sync/retention";
 import { HIGH_WATER_KEY, trustedTime } from "../../sync/trustedTime";
-import { canRecordInspection, canUseOvitraps } from "../session";
+import { loadCollarsDue } from "../animals/collars";
+import { canRecordInspection, canUseOvitraps, canUseZoonoses } from "../session";
 import { loadDue } from "../vector/dueData";
 
 export interface HomeData {
@@ -28,6 +29,8 @@ export interface HomeData {
   vectorDue: number | null;
   // 35a: the ovitraps of the endemic agent with the switch on (canUseOvitraps); they are not inside the visit.
   ovitrapsOn: boolean;
+  // 35b (Q23): the collars to replace, its own list in the animals area; null for whoever does not use the zoonoses screens.
+  collarsDue: number | null;
 }
 
 const DAY_MS = 86_400_000;
@@ -53,6 +56,8 @@ export async function loadHome(db: Db, now: number): Promise<HomeData> {
   const reference = await loadReference(db).catch(() => null);
   const vectorDue = !visitsOff && canRecordInspection(session, reference) ? (await loadDue(db, now)).items.length : null;
 
+  const collarsDue = canUseZoonoses(session, reference) ? (await loadCollarsDue(db, now)).length : null;
+
   return {
     microAreas: (session?.teams ?? []).flatMap((team) => team.micro_areas.map((area) => ({ id: area.id, code: area.code, name: area.name }))),
     toVisit: who.reduce((sum, row) => sum + (JSON.parse(row.people) as unknown[]).length, 0),
@@ -66,5 +71,6 @@ export async function loadHome(db: Db, now: number): Promise<HomeData> {
     registryOn: session !== null && session.features.territory_registry === true,
     vectorDue,
     ovitrapsOn: canUseOvitraps(session),
+    collarsDue,
   };
 }
