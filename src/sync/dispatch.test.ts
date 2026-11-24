@@ -1,7 +1,7 @@
-import type { ChangesResponse, UploadItem, UploadResult } from "../contract";
+import type { ChangesResponse, UploadItem, UploadResponse, UploadResult } from "../contract";
 import { example } from "../contract/fixtures";
 import { collectOvitrap, installOvitrap } from "../features/ovitraps/save";
-import { placeCollar, saveAnimal, vaccinate } from "../features/animals/save";
+import { collectLeish, placeCollar, saveAnimal, vaccinate } from "../features/animals/save";
 import { pathLabel } from "../features/conflicts/fieldText";
 import { phraseForItem } from "../features/messages/errorPhrases";
 import { ZOONOSES_ERRORS, type ZoonosesErrorCode } from "../rules/zoonosesErrors";
@@ -13,7 +13,7 @@ import type { Db } from "../db/types";
 import { MAX_BATCH, applyResults, refreshBlocked, resolveVersion, selectBatch, sendQueue } from "./dispatch";
 import { applyPage } from "./download";
 import { FieldHttpError } from "./http";
-import { discardImpact, enqueue, recoverSending, resend } from "./outbox";
+import { discardImpact, enqueue, recoverSending, removeUnsent, resend } from "./outbox";
 import { SERVER_ID, accepted, exampleItems, fakeClient, insertHousehold, insertRegistration, newUuid, rejected } from "./testing";
 
 const VISIT = exampleItems("upload-home-visit-resident.json")[0];
@@ -575,5 +575,78 @@ describe("rabies vaccination and collar", () => {
       expect(phraseForItem(refused.error, refused)).toBe(ZOONOSES_ERRORS[code as ZoonosesErrorCode]);
       const words = { campaign_id: "Campanha", animal_id: "Animal", vaccinated_on: "Data da vacinação", placed_on: "Data da colocação" }[path];
       expect(pathLabel(refused.type, path)).toBe(words);
+    });
+});
+
+describe("leishmaniasis collection (Q21)", () => {
+  const SURVEY = "f1a2b3c4-d5e6-4f7a-8b8c-0d1e2f3a4b5c";
+  const LABEL = "LV-2026-AB12CD-0001";
+  const TODAY = "2026-11-24";
+  const collect = (db: Db, surveyId: string | null = SURVEY) => collectLeish(db, { animalKey: ANIMAL, surveyId, dppResult: null, today: TODAY, newUuid });
+  const line = (db: Db, uuid: string) =>
+    db.get<{ label: string | null; state: string; accepted_at: string | null }>("SELECT label, state, accepted_at FROM local_leish_collections WHERE client_uuid = ?", [uuid]);
+
+  test("accepted carries the api's label to the local line; nothing before", async () => {
+    const db = await zoonosesTablet({ cbo: "515140" });
+    const uuid = await collect(db);
+    expect(await line(db, uuid)).toEqual({ label: null, state: "pending", accepted_at: null });
+    const { client, batches } = fakeClient((items) => items.map((i) => accepted(i, { id: newUuid(), label: LABEL })));
+    await sendQueue({ db, client, ...noStale });
+    expect(byType(batches[0])).toEqual(["leish_collection"]);
+    expect(batches[0][0].body).not.toHaveProperty("label");
+    expect(await outboxRepo.count(db)).toBe(0);
+    expect(await line(db, uuid)).toMatchObject({ label: LABEL, state: "accepted" });
+    expect((await line(db, uuid))!.accepted_at).not.toBeNull();
+  });
+
+  test("duplicate on resend keeps the same label", async () => {
+    const db = await zoonosesTablet({ cbo: "515140" });
+    const uuid = await collect(db);
+    // The first answer is lost (the request fails after the server wrote it); the resend answers duplicate, same label.
+    const { client, batches } = fakeClient((items, call) => {
+      if (call === 1) throw new FieldHttpError({ kind: "network" });
+      return items.map((i) => ({ ...accepted(i, { id: newUuid(), label: LABEL }), status: "duplicate" as const }));
+    });
+    await sendQueue({ db, client, ...noStale });
+    expect(await line(db, uuid)).toMatchObject({ label: null, state: "pending" });
+    await sendQueue({ db, client, ...noStale });
+    expect(batches).toHaveLength(2);
+    expect(await line(db, uuid)).toMatchObject({ label: LABEL, state: "accepted" });
+  });
+
+  test("an answer without the label leaves the collection in the line: the resend brings it", async () => {
+    const db = await zoonosesTablet({ cbo: "515140" });
+    const uuid = await collect(db);
+    // Outside the contract (the label is required there), so not through fakeClient, which checks every answer.
+    let call = 0;
+    const client = { uploads: jest.fn(async (items: UploadItem[]) => {
+      call += 1;
+      return { results: items.map((i) => accepted(i, { id: newUuid(), ...(call === 1 ? {} : { label: "LV-2026-AVUL-0007" }) })) } as UploadResponse;
+    }) };
+    await sendQueue({ db, client, ...noStale });
+    expect(await states(db)).toEqual([["leish_collection", "pending"]]);
+    expect(await line(db, uuid)).toMatchObject({ label: null, state: "pending" });
+    await sendQueue({ db, client, ...noStale });
+    expect(await line(db, uuid)).toMatchObject({ label: "LV-2026-AVUL-0007", state: "accepted" });
+  });
+
+  test.each([["survey_not_open", "leish_survey_id"], ["household_not_in_survey", "leish_survey_id"], ["date_out_of_range", "collected_on"]])(
+    "server refusal %s at %s shows its phrase; Descartar removes item and line", async (code, path) => {
+      const db = await zoonosesTablet({ cbo: "515140" });
+      const uuid = await collect(db);
+      // The survey closed or left the agent's scope (out_of_scope, Q21) with the collection in the line: the item stays and goes.
+      await applyPage(db, { ...example<ChangesResponse>("changes-zoonoses-page.json"), items: [], removals: [{ type: "leish_survey", id: SURVEY, reason: "out_of_scope" }] } as ChangesResponse);
+      expect(await db.get("SELECT id FROM leish_surveys WHERE id = ?", [SURVEY])).toBeNull();
+      const { client, batches } = fakeClient((items) => items.map((i) => rejected(i, code, { path })));
+      await sendQueue({ db, client, ...noStale });
+      expect(batches[0][0].body).toMatchObject({ leish_survey_id: SURVEY });
+      const [refused] = await outboxRepo.all(db);
+      expect(refused).toMatchObject({ client_uuid: uuid, type: "leish_collection", state: "needs_attention", error: code, path });
+      expect(phraseForItem(refused.error, refused)).toBe(ZOONOSES_ERRORS[code as ZoonosesErrorCode]);
+      expect(pathLabel(refused.type, path)).toBe({ leish_survey_id: "Inquérito", collected_on: "Data da coleta" }[path]);
+      expect(await line(db, uuid)).toMatchObject({ label: null, state: "pending" });
+      await removeUnsent(db, uuid);
+      expect(await outboxRepo.count(db)).toBe(0);
+      expect(await line(db, uuid)).toBeNull();
     });
 });

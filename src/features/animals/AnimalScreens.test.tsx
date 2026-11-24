@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react-native";
-import type { UploadResponse } from "../../contract";
+import type { ChangesResponse, UploadResponse } from "../../contract";
 import { example } from "../../contract/fixtures";
 import { fakeServices, renderWithServices } from "../../app/testing";
 import { outboxRepo } from "../../db/repos/outboxRepo";
@@ -7,7 +7,11 @@ import type { Db } from "../../db/types";
 import { emptyAnimalDraft } from "../../rules/animal";
 import { ZOONOSES_ERRORS } from "../../rules/zoonosesErrors";
 import { handleStale } from "../../sync/stale";
-import { newUuid } from "../../sync/testing";
+import { sendQueue } from "../../sync/dispatch";
+import { applyPage } from "../../sync/download";
+import { accepted, fakeClient, insertHousehold, newUuid, rejected } from "../../sync/testing";
+import { zoonosesRepo } from "../../db/repos/zoonosesRepo";
+import { TodayScreen } from "../visits/TodayScreen";
 import { AttentionScreen } from "../attention/AttentionScreen";
 import { WAITING } from "../households/HouseholdList";
 import { HouseholdScreen } from "../households/HouseholdScreen";
@@ -15,7 +19,8 @@ import { ANIMAL, COMMUNITY_ANIMAL, HH, JOANA, bornResident, zoonosesTablet } fro
 import { OutboxScreen } from "../outbox/OutboxScreen";
 import { AnimalForm } from "./AnimalForm";
 import { CollarForm } from "./CollarForm";
-import { placeCollar, saveAnimal, vaccinate } from "./save";
+import { LeishCollectForm } from "./LeishCollectForm";
+import { collectLeish, placeCollar, saveAnimal, vaccinate } from "./save";
 import { EATAV_REMINDER, VaccinateForm } from "./VaccinateForm";
 
 const NOW = Date.parse("2026-11-24T15:00:00Z");
@@ -34,7 +39,7 @@ async function household(db: Db) {
   const nav = {
     onEdit: jest.fn(), onNewFamily: jest.fn(), onEditFamily: jest.fn(), onNewResident: jest.fn(), onStartVisit: jest.fn(), onOpenResident: jest.fn(),
     onInstallOvitrap: jest.fn(), onStartPropertyVisit: jest.fn(), onNewAnimal: jest.fn(), onEditAnimal: jest.fn(), onVaccinateAnimal: jest.fn(),
-    onCollarAnimal: jest.fn(),
+    onCollarAnimal: jest.fn(), onCollectAnimal: jest.fn(),
   };
   const view = await renderWithServices(<HouseholdScreen householdKey={HH} {...nav} />, services(db));
   await screen.findByText(/Microárea/, {}, FIRST);
@@ -293,4 +298,109 @@ test("a vaccine whose animal row is gone is still in the line, on Envio", async 
   await db.run("DELETE FROM animals WHERE key = ?", [ANIMAL]);
   await renderWithServices(<OutboxScreen onFix={jest.fn()} onResolve={jest.fn()} />, services(db));
   expect(await screen.findByText("Coleira", {}, FIRST)).toBeTruthy();
+});
+
+// ── Task 8: "Coletar sangue (LV)" and the label after acceptance (Q21) ──
+const SURVEY = "f1a2b3c4-d5e6-4f7a-8b8c-0d1e2f3a4b5c";
+const BORN_HH = "c0ffee70-0000-4000-8000-000000000070";
+const COLLECT = "Coletar sangue (LV)";
+const AFTER_SENDING = "Etiqueta depois de enviar";
+async function collectForm(db: Db, animalKey: string) {
+  const onSaved = jest.fn();
+  const view = await renderWithServices(<LeishCollectForm animalKey={animalKey} onSaved={onSaved} />, services(db));
+  await screen.findByTestId("field-leish_survey_id", {}, FIRST);
+  return { onSaved, unmount: () => view.unmount() };
+}
+
+test("515105 has no Coletar sangue (LV); a cat neither", async () => {
+  const db = await zoonosesTablet({ cbo: "515140" });
+  const cat = await born(db, "cat", "Mingau");
+  const nav = await household(db);
+  await screen.findByTestId(`animal-${cat}`);
+  expect(card(ANIMAL).getByRole("button", { name: COLLECT })).toBeTruthy();
+  expect(card(COMMUNITY_ANIMAL).getByRole("button", { name: COLLECT })).toBeTruthy();
+  expect(card(cat).queryByRole("button", { name: COLLECT })).toBeNull();
+  await fireEvent.press(card(ANIMAL).getByRole("button", { name: COLLECT }));
+  expect(nav.onCollectAnimal).toHaveBeenCalledWith(ANIMAL);
+  await nav.unmount();
+
+  // The ACS (515105) uses zoonoses but never collects; neither does the form open for one.
+  const acs = await zoonosesTablet({ cbo: "515105" });
+  const other = await household(acs);
+  await screen.findByTestId(`animal-${ANIMAL}`);
+  expect(screen.queryByRole("button", { name: COLLECT })).toBeNull();
+  await other.unmount();
+  await renderWithServices(<LeishCollectForm animalKey={ANIMAL} onSaved={jest.fn()} />, services(acs));
+  expect(await screen.findByText(ZOONOSES_ERRORS.cbo_not_allowed, {}, FIRST)).toBeTruthy();
+});
+
+test("surveys offered are the ones whose household_ids contain the household, plus Avulsa; a household born on the tablet gets only Avulsa", async () => {
+  const db = await zoonosesTablet({ cbo: "515140" });
+  await zoonosesRepo.putLeishSurvey(db, { id: "f1a2b3c4-d5e6-4f7a-8b8c-0d1e2f3a4b5d", version: 1, name: "Inquérito de outro bairro", kind: "census",
+    household_ids: ["9e0f1a2b-3c4d-4e5f-8a6b-7c8d9e0f1a2b"], starts_on: "2026-11-03", ends_on: "2026-12-12" });
+  const form = await collectForm(db, ANIMAL);
+  expect(screen.getByText("Cão · Pipoca")).toBeTruthy();
+  expect(options("leish_survey_id")).toEqual(["Avulsa", "Inquérito LV Vila Nova 2026"]);
+  // Avulsa comes chosen, as the dashboard's "sem inquérito".
+  expect(field("leish_survey_id").getByRole("radio", { name: "Avulsa" }).props.accessibilityState.checked).toBe(true);
+  // TR-DPP optional, with the reference's labels.
+  expect(options("dpp_result")).toEqual(["Reagente", "Não reagente", "Inválido"]);
+  await choose("leish_survey_id", "Inquérito LV Vila Nova 2026");
+  await choose("dpp_result", "Reagente");
+  await press(COLLECT);
+  await waitFor(() => expect(form.onSaved).toHaveBeenCalledTimes(1));
+  const [item] = await careItems(db, "leish_collection");
+  expect(item.body).toEqual({ leish_survey_id: SURVEY, animal_id: ANIMAL, collected_on: "2026-11-24", dpp_result: "reactive", dpp_on: "2026-11-24" });
+  await form.unmount();
+
+  // A household born on the tablet has no server id: no survey lists it.
+  await insertHousehold(db, BORN_HH, { id: null });
+  await db.run("UPDATE households SET client_uuid = ? WHERE key = ?", [BORN_HH, BORN_HH]);
+  const dog = await saveAnimal(db, { householdKey: BORN_HH, draft: { ...emptyAnimalDraft(), species: "dog", sex: "male", name: "Rex" }, newUuid });
+  const bornForm = await collectForm(db, dog);
+  expect(options("leish_survey_id")).toEqual(["Avulsa"]);
+  await press(COLLECT);
+  await waitFor(() => expect(bornForm.onSaved).toHaveBeenCalledTimes(1));
+  const [, stray] = await careItems(db, "leish_collection");
+  expect(stray.body).toEqual({ animal_client_uuid: dog, collected_on: "2026-11-24" });
+});
+
+test("no label before acceptance: Etiqueta depois de enviar, in the animal card and in Hoje", async () => {
+  const db = await zoonosesTablet({ cbo: "515140" });
+  const uuid = await collectLeish(db, { animalKey: ANIMAL, surveyId: SURVEY, dppResult: null, today: "2026-11-24", newUuid });
+  const nav = await household(db);
+  await screen.findByTestId(`animal-${ANIMAL}`);
+  expect(card(ANIMAL).getByText(AFTER_SENDING)).toBeTruthy();
+  expect(screen.queryByText(/^Etiqueta: /)).toBeNull();
+  await nav.unmount();
+  const today = await renderWithServices(<TodayScreen onNewVisit={jest.fn()} />, services(db));
+  const line = within(await screen.findByTestId(`collection-${uuid}`, {}, FIRST));
+  expect(line.getByText("Coleta de sangue (LV) · Pipoca")).toBeTruthy();
+  expect(line.getByText(AFTER_SENDING)).toBeTruthy();
+  expect(screen.queryByText(/^Etiqueta: /)).toBeNull();
+  await today.unmount();
+
+  // Accepted: the card shows the api's label.
+  const { client } = fakeClient((items) => items.map((i) => accepted(i, { id: newUuid(), label: "LV-2026-F1A2B3-0001" })));
+  await sendQueue({ db, client, onStale: async () => undefined });
+  await household(db);
+  await screen.findByTestId(`animal-${ANIMAL}`);
+  expect(card(ANIMAL).getByText("Etiqueta: LV-2026-F1A2B3-0001")).toBeTruthy();
+  expect(screen.queryByText(AFTER_SENDING)).toBeNull();
+});
+
+test("a collection refused after its survey left the tablet needs attention with the phrase and Descartar", async () => {
+  const db = await zoonosesTablet({ cbo: "515140" });
+  await collectLeish(db, { animalKey: ANIMAL, surveyId: SURVEY, dppResult: null, today: "2026-11-24", newUuid });
+  await applyPage(db, { ...example<ChangesResponse>("changes-zoonoses-page.json"), items: [], removals: [{ type: "leish_survey", id: SURVEY, reason: "out_of_scope" }] });
+  const { client } = fakeClient((items) => items.map((i) => rejected(i, "survey_not_open", { path: "leish_survey_id" })));
+  await sendQueue({ db, client, onStale: async () => undefined });
+  const [item] = await outboxRepo.all(db);
+  await renderWithServices(<AttentionScreen seq={item.seq} onFix={jest.fn()} onOpenRegistration={jest.fn()} onDone={jest.fn()} />, services(db));
+  expect(await screen.findByText(ZOONOSES_ERRORS.survey_not_open, {}, FIRST)).toBeTruthy();
+  expect(screen.getByText("Campo: Inquérito")).toBeTruthy();
+  await press("Descartar");
+  await press("Confirmar descarte");
+  await waitFor(async () => expect(await outboxRepo.count(db)).toBe(0));
+  expect(await db.get("SELECT client_uuid FROM local_leish_collections")).toBeNull();
 });

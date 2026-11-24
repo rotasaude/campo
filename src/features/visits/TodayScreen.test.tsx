@@ -5,11 +5,12 @@ import type { Db } from "../../db/types";
 import { createVisitRules, emptyVisitDraft, type VisitDraft } from "../../rules/homeVisit";
 import { createRegistryRules } from "../../rules/registry";
 import { registrationDictionaries } from "../../rules/testing/dictionaries";
-import { applyResults } from "../../sync/dispatch";
+import { applyResults, sendQueue } from "../../sync/dispatch";
 import type { VectorInspectionBody } from "../../contract";
-import { accepted, newUuid, rejected } from "../../sync/testing";
+import { accepted, fakeClient, newUuid, rejected } from "../../sync/testing";
+import { collectLeish } from "../animals/save";
 import { relabelVisit } from "./relabel";
-import { AREA, HH, loadedTablet } from "../testing";
+import { ANIMAL, AREA, HH, loadedTablet, zoonosesTablet } from "../testing";
 import { NOT_SENT_WILL_BE_ERASED, saveVisit } from "./save";
 import { NO_VISITS_TODAY, TodayScreen } from "./TodayScreen";
 
@@ -155,4 +156,26 @@ test("reopening the app keeps the line: read again from the database", async () 
   expect(screen.queryByText(/Etiquete os tubitos/)).toBeNull();
   await mount(db);
   expect(await screen.findByText("Etiquete os tubitos: 3F2A9C1E-01, 3F2A9C1E-02")).toBeTruthy();
+});
+
+// 35b (Q21): the blood collections of today, with the api's label once accepted.
+test("accepted with label LV-2026-AB12CD-0001 shows it in Hoje after the screen was closed", async () => {
+  const db = await zoonosesTablet({ cbo: "515140" });
+  const services = fakeServices({ db, now: () => Date.parse("2026-11-24T15:00:00Z") });
+  const uuid = await collectLeish(db, { animalKey: ANIMAL, surveyId: null, dppResult: null, today: "2026-11-24", newUuid });
+  // One of yesterday is not today's.
+  await collectLeish(db, { animalKey: ANIMAL, surveyId: null, dppResult: null, today: "2026-11-23", newUuid });
+  const first = await renderWithServices(<TodayScreen onNewVisit={jest.fn()} />, services);
+  expect(within(await screen.findByTestId(`collection-${uuid}`)).getByText("Etiqueta depois de enviar")).toBeTruthy();
+  expect(screen.getAllByTestId(/^collection-/)).toHaveLength(1);
+  await first.unmount();
+
+  // Sent with the screen closed.
+  const { client } = fakeClient((items) => items.map((i) => accepted(i, { id: newUuid(), label: "LV-2026-AB12CD-0001" })));
+  await sendQueue({ db, client, onStale: async () => undefined });
+  await renderWithServices(<TodayScreen onNewVisit={jest.fn()} />, services);
+  const line = within(await screen.findByTestId(`collection-${uuid}`));
+  expect(line.getByText("Etiqueta: LV-2026-AB12CD-0001")).toBeTruthy();
+  expect(line.getByText("Coleta de sangue (LV) · Pipoca")).toBeTruthy();
+  expect(screen.queryByText("Etiqueta depois de enviar")).toBeNull();
 });

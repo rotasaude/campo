@@ -12,12 +12,14 @@
 // - Vaccine and collar (Task 7): an item of their own, never an edit of the animal. The animal goes by animal_id, or by
 //   animal_client_uuid with a `cite` while its creation is in the line (Review Focus 2). They change nothing on the row:
 //   its dates show the line on top (view.ts), and an acceptance writes them without a new version (Q29 of 35a).
+// - Blood collection (Task 8, Q21): an item of its own, the animal named as the vaccine names it, and a line of
+//   local_leish_collections in the same transaction. The label is the api's: it comes with the acceptance, never here.
 import { dbEvents } from "../../db/events";
 import { outboxRepo } from "../../db/repos/outboxRepo";
 import { applyAnimalItem, tutorOf, zoonosesRepo } from "../../db/repos/zoonosesRepo";
 import type { Db } from "../../db/types";
 import type { AnimalDraft } from "../../rules/animal";
-import type { AnimalStatus } from "../../rules/zoonosesDomains";
+import type { AnimalStatus, DppResult } from "../../rules/zoonosesDomains";
 import { coalesceOrEnqueue, enqueue, type Dep, type OutboxItem } from "../../sync/outbox";
 import { loadReference } from "../../sync/reference";
 import { blankAnimal, readAnimal, type EditBase } from "./view";
@@ -197,5 +199,34 @@ export async function placeCollar(db: Db, input: PlaceCollarInput): Promise<stri
     return (await enqueue(tx, { type: "collar", body, deps }, input.newUuid)).client_uuid;
   });
   dbEvents.emit("outbox");
+  return uuid;
+}
+
+export interface CollectLeishInput {
+  animalKey: string;
+  // null: "Avulsa", without leish_survey_id.
+  surveyId: string | null;
+  // The TR-DPP read at the collection, or null; its date is the collection's (Q20: they go together).
+  dppResult: DppResult | null;
+  // The city's day (cityTodayOf).
+  today: string;
+  newUuid(): string;
+}
+
+// "Coletar sangue (LV)" (§11, Q21): the survey by its id, or none (avulsa); dpp_result and dpp_on together or neither.
+export async function collectLeish(db: Db, input: CollectLeishInput): Promise<string> {
+  const uuid = await db.tx(async (tx) => {
+    const { ref, deps } = await animalRefOf(tx, input.animalKey, await outboxRepo.all(tx));
+    const body = {
+      ...(input.surveyId !== null ? { leish_survey_id: input.surveyId } : {}),
+      ...ref, collected_on: input.today,
+      ...(input.dppResult !== null ? { dpp_result: input.dppResult, dpp_on: input.today } : {}),
+    };
+    const item = await enqueue(tx, { type: "leish_collection", body, deps }, input.newUuid);
+    await zoonosesRepo.putCollection(tx, { clientUuid: item.client_uuid, animalKey: input.animalKey, cityDay: input.today });
+    return item.client_uuid;
+  });
+  dbEvents.emit("outbox");
+  dbEvents.emit("local_leish_collections");
   return uuid;
 }

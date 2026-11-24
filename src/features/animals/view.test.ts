@@ -8,8 +8,8 @@ import { ANIMAL_TABLES, readAnimal, readAnimals } from "./view";
 const CHIP = "985141000123456";
 const draft = (over: Partial<AnimalDraft> = {}): AnimalDraft => ({ ...emptyAnimalDraft(), species: "dog", sex: "female", ...over });
 
-test("ANIMAL_TABLES are the animals and the line", () => {
-  expect(ANIMAL_TABLES).toEqual(["animals", "outbox"]);
+test("ANIMAL_TABLES are the animals, the line and the collections", () => {
+  expect(ANIMAL_TABLES).toEqual(["animals", "outbox", "local_leish_collections"]);
 });
 
 test("the household's animals as the download brought them, by name", async () => {
@@ -18,7 +18,7 @@ test("the household's animals as the download brought them, by name", async () =
   expect(views.map((v) => v.key)).toEqual([COMMUNITY_ANIMAL, ANIMAL]);
   expect(views[1]).toEqual({
     key: ANIMAL, id: ANIMAL, species: "dog", name: "Pipoca", sexLabel: "Fêmea", status: "active", tutorName: "Joana Conceição", community: false,
-    hasMicrochip: true, lastVaccinationOn: "2026-11-21", collarDueOn: "2026-12-01", waiting: false, held: null,
+    hasMicrochip: true, lastVaccinationOn: "2026-11-21", collarDueOn: "2026-12-01", waiting: false, held: null, collections: [],
   });
   expect(views[0]).toMatchObject({ name: null, tutorName: null, community: true, hasMicrochip: false });
   expect(await readAnimals(db, "another-household")).toEqual([]);

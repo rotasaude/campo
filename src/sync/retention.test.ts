@@ -3,7 +3,13 @@ import { createTestDb } from "../db/testing/sqljsDb";
 import type { Db } from "../db/types";
 import { enqueue } from "./outbox";
 import { TERRITORY_MAX_DAYS, TERRITORY_WARN_DAY, enforceTerritoryAge, purgeAccepted, territoryAge, validityBand } from "./retention";
-import { newUuid } from "./testing";
+import type { ChangesResponse } from "../contract";
+import { example } from "../contract/fixtures";
+import { collectLeish } from "../features/animals/save";
+import { ANIMAL, zoonosesTablet } from "../features/testing";
+import { sendQueue } from "./dispatch";
+import { applyPage } from "./download";
+import { accepted, fakeClient, newUuid } from "./testing";
 
 const DAY = 86_400_000;
 const LAST = "2026-10-01T12:00:00.000Z";
@@ -105,4 +111,26 @@ test("accepted visits from yesterday are purged, today's stay", async () => {
     .toEqual(["t-accepted", "y-pending"]);
   expect((await db.all<{ client_uuid: string }>("SELECT client_uuid FROM local_activities ORDER BY client_uuid")).map((r) => r.client_uuid))
     .toEqual(["a-old-pending", "a-today"]);
+});
+
+test("the Q42 restart keeps the label; the next day's purge takes it", async () => {
+  const db = await zoonosesTablet({ cbo: "515140" });
+  const collect = () => collectLeish(db, { animalKey: ANIMAL, surveyId: null, dppResult: null, today: "2026-11-24", newUuid });
+  const sent = await collect();
+  const { client } = fakeClient((items) => items.map((i) => accepted(i, { id: newUuid(), label: "LV-2026-AVUL-0007" })));
+  await sendQueue({ db, client, onStale: async () => undefined });
+  const waiting = await collect();
+  const lines = () => db.all<{ client_uuid: string; label: string | null; state: string }>(
+    "SELECT client_uuid, label, state FROM local_leish_collections ORDER BY rowid");
+
+  // The first page of a download begun without a cursor (Q42): the territory starts over, the collections stay.
+  await applyPage(db, example<ChangesResponse>("changes-zoonoses-page.json"), { startsOver: true });
+  expect(await lines()).toEqual([
+    { client_uuid: sent, label: "LV-2026-AVUL-0007", state: "accepted" }, { client_uuid: waiting, label: null, state: "pending" },
+  ]);
+  // Same day: nothing goes. The next day: the accepted one goes, as the visits; the one not sent stays.
+  await purgeAccepted(db, "2026-11-24");
+  expect(await lines()).toHaveLength(2);
+  await purgeAccepted(db, "2026-11-25");
+  expect(await lines()).toEqual([{ client_uuid: waiting, label: null, state: "pending" }]);
 });

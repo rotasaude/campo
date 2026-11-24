@@ -6,6 +6,7 @@
 // Never the number of the microchip: the row has only has_microchip, and so does every view (§16).
 // The vaccine and the collar in the line (Task 7) go on top of the dates: the vaccine puts its vaccinated_on, the collar
 // placed_on + collar_months (the api's due_on). They count as something of the animal waiting, and refused, held.
+// The blood collections (Task 8) count the same, and each shows its label only once the api gave it (Q21).
 import type { AnimalBody } from "../../contract";
 import { outboxRepo, type OutboxItem } from "../../db/repos/outboxRepo";
 import { territoryRepo } from "../../db/repos/territoryRepo";
@@ -23,6 +24,8 @@ export interface AnimalView {
   lastVaccinationOn: string | null; collarDueOn: string | null;
   // Something of it is still in the line; and whether it waits for the person (refused) or behind one that does.
   waiting: boolean; held: "needs_attention" | "blocked" | null;
+  // The collections made on this tablet (local_leish_collections), in order: the label is null until the acceptance.
+  collections: { clientUuid: string; label: string | null }[];
 }
 
 export interface EditBase { version: number; body: Record<string, unknown> }
@@ -31,7 +34,7 @@ export interface EditBase { version: number; body: Record<string, unknown> }
 // (Q41: the form keeps it from the moment it opened). `creating`: born here and not accepted yet — no situation yet.
 export interface AnimalEditView { key: string; id: string | null; householdKey: string; body: AnimalBody; base: EditBase | null; creating: boolean }
 
-export const ANIMAL_TABLES = ["animals", "outbox"];
+export const ANIMAL_TABLES = ["animals", "outbox", "local_leish_collections"];
 
 // The record as the screens read it while only the tablet has it.
 export const blankAnimal = (id: string, householdId: string): AnimalBody => ({
@@ -42,10 +45,10 @@ export const blankAnimal = (id: string, householdId: string): AnimalBody => ({
 const mineOf = (queue: OutboxItem[], key: string) => queue.filter((item) => item.type === "animal" && item.target_id === key);
 const changedAtStation = (item: OutboxItem) => item.state === "needs_attention" && item.error === ANIMAL_CHANGED;
 
-// The vaccines and collars in the line that name this animal: by its server id or its local key (animal_id), or by the
+// The vaccines, collars and collections in the line that name this animal: by its server id or its local key (animal_id), or by the
 // client_uuid it was born under (animal_client_uuid).
 const careOf = (queue: OutboxItem[], names: { key: string; id: string | null; client_uuid: string | null }) => queue.filter((item) => {
-  if (item.type !== "rabies_vaccination" && item.type !== "collar") return false;
+  if (item.type !== "rabies_vaccination" && item.type !== "collar" && item.type !== "leish_collection") return false;
   const { animal_id: id, animal_client_uuid: born } = item.body;
   return (typeof id === "string" && (id === names.id || id === names.key)) || (typeof born === "string" && (born === names.key || born === names.client_uuid));
 });
@@ -81,10 +84,12 @@ export async function readAnimals(db: Db, householdKey: string): Promise<AnimalV
     const care = careOf(queue, row);
     const mine = [...own, ...care];
     const body = withCare(await onTop(db, row.body, own), care, domains?.parameters.collar_months ?? null);
+    const collections = await zoonosesRepo.collectionsOf(db, [row.key, ...(row.id ? [row.id] : []), ...(row.client_uuid ? [row.client_uuid] : [])]);
     views.push({
       key: row.key, id: row.id, species: body.species, name: body.name, sexLabel: sexes.find((sex) => sex.code === body.sex)?.label ?? body.sex,
       status: body.status, tutorName: body.tutor?.display_name || null, community: body.community, hasMicrochip: body.has_microchip,
       lastVaccinationOn: body.last_rabies_vaccination_on, collarDueOn: body.collar_due_on, waiting: mine.length > 0, held: heldOf(mine),
+      collections: collections.map((c) => ({ clientUuid: c.client_uuid, label: c.state === "accepted" ? c.label : null })),
     });
   }
   return views;
@@ -116,4 +121,19 @@ export async function readAnimal(db: Db, key: string): Promise<AnimalEditView | 
     key, id: String(edit.body.animal_id), householdKey, body: withCare(await onTop(db, based, mine), care(String(edit.body.animal_id)), collarMonths),
     base: edit.edit_base_version === null || edit.edit_base_body === null ? null : { version: edit.edit_base_version, body: edit.edit_base_body }, creating: false,
   };
+}
+
+export interface TodayCollection { clientUuid: string; animalName: string | null; label: string | null }
+
+// "Hoje" (Q21): the collections of the city's day, in the order they were made, each with the animal's name as the line
+// leaves it and the api's label once accepted. The line survives the screen and the Q42 restart; the purge of the next
+// day takes the accepted ones (retention.ts).
+export async function todayCollections(db: Db, cityDay: string): Promise<TodayCollection[]> {
+  const rows = await db.all<{ client_uuid: string; animal_key: string; label: string | null; state: string }>(
+    "SELECT client_uuid, animal_key, label, state FROM local_leish_collections WHERE city_day = ? ORDER BY rowid", [cityDay]);
+  const out: TodayCollection[] = [];
+  for (const row of rows) {
+    out.push({ clientUuid: row.client_uuid, animalName: (await readAnimal(db, row.animal_key))?.body.name ?? null, label: row.state === "accepted" ? row.label : null });
+  }
+  return out;
 }

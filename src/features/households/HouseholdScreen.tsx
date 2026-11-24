@@ -91,11 +91,11 @@ async function read(db: Db, key: string, now: number): Promise<Loaded | "missing
 
 export function HouseholdScreen({
   householdKey, onEdit, onNewFamily, onEditFamily, onNewResident, onStartVisit, onOpenResident, onInstallOvitrap, onStartPropertyVisit, onNewAnimal, onEditAnimal,
-  onVaccinateAnimal, onCollarAnimal,
+  onVaccinateAnimal, onCollarAnimal, onCollectAnimal,
 }: {
   householdKey: string; onEdit(): void; onNewFamily(): void; onEditFamily(familyId: string): void; onInstallOvitrap(): void;
   onStartPropertyVisit(params: DueVisitParams): void; onNewAnimal(): void; onEditAnimal(animalKey: string): void;
-  onVaccinateAnimal(animalKey: string): void; onCollarAnimal(animalKey: string): void;
+  onVaccinateAnimal(animalKey: string): void; onCollarAnimal(animalKey: string): void; onCollectAnimal(animalKey: string): void;
   // `familyId`: the family the new resident enters; null for somebody outside any family (or the head of one yet to be registered).
   onNewResident(familyId: string | null): void; onStartVisit(start: VisitStart): void; onOpenResident(registrationKey: string): void;
 }) {
@@ -160,7 +160,8 @@ export function HouseholdScreen({
         </View>
       ))}
       {data.canEdit && <Button label="Novo morador" variant="secondary" onPress={() => onNewResident(null)} />}
-      {data.animals && <AnimalSection householdKey={view.key} onNew={onNewAnimal} onEdit={onEditAnimal} onVaccinate={onVaccinateAnimal} onCollar={onCollarAnimal} />}
+      {data.animals && <AnimalSection householdKey={view.key} onNew={onNewAnimal} onEdit={onEditAnimal} onVaccinate={onVaccinateAnimal} onCollar={onCollarAnimal}
+        onCollect={onCollectAnimal} />}
       <Muted>{AT_THE_DASHBOARD}</Muted>
     </Screen>
   );

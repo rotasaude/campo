@@ -30,13 +30,16 @@ export async function enforceTerritoryAge(db: Db, deviceNow: number): Promise<bo
   return true;
 }
 
-// Visits and activities the server already has, of days before the city's today (decision 27). A withdrawn visit
-// goes the same way. What is still pending stays: it is the only record the person has of it.
+// Visits, activities and blood collections (35b, Q21: with their label) the server already has, of days before the
+// city's today (decision 27). A withdrawn visit goes the same way. What is still pending stays: it is the only record the
+// person has of it.
 export async function purgeAccepted(db: Db, cityToday: string): Promise<void> {
   await db.run("DELETE FROM local_visits WHERE state IN ('accepted', 'withdrawn') AND city_day < ?", [cityToday]);
   await db.run("DELETE FROM local_activities WHERE state = 'accepted' AND held_on < ?", [cityToday]);
+  await db.run("DELETE FROM local_leish_collections WHERE state = 'accepted' AND city_day < ?", [cityToday]);
   dbEvents.emit("local_visits");
   dbEvents.emit("local_activities");
+  dbEvents.emit("local_leish_collections");
 }
 
 const pad = (n: number, size = 2) => String(n).padStart(size, "0");

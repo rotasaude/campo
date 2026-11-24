@@ -2,6 +2,7 @@
 // whatever its version (Q20): the api re-emits an animal with the same version when its last rabies vaccination or its
 // collar due date changes (Q29 of 35a). The animal's end comes by the removal (out_of_scope, Q21); a status other than
 // "active" is a defence, never the normal way out. The microchip number is never here, only has_microchip (§16).
+// The blood collections made here (local_leish_collections) wait for their label, which only the acceptance brings (Q21).
 import type { AnimalBody, LeishSurveyBody } from "../../contract";
 import type { Db } from "../types";
 import { territoryRepo } from "./territoryRepo";
@@ -16,6 +17,8 @@ export interface AnimalRow {
   version: number | null;
   body: AnimalBody;
 }
+
+export interface LeishCollectionRow { client_uuid: string; label: string | null; state: "pending" | "accepted" }
 
 const collator = new Intl.Collator("pt-BR", { sensitivity: "base" });
 
@@ -146,6 +149,27 @@ export const zoonosesRepo = {
 
   async removeLeishSurvey(db: Db, id: string): Promise<void> {
     await db.run("DELETE FROM leish_surveys WHERE id = ?", [id]);
+  },
+
+  // The blood collection made on the tablet (Q21): its line for the card and for "Hoje", without a label until the
+  // acceptance. `animalKey` is the animal's local key when it was collected.
+  async putCollection(db: Db, input: { clientUuid: string; animalKey: string; cityDay: string }): Promise<void> {
+    await db.run("INSERT INTO local_leish_collections (client_uuid, animal_key, city_day, label, state) VALUES (?, ?, ?, NULL, 'pending')",
+      [input.clientUuid, input.animalKey, input.cityDay]);
+  },
+
+  // Accepted or duplicate: the label is the api's, as it came (Q21). A line the reset erased stays erased.
+  async acceptLeishCollection(db: Db, clientUuid: string, label: string): Promise<void> {
+    await db.run("UPDATE local_leish_collections SET label = ?, state = 'accepted', accepted_at = ? WHERE client_uuid = ?",
+      [label, new Date().toISOString(), clientUuid]);
+  },
+
+  // The collections of an animal, by any of the keys it has had (the server id, the client_uuid it was born under), in
+  // the order they were made.
+  async collectionsOf(db: Db, animalKeys: string[]): Promise<LeishCollectionRow[]> {
+    const keys = [...new Set(animalKeys)];
+    if (keys.length === 0) return [];
+    return db.all<LeishCollectionRow>(`SELECT client_uuid, label, state FROM local_leish_collections WHERE animal_key IN (${keys.map(() => "?").join(", ")}) ORDER BY rowid`, keys);
   },
 
   // By name without case, then by key; an animal without a name (a community one) goes by the empty name.

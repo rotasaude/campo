@@ -81,6 +81,9 @@ export async function refreshBlocked(db: Db): Promise<void> {
 export type ApplySignal = { stop: "rate_limited" | null; progressed: boolean; deferred: string[] };
 export interface ApplyHooks { onStale(item: OutboxItem, result: UploadResult): Promise<void> }
 
+// The collection's label as the api gives it (upload-response-v1.json, Q21).
+const LEISH_LABEL = /^LV-[0-9]{4}-([0-9A-F]{6}|AVUL)-[0-9]{4,6}$/;
+
 const VERSIONED = new Set(["household", "family", "individual_registration", "animal"]);
 
 async function accept(db: Db, item: OutboxItem, result: UploadResult): Promise<void> {
@@ -109,6 +112,10 @@ async function accept(db: Db, item: OutboxItem, result: UploadResult): Promise<v
     // The animal's row shows the vaccine until the download brings the animal (Q20); its version does not move.
     await zoonosesRepo.acceptVaccination(db, item.body);
     dbEvents.emit("animals");
+  } else if (item.type === "leish_collection") {
+    // The label is the api's, on accepted and on duplicate alike (Q21): the tablet never makes one up.
+    if (typeof result.label === "string") await zoonosesRepo.acceptLeishCollection(db, item.client_uuid, result.label);
+    dbEvents.emit("local_leish_collections");
   } else if (item.type === "collar") {
     // The answer has no due date: the reference's collar_months gives it. Without them the download brings it.
     const months = (await loadReference(db).catch(() => null))?.zoonosesDomains?.parameters.collar_months;
@@ -180,7 +187,10 @@ export async function applyResults(db: Db, sent: OutboxItem[], results: UploadRe
     // The verdict of each item: its uuid, type and code. Never the path, the candidates or anything of the body.
     log("sync.item.result", { client_uuid: item.client_uuid, type: item.type, code: result.status === "rejected" ? (result.error ?? "rejected") : result.status });
 
-    if (result.status === "accepted" || result.status === "duplicate") {
+    if ((result.status === "accepted" || result.status === "duplicate") && item.type === "leish_collection" && !LEISH_LABEL.test(result.label ?? "")) {
+      // Accepted without its label (the contract requires it): kept in the line, the resend answers duplicate with it.
+      await back(item);
+    } else if (result.status === "accepted" || result.status === "duplicate") {
       await db.tx((tx) => accept(tx, item, result));
       signal.progressed = true;
     } else if (result.status === "stale_version") {

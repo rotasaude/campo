@@ -3,10 +3,10 @@ import { expectValid } from "../../contract/validate";
 import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
 import { emptyAnimalDraft, type AnimalDraft } from "../../rules/animal";
-import { enqueue } from "../../sync/outbox";
+import { enqueue, removeUnsent } from "../../sync/outbox";
 import { insertHousehold, newUuid } from "../../sync/testing";
 import { ANIMAL, HH, JOANA, bornResident, zoonosesTablet } from "../testing";
-import { placeCollar, saveAnimal, vaccinate } from "./save";
+import { collectLeish, placeCollar, saveAnimal, vaccinate } from "./save";
 import { readAnimal } from "./view";
 
 const CHIP = "985141000123456";
@@ -262,4 +262,58 @@ test("without an open campaign nothing is queued", async () => {
   await db.run("UPDATE reference SET body = json_set(body, '$.zoonoses_domains.open_campaign', json('null'))");
   await expect(vaccinate(db, vaccine(ANIMAL))).rejects.toThrow();
   expect(await careItems(db)).toEqual([]);
+});
+
+// ── Task 8: the blood collection of the leishmaniasis survey (Q21) ──
+const SURVEY = "f1a2b3c4-d5e6-4f7a-8b8c-0d1e2f3a4b5c";
+const leishItems = async (db: Db) => (await outboxRepo.all(db)).filter((item) => item.type === "leish_collection");
+const lines = (db: Db) => db.all<{ client_uuid: string; animal_key: string; city_day: string; label: string | null; state: string; accepted_at: string | null }>(
+  "SELECT client_uuid, animal_key, city_day, label, state, accepted_at FROM local_leish_collections ORDER BY rowid");
+
+test("collection by 515140 of a dog born offline cites animal_client_uuid; body validates", async () => {
+  const db = await zoonosesTablet({ cbo: "515140" });
+  const key = await saveAnimal(db, { householdKey: HH, draft: draft({ name: "Rex" }), newUuid });
+  const uuid = await collectLeish(db, { animalKey: key, surveyId: SURVEY, dppResult: "reactive", today: TODAY, newUuid });
+  const stray = await collectLeish(db, { animalKey: ANIMAL, surveyId: null, dppResult: null, today: TODAY, newUuid });
+  const [inSurvey, avulsa] = await leishItems(db);
+  expect(inSurvey).toMatchObject({ client_uuid: uuid, target_id: null, depends_on: [{ client_uuid: key, kind: "cite" }] });
+  expect(inSurvey.body).toEqual({ leish_survey_id: SURVEY, animal_client_uuid: key, collected_on: TODAY, dpp_result: "reactive", dpp_on: TODAY });
+  // Avulsa: no leish_survey_id; the server's animal by its id, nothing to wait for.
+  expect(avulsa).toMatchObject({ client_uuid: stray, depends_on: [] });
+  expect(avulsa.body).toEqual({ animal_id: ANIMAL, collected_on: TODAY });
+  // Never a label in the body: it is the api's, given on acceptance (Q21).
+  for (const item of [inSurvey, avulsa]) expect(item.body).not.toHaveProperty("label");
+  expectValid("upload-request", { items: [inSurvey, avulsa].map((item) => ({ client_uuid: item.client_uuid, type: item.type, body: item.body })) });
+  // The local line, without a label until the acceptance.
+  expect(await lines(db)).toEqual([
+    { client_uuid: uuid, animal_key: key, city_day: TODAY, label: null, state: "pending", accepted_at: null },
+    { client_uuid: stray, animal_key: ANIMAL, city_day: TODAY, label: null, state: "pending", accepted_at: null },
+  ]);
+  // The animal's own item and row are not touched.
+  expect((await animalItems(db))[0].body).not.toHaveProperty("collected_on");
+});
+
+test("dpp_result and dpp_on go together or not at all", async () => {
+  const db = await zoonosesTablet({ cbo: "515140" });
+  await collectLeish(db, { animalKey: ANIMAL, surveyId: SURVEY, dppResult: "non_reactive", today: TODAY, newUuid });
+  await collectLeish(db, { animalKey: ANIMAL, surveyId: SURVEY, dppResult: null, today: TODAY, newUuid });
+  const [withDpp, without] = await leishItems(db);
+  expect(withDpp.body).toMatchObject({ dpp_result: "non_reactive", dpp_on: TODAY });
+  expect(without.body).not.toHaveProperty("dpp_result");
+  expect(without.body).not.toHaveProperty("dpp_on");
+  expectValid("upload-request", { items: [withDpp, without].map((item) => ({ client_uuid: item.client_uuid, type: item.type, body: item.body })) });
+});
+
+test("discarding the collection deletes its local line", async () => {
+  const db = await zoonosesTablet({ cbo: "515140" });
+  const kept = await collectLeish(db, { animalKey: ANIMAL, surveyId: null, dppResult: null, today: TODAY, newUuid });
+  const gone = await collectLeish(db, { animalKey: ANIMAL, surveyId: SURVEY, dppResult: null, today: TODAY, newUuid });
+  await removeUnsent(db, gone);
+  expect((await leishItems(db)).map((item) => item.client_uuid)).toEqual([kept]);
+  expect((await lines(db)).map((line) => line.client_uuid)).toEqual([kept]);
+  // Discarding the animal born here takes its collection and the collection's line (doomedBy).
+  const key = await saveAnimal(db, { householdKey: HH, draft: draft({ name: "Rex" }), newUuid });
+  await collectLeish(db, { animalKey: key, surveyId: null, dppResult: null, today: TODAY, newUuid });
+  await removeUnsent(db, key);
+  expect((await lines(db)).map((line) => line.client_uuid)).toEqual([kept]);
 });
