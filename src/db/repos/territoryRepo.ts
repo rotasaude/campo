@@ -11,7 +11,7 @@ import { applyFamilyItem, applyHouseholdFields, applyRegistrationFields, househo
 import { normalizeText } from "../../sync/text";
 import { dbEvents } from "../events";
 import type { Db } from "../types";
-import { QUEUED_OVITRAP } from "./queued";
+import { QUEUED_ANIMAL, QUEUED_OVITRAP } from "./queued";
 
 type Table = "households" | "registrations";
 const CLIENT_TYPE: Record<Table, string> = { households: "household", registrations: "individual_registration" };
@@ -140,11 +140,12 @@ export const territoryRepo = {
   },
 
   // A household that left the scope takes its families, the registrations filed under it, its ovitraps (but the one
-  // the queue still installs or collects) and its LIRAa items (Q11). Those two are filed under the server id when the
-  // tablet did not have the household.
+  // the queue still installs or collects), its animals (but the one the queue still creates or cites) and its LIRAa
+  // items (Q11). Those are filed under the server id when the tablet did not have the household.
   async removeHousehold(db: Db, id: string): Promise<void> {
     const key = await keyOf(db, "households", id);
     await db.run(`DELETE FROM ovitraps WHERE household_key = ? AND NOT (${QUEUED_OVITRAP})`, [key ?? id]);
+    await db.run(`DELETE FROM animals WHERE household_key = ? AND NOT (${QUEUED_ANIMAL})`, [key ?? id]);
     await db.run("DELETE FROM liraa_items WHERE household_id = ?", [id]);
     if (key === null) return;
     await db.run("DELETE FROM registrations WHERE household_key = ?", [key]);
@@ -186,7 +187,7 @@ export const territoryRepo = {
 
   emitTerritory(): void {
     for (const table of [
-      "micro_areas", "households", "families", "registrations", "who_to_visit", "city_blocks", "ovitraps", "liraa_items", "transmission_blocks",
+      "micro_areas", "households", "families", "registrations", "who_to_visit", "city_blocks", "ovitraps", "liraa_items", "transmission_blocks", "animals", "leish_surveys",
     ]) dbEvents.emit(table);
   },
 };

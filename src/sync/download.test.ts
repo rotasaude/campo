@@ -1,16 +1,17 @@
 import type {
-  ChangesResponse, CityBlockBody, HouseholdBody, LiraaItemBody, OvitrapBody, RegistrationBody, TransmissionBlockBody, UploadResponse, WhoToVisit,
+  AnimalBody, ChangesResponse, CityBlockBody, HouseholdBody, LeishSurveyBody, LiraaItemBody, OvitrapBody, RegistrationBody, TransmissionBlockBody, UploadResponse, WhoToVisit,
 } from "../contract";
 import { example } from "../contract/fixtures";
 import { expectValid } from "../contract/validate";
 import { outboxRepo } from "../db/repos/outboxRepo";
 import { territoryRepo } from "../db/repos/territoryRepo";
+import { zoonosesRepo } from "../db/repos/zoonosesRepo";
 import { dbEvents } from "../db/events";
 import { createTestDb } from "../db/testing/sqljsDb";
 import type { Db } from "../db/types";
 import * as logModule from "../log";
 import { sendQueue } from "./dispatch";
-import { applyPage, downloadAll } from "./download";
+import { applyPage, downloadAll, KNOWN_CHANGE_TYPES } from "./download";
 import { householdEditable } from "./editable";
 import { FieldHttpError } from "./http";
 import { enqueue } from "./outbox";
@@ -628,5 +629,176 @@ describe("first page of a download without a cursor", () => {
     expect((await outboxRepo.all(db)).map((i) => i.client_uuid)).toEqual([pending.client_uuid]);
     expect(await meta(db, HIGH_WATER_KEY)).toBe("1763553600000");
     expect(await meta(db, "clock_skew_ms")).toBe("-5000");
+  });
+});
+
+// 35b: animals and leishmaniasis surveys (v1.4.0). Q20: each receipt overwrites, whatever the version; the end of both
+// comes by the removal (out_of_scope, Q21).
+describe("zoonoses: animals and leish surveys", () => {
+  const ZOONOSES = page("changes-zoonoses-page.json"); // household, animal v2 (tutor, microchip), community animal, leish_survey
+  const ZREMOVALS = page("changes-zoonoses-removals.json"); // animal and leish_survey out_of_scope
+  const bodyOf = <T,>(type: string, index = 0) => ZOONOSES.items.filter((i) => i.type === type)[index].body as unknown as T;
+  const ZHH = bodyOf<HouseholdBody>("household");
+  const DOG = bodyOf<AnimalBody>("animal", 0);
+  const COMMUNITY = bodyOf<AnimalBody>("animal", 1);
+  const SURVEY = bodyOf<LeishSurveyBody>("leish_survey");
+  const animalOf = async (db: Db, id: string) => JSON.parse((await db.get<{ body: string }>("SELECT body FROM animals WHERE id = ?", [id]))!.body) as AnimalBody;
+  const outboxItem = (db: Db, clientUuid: string, type: string, body: object) => db.run(
+    "INSERT INTO outbox (client_uuid, type, body, state, created_at, updated_at) VALUES (?, ?, ?, 'pending', 't', 't')",
+    [clientUuid, type, JSON.stringify(body)]);
+
+  test("a page with animals and a leish survey is stored; the animal is filed under the household's local key", async () => {
+    const db = await createTestDb();
+    const born = "c0ffee60-0000-4000-8000-000000000060";
+    await db.run("INSERT INTO households (key, id, client_uuid, micro_area_id, body, street_norm, number) VALUES (?, NULL, ?, ?, '{}', 'x', '1')", [born, born, ZHH.micro_area.id]);
+    await outboxRepo.mapClientId(db, born, "household", ZHH.id);
+    await applyPage(db, ZOONOSES);
+    expect(await db.all("SELECT key, id, client_uuid, household_key, species, status, version, base_version, needs_reload FROM animals ORDER BY id")).toEqual([
+      { key: DOG.id, id: DOG.id, client_uuid: null, household_key: born, species: "dog", status: "active", version: 2, base_version: 2, needs_reload: 0 },
+      { key: COMMUNITY.id, id: COMMUNITY.id, client_uuid: null, household_key: born, species: "dog", status: "active", version: 1, base_version: 1, needs_reload: 0 },
+    ]);
+    expect(await animalOf(db, DOG.id)).toEqual(DOG);
+    expect(await db.all("SELECT id, version FROM leish_surveys")).toEqual([{ id: SURVEY.id, version: 1 }]);
+    expect(JSON.parse((await db.get<{ body: string }>("SELECT body FROM leish_surveys"))!.body)).toEqual(SURVEY);
+    expect(await territoryRepo.getMeta(db, "cursor")).toBe(ZOONOSES.next_cursor);
+  });
+
+  test("an animal of a household the tablet already has by server id is filed under that id", async () => {
+    const db = await createTestDb();
+    await applyPage(db, ZOONOSES);
+    expect(await db.all("SELECT household_key FROM animals")).toEqual([{ household_key: ZHH.id }, { household_key: ZHH.id }]);
+  });
+
+  test("an animal body never stores a microchip number, only has_microchip", async () => {
+    const db = await createTestDb();
+    const leaky = { ...ZOONOSES, items: ZOONOSES.items.map((i) => (i.type === "animal" ? { ...i, body: { ...i.body, microchip: "985112345678901", registry_number: "985112345678901" } } : i)) } as unknown as ChangesResponse;
+    await applyPage(db, leaky);
+    for (const row of await db.all<{ body: string }>("SELECT body FROM animals")) {
+      expect(row.body).not.toContain("985112345678901");
+      expect(row.body).not.toContain("microchip\":\"");
+      expect(JSON.parse(row.body)).toHaveProperty("has_microchip");
+    }
+    expect((await animalOf(db, DOG.id)).has_microchip).toBe(true);
+  });
+
+  test("an animal re-emitted with the same version and a new collar_due_on overwrites the row (Q20)", async () => {
+    const db = await createTestDb();
+    await applyPage(db, ZOONOSES);
+    const again = { ...DOG, collar_due_on: "2027-03-01", last_rabies_vaccination_on: "2026-11-24" };
+    await applyPage(db, { ...ZOONOSES, items: [{ type: "animal", id: DOG.id, version: DOG.version, body: again as unknown as Record<string, never> }] });
+    const stored = await animalOf(db, DOG.id);
+    expect([stored.collar_due_on, stored.last_rabies_vaccination_on, stored.version]).toEqual(["2027-03-01", "2026-11-24", 2]);
+    expect(await count(db, "animals")).toBe(2);
+  });
+
+  test("a survey re-emitted with the same version replaces the row (Q20)", async () => {
+    const db = await createTestDb();
+    await applyPage(db, ZOONOSES);
+    const again = { ...SURVEY, ends_on: "2026-12-31" };
+    await applyPage(db, { ...ZOONOSES, items: [{ type: "leish_survey", id: SURVEY.id, version: SURVEY.version, body: again as unknown as Record<string, never> }] });
+    expect(JSON.parse((await db.get<{ body: string }>("SELECT body FROM leish_surveys"))!.body).ends_on).toBe("2026-12-31");
+  });
+
+  test("an animal that is not active is not kept: the defence when the removal did not come first", async () => {
+    const db = await createTestDb();
+    await applyPage(db, ZOONOSES);
+    await applyPage(db, { ...ZOONOSES, items: [{ type: "animal", id: DOG.id, version: 3, body: { ...DOG, version: 3, status: "deceased" } as unknown as Record<string, never> }] });
+    expect(await db.all("SELECT id FROM animals")).toEqual([{ id: COMMUNITY.id }]);
+  });
+
+  test("removal animal out_of_scope deletes the row; removal leish_survey out_of_scope deletes the survey (Q21)", async () => {
+    const db = await createTestDb();
+    const gone = ZREMOVALS.removals.find((r) => r.type === "animal")!.id;
+    expect(ZREMOVALS.removals.find((r) => r.type === "leish_survey")!.id).toBe(SURVEY.id);
+    await applyPage(db, ZOONOSES);
+    await db.run("INSERT INTO animals (key, id, household_key, species, status, version, body) VALUES (?, ?, ?, 'dog', 'active', 1, '{}')", [gone, gone, ZHH.id]);
+    expect(await count(db, "animals")).toBe(3);
+    await applyPage(db, ZREMOVALS);
+    expect(await db.all("SELECT id FROM animals ORDER BY id")).toEqual([{ id: DOG.id }, { id: COMMUNITY.id }]);
+    expect(await count(db, "leish_surveys")).toBe(0);
+  });
+
+  test("the animal born on the tablet is replaced by the server's through client_ids once accepted", async () => {
+    const db = await createTestDb();
+    const born = "c0ffee70-0000-4000-8000-000000000070";
+    await db.run("INSERT INTO animals (key, id, client_uuid, household_key, species, status, body) VALUES (?, NULL, ?, ?, 'dog', 'active', '{}')", [born, born, ZHH.id]);
+    await outboxRepo.mapClientId(db, born, "animal", DOG.id);
+    await applyPage(db, ZOONOSES);
+    expect(await db.all("SELECT key, id, client_uuid, version, base_version FROM animals ORDER BY id")).toEqual([
+      { key: born, id: DOG.id, client_uuid: born, version: 2, base_version: 2 },
+      { key: COMMUNITY.id, id: COMMUNITY.id, client_uuid: null, version: 1, base_version: 1 },
+    ]);
+    expect(await animalOf(db, DOG.id)).toEqual(DOG);
+    // A removal after that finds it by the same map.
+    await applyPage(db, withPage(ZREMOVALS, { removals: [{ type: "animal", id: DOG.id, reason: "out_of_scope" }] }));
+    expect(await db.all("SELECT id FROM animals")).toEqual([{ id: COMMUNITY.id }]);
+  });
+
+  test("a map of another type does not claim the animal", async () => {
+    const db = await createTestDb();
+    const born = "c0ffee71-0000-4000-8000-000000000071";
+    await db.run("INSERT INTO animals (key, id, client_uuid, household_key, species, status, body) VALUES (?, NULL, ?, ?, 'dog', 'active', '{}')", [born, born, ZHH.id]);
+    await outboxRepo.mapClientId(db, born, "household", DOG.id);
+    await applyPage(db, ZOONOSES);
+    expect(await count(db, "animals")).toBe(3);
+  });
+
+  test("moved household takes its animals with it, but not one the queue still creates or cites", async () => {
+    const db = await createTestDb();
+    await applyPage(db, ZOONOSES);
+    const tabletAnimal = (key: string, householdKey: string) => db.run(
+      "INSERT INTO animals (key, id, client_uuid, household_key, species, status, body) VALUES (?, NULL, ?, ?, 'dog', 'active', '{}')", [key, key, householdKey]);
+    await tabletAnimal("creating", ZHH.id); // its creation is in the line
+    await outboxItem(db, "creating", "animal", { household_id: ZHH.id, species: "dog" });
+    await tabletAnimal("cited", ZHH.id); // creation accepted, a vaccination in the line names it
+    await outboxItem(db, "vac1", "rabies_vaccination", { animal_client_uuid: "cited", vaccinated_on: "2026-11-24" });
+    await tabletAnimal("elsewhere", "another-household");
+    await applyPage(db, withPage(ZREMOVALS, { removals: [{ type: "household", id: ZHH.id, reason: "moved" }] }));
+    expect(await count(db, "households")).toBe(0);
+    expect(await db.all("SELECT key FROM animals ORDER BY key")).toEqual([{ key: "cited" }, { key: "creating" }, { key: "elsewhere" }]);
+  });
+
+  test("openSurveysFor lists only surveys whose household_ids contain the household", async () => {
+    const db = await createTestDb();
+    await applyPage(db, ZOONOSES);
+    const other: LeishSurveyBody = { ...SURVEY, id: "aaaaaaaa-0000-4000-8000-000000000001", household_ids: ["9e0f1a2b-3c4d-4e5f-8a6b-7c8d9e0f1a2b"] };
+    await zoonosesRepo.putLeishSurvey(db, other);
+    expect((await zoonosesRepo.openSurveysFor(db, ZHH.id)).map((s) => s.id)).toEqual([SURVEY.id]);
+    expect((await zoonosesRepo.openSurveysFor(db, "9e0f1a2b-3c4d-4e5f-8a6b-7c8d9e0f1a2b")).map((s) => s.id).sort()).toEqual([SURVEY.id, other.id].sort());
+    expect(await zoonosesRepo.openSurveysFor(db, "not-in-any")).toEqual([]);
+    expect(await zoonosesRepo.openSurveysFor(db, null)).toEqual([]);
+  });
+
+  test("the reset that comes when zoonoses toggles empties animals and surveys and refills them", async () => {
+    const db = await createTestDb();
+    await applyPage(db, ZOONOSES);
+    await db.run("INSERT INTO animals (key, id, household_key, species, status, version, body) VALUES ('stale', 'stale', 'h', 'cat', 'active', 1, '{}')");
+    await applyPage(db, { ...ZOONOSES, reset: true, items: [] });
+    expect([await count(db, "animals"), await count(db, "leish_surveys")]).toEqual([0, 0]);
+    await applyPage(db, { ...ZOONOSES, reset: true });
+    expect(await db.all("SELECT id FROM animals ORDER BY id")).toEqual([{ id: DOG.id }, { id: COMMUNITY.id }]);
+    expect(await count(db, "leish_surveys")).toBe(1);
+  });
+
+  test("a page applies the household before the animal even when the page lists the animal first", async () => {
+    const db = await createTestDb();
+    const born = "c0ffee72-0000-4000-8000-000000000072";
+    await db.run("INSERT INTO households (key, id, client_uuid, micro_area_id, body, street_norm, number) VALUES (?, NULL, ?, ?, '{}', 'x', '1')", [born, born, ZHH.micro_area.id]);
+    await outboxRepo.mapClientId(db, born, "household", ZHH.id);
+    await applyPage(db, { ...ZOONOSES, items: [...ZOONOSES.items].reverse() });
+    expect(await db.all("SELECT DISTINCT household_key FROM animals")).toEqual([{ household_key: born }]);
+  });
+
+  test("a v1.3.0 page (no animal type) applies as before", async () => {
+    const db = await createTestDb();
+    await applyPage(db, FIRST);
+    await applyPage(db, LAST);
+    expect([await count(db, "animals"), await count(db, "leish_surveys"), await count(db, "households")]).toEqual([0, 0, 1]);
+    expect(await territoryRepo.getMeta(db, "cursor")).toBe(LAST.next_cursor);
+  });
+
+  test("animal and leish_survey are known change types, the household before the animal", () => {
+    expect(KNOWN_CHANGE_TYPES).toEqual(expect.arrayContaining(["animal", "leish_survey"]));
+    expect(KNOWN_CHANGE_TYPES.indexOf("household")).toBeLessThan(KNOWN_CHANGE_TYPES.indexOf("animal"));
   });
 });

@@ -6,11 +6,12 @@
 // The download never touches the outbox: an edit waiting to be sent keeps the
 // version the person saw (Q41), and meets the station's change at send time.
 import type {
-  ChangesResponse, CityBlockBody, HouseholdBody, LiraaItemBody, MicroAreaBody, OvitrapBody, RegistrationBody, TransmissionBlockBody, WhoToVisit,
+  AnimalBody, ChangesResponse, CityBlockBody, HouseholdBody, LeishSurveyBody, LiraaItemBody, MicroAreaBody, OvitrapBody, RegistrationBody, TransmissionBlockBody, WhoToVisit,
 } from "../contract";
 import { dbEvents } from "../db/events";
 import { territoryRepo } from "../db/repos/territoryRepo";
 import { vectorRepo } from "../db/repos/vectorRepo";
+import { zoonosesRepo } from "../db/repos/zoonosesRepo";
 import type { Db } from "../db/types";
 import { log } from "../log";
 import { wipeTerritory } from "../security/wipe";
@@ -21,9 +22,9 @@ import { readTrustedNow } from "./trustedTime";
 // update reached the tablet): they are skipped, and the rest of the page and its cursor are applied — failing on them
 // would roll the page back and stop every later round at the same cursor (Q6(3)).
 // Also the order a page is applied in: a city block before the household that names it; households before what is
-// filed under their local key (registrations, ovitraps) and before the LIRAa items drawn from them.
+// filed under their local key (registrations, animals, ovitraps) and before the LIRAa items drawn from them.
 export const KNOWN_CHANGE_TYPES: readonly string[] = [
-  "micro_area", "city_block", "household", "registration", "ovitrap", "liraa_item", "transmission_block",
+  "micro_area", "city_block", "household", "registration", "animal", "ovitrap", "liraa_item", "transmission_block", "leish_survey",
 ];
 const ORDER = new Map(KNOWN_CHANGE_TYPES.map((type, index) => [type, index]));
 const rank = (type: string): number => ORDER.get(type) ?? KNOWN_CHANGE_TYPES.length;
@@ -56,6 +57,9 @@ export async function applyPage(db: Db, page: ChangesResponse, options: { starts
         case "ovitrap": await vectorRepo.putOvitrap(tx, item.body as unknown as OvitrapBody); break;
         case "liraa_item": await vectorRepo.putLiraaItem(tx, item.body as unknown as LiraaItemBody); break;
         case "transmission_block": await vectorRepo.putTransmissionBlock(tx, item.body as unknown as TransmissionBlockBody); break;
+        // Overwritten whatever the version (Q20): the derived dates change without a new version (Q29 of 35a).
+        case "animal": await zoonosesRepo.putAnimal(tx, item.body as unknown as AnimalBody); break;
+        case "leish_survey": await zoonosesRepo.putLeishSurvey(tx, item.body as unknown as LeishSurveyBody); break;
         default: break; // never written: `known` already left it out
       }
     }
@@ -65,6 +69,8 @@ export async function applyPage(db: Db, page: ChangesResponse, options: { starts
       switch (removal.type) {
         case "household": await territoryRepo.removeHousehold(tx, removal.id); break;
         case "registration": await territoryRepo.removeRegistration(tx, removal.id); break;
+        case "animal": await zoonosesRepo.removeAnimal(tx, removal.id); break; // out_of_scope (Q21)
+        case "leish_survey": await zoonosesRepo.removeLeishSurvey(tx, removal.id); break;
         default: break;
       }
     }
