@@ -13,6 +13,7 @@ import { accepted, fakeClient, insertHousehold, newUuid, rejected } from "../../
 import { zoonosesRepo } from "../../db/repos/zoonosesRepo";
 import { TodayScreen } from "../visits/TodayScreen";
 import { AttentionScreen } from "../attention/AttentionScreen";
+import { AGENT_CHOOSE_SURVEY } from "../messages/errorPhrases";
 import { WAITING } from "../households/HouseholdList";
 import { HouseholdScreen } from "../households/HouseholdScreen";
 import { ANIMAL, COMMUNITY_ANIMAL, HH, JOANA, bornResident, zoonosesTablet } from "../testing";
@@ -341,11 +342,8 @@ test("surveys offered are the ones whose household_ids contain the household, pl
   const form = await collectForm(db, ANIMAL);
   expect(screen.getByText("Cão · Pipoca")).toBeTruthy();
   expect(options("leish_survey_id")).toEqual(["Avulsa", "Inquérito LV Vila Nova 2026"]);
-  // Avulsa comes chosen, as the dashboard's "sem inquérito".
-  expect(field("leish_survey_id").getByRole("radio", { name: "Avulsa" }).props.accessibilityState.checked).toBe(true);
   // TR-DPP optional, with the reference's labels.
   expect(options("dpp_result")).toEqual(["Reagente", "Não reagente", "Inválido"]);
-  await choose("leish_survey_id", "Inquérito LV Vila Nova 2026");
   await choose("dpp_result", "Reagente");
   await press(COLLECT);
   await waitFor(() => expect(form.onSaved).toHaveBeenCalledTimes(1));
@@ -363,6 +361,53 @@ test("surveys offered are the ones whose household_ids contain the household, pl
   await waitFor(() => expect(bornForm.onSaved).toHaveBeenCalledTimes(1));
   const [, stray] = await careItems(db, "leish_collection");
   expect(stray.body).toEqual({ animal_client_uuid: dog, collected_on: "2026-11-24" });
+});
+
+const checked = (path: string, option: string) => field(path).getByRole("radio", { name: option }).props.accessibilityState.checked as boolean;
+
+test("one open survey of the household comes chosen and the body carries its leish_survey_id", async () => {
+  const db = await zoonosesTablet({ cbo: "515140" });
+  const form = await collectForm(db, ANIMAL);
+  expect(checked("leish_survey_id", "Inquérito LV Vila Nova 2026")).toBe(true);
+  expect(checked("leish_survey_id", "Avulsa")).toBe(false);
+  await press(COLLECT);
+  await waitFor(() => expect(form.onSaved).toHaveBeenCalledTimes(1));
+  const [item] = await careItems(db, "leish_collection");
+  expect(item.body).toEqual({ leish_survey_id: SURVEY, animal_id: ANIMAL, collected_on: "2026-11-24" });
+});
+
+test("no open survey of the household: Avulsa comes chosen and no leish_survey_id goes", async () => {
+  const db = await zoonosesTablet({ cbo: "515140" });
+  await zoonosesRepo.removeLeishSurvey(db, SURVEY);
+  const form = await collectForm(db, ANIMAL);
+  expect(options("leish_survey_id")).toEqual(["Avulsa"]);
+  expect(checked("leish_survey_id", "Avulsa")).toBe(true);
+  await press(COLLECT);
+  await waitFor(() => expect(form.onSaved).toHaveBeenCalledTimes(1));
+  const [item] = await careItems(db, "leish_collection");
+  expect(item.body).toEqual({ animal_id: ANIMAL, collected_on: "2026-11-24" });
+  await form.unmount();
+
+});
+
+test("two open surveys of the household: nothing chosen, Coletar refuses with the phrase until one is picked", async () => {
+  const db = await zoonosesTablet({ cbo: "515140" });
+  const CENSUS = "f1a2b3c4-d5e6-4f7a-8b8c-0d1e2f3a4b5d";
+  await zoonosesRepo.putLeishSurvey(db, { id: CENSUS, version: 1, name: "Inquérito censitário 2026", kind: "census",
+    household_ids: [HH], starts_on: "2026-11-03", ends_on: "2026-12-12" });
+  const form = await collectForm(db, ANIMAL);
+  expect(options("leish_survey_id")).toEqual(["Avulsa", "Inquérito LV Vila Nova 2026", "Inquérito censitário 2026"]);
+  for (const option of options("leish_survey_id")) expect(checked("leish_survey_id", option)).toBe(false);
+  await press(COLLECT);
+  expect(await field("leish_survey_id").findByText("Escolha o inquérito desta coleta ou marque Avulsa.")).toBeTruthy();
+  expect(await careItems(db, "leish_collection")).toEqual([]);
+  expect(form.onSaved).not.toHaveBeenCalled();
+  await choose("leish_survey_id", "Inquérito censitário 2026");
+  expect(field("leish_survey_id").queryByText(AGENT_CHOOSE_SURVEY)).toBeNull();
+  await press(COLLECT);
+  await waitFor(() => expect(form.onSaved).toHaveBeenCalledTimes(1));
+  const [item] = await careItems(db, "leish_collection");
+  expect(item.body).toEqual({ leish_survey_id: CENSUS, animal_id: ANIMAL, collected_on: "2026-11-24" });
 });
 
 test("no label before acceptance: Etiqueta depois de enviar, in the animal card and in Hoje", async () => {

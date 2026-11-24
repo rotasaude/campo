@@ -147,6 +147,10 @@ const BULLETIN = "vector_inspection";
 // AGENT_CBO_NOT_ALLOWED and AGENT_HAS_RESIDENT), byte for byte (Q54).
 export const AGENT_CBO_NOT_ALLOWED = "só o ACS da microárea, enfermeiro ou médico da equipe grava o cadastro — o agente de endemias, só imóvel não residencial";
 export const AGENT_HAS_RESIDENT = "este imóvel tem morador ativo; só a equipe da APS edita";
+// The field's own phrase for the blood collection (35b, coordinator's ruling in the fix round of Task 8): with two or more
+// open surveys listing the household nothing comes chosen, and the form waits for a survey or "Avulsa". ZOONOSES_ERRORS
+// has no equivalent (the dashboard always starts on "avulsa").
+export const AGENT_CHOOSE_SURVEY = "Escolha o inquérito desta coleta ou marque Avulsa.";
 
 // What the tablet knows of a refused item beyond its code and path (Q54): whether the endemic agent sent it, the property
 // types (the one sent and the one the household has now) and whether the household has an active resident here.
