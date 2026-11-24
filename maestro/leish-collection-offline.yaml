@@ -1,0 +1,77 @@
+# 35b, offline: the endemic agent collects blood from the dog of the download, in the survey that lists the household
+# (the only one: it comes chosen), TR-DPP non-reactive. The collection shows "Etiqueta depois de enviar" until the api
+# gives the label with the acceptance (Q21): after the sync, Today shows "LV-2026-…" (the double fixes the year).
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "profile": "ace" }'
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "zoonoses": true }'
+- runFlow: common/pair-ace.yaml
+- setAirplaneMode: enabled
+- tapOn: "Domicílios"
+- tapOn: ".*Flores, 120.*"
+- extendedWaitUntil:
+    visible: "Animais"
+    timeout: 30000
+- scrollUntilVisible:
+    element: "Cão · Pipoca"
+    centerElement: true
+- tapOn:
+    text: "Coletar sangue \\(LV\\)"
+    below: "Cão · Pipoca"
+- extendedWaitUntil:
+    visible: "Inquérito"
+    timeout: 30000
+- scrollUntilVisible:
+    element: "Não reagente"
+    centerElement: true
+- tapOn: "Não reagente"
+# The form is short, so the button sits clear of the task bar; the title has the same words, and the button is below the name.
+- tapOn:
+    text: "Coletar sangue \\(LV\\)"
+    below: "Cão · Pipoca"
+# Saved on the tablet: the card says the label comes after the sending, and shows no label of the app's own.
+- extendedWaitUntil:
+    visible: "Etiqueta depois de enviar"
+    timeout: 30000
+- assertVisible: "Aguardando envio"
+- repeat:
+    while:
+      notVisible: "Sincronizar"
+    times: 3
+    commands:
+      - back
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 1"
+    timeout: 30000
+- setAirplaneMode: disabled
+- extendedWaitUntil:
+    visible: "Sincronizar"
+    timeout: 30000
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 0"
+    timeout: 60000
+- assertVisible: "Precisam de atenção: 0"
+- runScript:
+    file: scripts/expect-zoonoses.js
+    env:
+      EXPECT: '{ "collections": 1 }'
+# The api's label, now on the day's list.
+- scrollUntilVisible:
+    element: "Minhas visitas de hoje"
+- tapOn: "Minhas visitas de hoje"
+- extendedWaitUntil:
+    visible: "Etiqueta: LV-2026-.*"
+    timeout: 30000

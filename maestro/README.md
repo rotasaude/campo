@@ -50,7 +50,7 @@ A senha da chave descartável aparece na linha de comando de propósito: ela só
 
 ## Servidor falso
 
-`scripts/fake-field-server/server.mjs` responde as cinco rotas do `field-sync` v1.3.0 a partir dos exemplos do contrato (`contracts/field-sync`), valida cada resposta contra o esquema antes de enviar e escuta só em `127.0.0.1` (que o emulador alcança por `10.0.2.2`). Aceita qualquer token com a forma `rsf_…`; `qr.mjs <host>` gera um QR com token novo.
+`scripts/fake-field-server/server.mjs` responde as cinco rotas do `field-sync` v1.4.0 a partir dos exemplos do contrato (`contracts/field-sync`), valida cada resposta contra o esquema antes de enviar e escuta só em `127.0.0.1` (que o emulador alcança por `10.0.2.2`). Aceita qualquer token com a forma `rsf_…`; `qr.mjs <host>` gera um QR com token novo.
 
 O `/reference` não é o exemplo do contrato cru (que traz só um recorte e deixaria os formulários sem opções): os domínios da visita e da atividade coletiva são montados do `contracts/field-sync/domains-v1.json` na forma em que o api os serve, e os dicionários do cadastro vêm de `fixtures/registration-dictionaries.json`, cópia do YAML do api (LEDI 8.7.0). Se o api mudar um dicionário, a cópia precisa ser refeita.
 
@@ -64,6 +64,8 @@ Os fluxos mudam o comportamento por `POST /__script` (uma vez só cada):
 | `{ "next_status": 401, "error": "device_suspended" }` | idem, com a fila preservada no app (Q17) |
 | `{ "next_map": "cut:<bytes>" }` | o próximo download inteiro do mapa anuncia o arquivo todo e derruba a conexão depois desses bytes; a continuação com `Range` responde 206 |
 | `{ "profile": "ace" }` | até o `__reset` (não é de uma vez só), o tablet é o agente de endemias do 35a; `"acs"` volta ao padrão. Ver abaixo |
+| `{ "zoonoses": true }` | até o `__reset`, liga as zoonoses do 35b sobre o perfil (`acs` ou `ace`). Ver abaixo |
+| `{ "next_upload": "rejected:microchip_taken" }` | o próximo item `animal` volta `rejected`, com `path` `microchip` (o `stale_version` vale também para `animal`) |
 
 `POST /__reset` zera o estado; `GET /__state` conta os itens aceitos por tipo e as respostas do mapa (`whole`, `partial`, `cut`). Os fluxos falam com essas rotas por `maestro/scripts/*.js`, do lado da máquina que roda o Maestro (`http://127.0.0.1:8787`, ou a variável `SERVER`).
 
@@ -88,9 +90,19 @@ O `GET /__state` traz também `profile` e `vector: { inspections, samples, bodie
 
 Os exemplos do contrato escrevem o tipo de logradouro pelo nome (`"RUA"`); o api guarda o código do dicionário (`"081"`) e o app recusa salvar outra coisa. O servidor falso serve o código.
 
+### Zoonoses (35b)
+
+Sem script, nada muda. Com `POST /__script { "zoonoses": true }`, até o `__reset` e junto com o `profile`:
+
+- a sessão ganha `features.zoonoses: true` (o ACS do 24c com a chave; o agente é o `session-zoonoses-agent.json` da tag);
+- o `/reference` ganha `zoonoses_domains`: o bloco do exemplo `reference-zoonoses.json`, com os produtos de `fixtures/zoonoses-products.json` (uma vacina antirrábica e uma coleira, falsas) e a `open_campaign` aberta hoje (de hoje − 10 a hoje + 20). Outra `reference_version`; o bloco sai validado contra o esquema, como o resto;
+- o `/changes` traz, na primeira página, os animais do `changes-zoonoses-page.json` levados ao primeiro domicílio do perfil ("RUA das Flores, 120", nos dois): a cadela "Pipoca", que sai com `collar_due_on` = hoje + 5 e o morador do domicílio como tutor, e um cão comunitário sem nome. No perfil `ace` vem também o inquérito de LV, com o domicílio em `household_ids` (só o agente coleta, Q10). Nenhum número de microchip sai (só `has_microchip`);
+- no envio, `animal` volta com `id` e `version`; `animal_client_uuid` e `tutor_client_uuid` são resolvidos pelo livro (o tutor, só se o item citado é um `patient` ou um cadastro que cria a pessoa; senão `not_found` no campo); `leish_collection` volta com `label` `LV-2026-<6 hex do inquérito>-0001` (`AVUL` sem inquérito; o contador vai de um em um e zera no `__reset`) e o mesmo `label` no `duplicate`; `rabies_vaccination` e `collar` voltam `accepted`. O ano da etiqueta é fixo, o dos exemplos do contrato: o api o tira do dia da coleta, mas um fluxo escrito hoje precisa achar `LV-2026-` no ano que vem também;
+- o `GET /__state` ganha `zoonoses: { animals, animals_with_tutor, vaccinations, collections, collars }`, contados pelo que o servidor aceitou. Nunca guarda nem conta o número do microchip.
+
 ## Fluxos
 
-Cada fluxo começa pelo `common/pair.yaml`: instalação limpa, o payload em "Colar código" (`${QR_PAYLOAD}`), o PIN duas vezes e a primeira carga. Os do 35a põem antes o perfil do agente (`scripts/server.js` com `BODY: '{ "profile": "ace" }'`) e usam o `common/pair-ace.yaml`, que é o mesmo pareamento conferindo a microárea do agente e "Imóveis a visitar" no Início. `scripts/expect-vector.js` confere o `vector` do `__state`.
+Cada fluxo começa pelo `common/pair.yaml`: instalação limpa, o payload em "Colar código" (`${QR_PAYLOAD}`), o PIN duas vezes e a primeira carga. Os do 35a põem antes o perfil do agente (`scripts/server.js` com `BODY: '{ "profile": "ace" }'`) e usam o `common/pair-ace.yaml`, que é o mesmo pareamento conferindo a microárea do agente e "Imóveis a visitar" no Início. `scripts/expect-vector.js` confere o `vector` do `__state`. Os do 35b ligam as zoonoses (`scripts/server.js` com `BODY: '{ "zoonoses": true }'`, depois do perfil, quando há) e usam `scripts/expect-zoonoses.js`, que confere o `zoonoses` do `__state`. Nenhum digita número de microchip.
 
 | Arquivo | O que prova |
 |---|---|
@@ -109,11 +121,16 @@ Cada fluxo começa pelo `common/pair.yaml`: instalação limpa, o payload em "Co
 | `ovitrap-install.yaml` | 35a, modo avião: no domicílio com quarteirão, "Instalar ovitrampa" com número e TCLE; volta a rede, sincroniza; 1 instalação aceita |
 | `ovitrap-collect.yaml` | 35a: em "Ovitrampas", a `OVT-014` do download (palheta de 5 dias), "Coletar palheta" em bom estado, reinstalada (sem caixa: é o padrão, Q33); sincroniza; 1 coleta aceita |
 | `strategic-point-offline.yaml` | 35a, Q13(1), modo avião: "Novo imóvel não residencial" do tipo ponto estratégico na microárea do agente; pelo detalhe do imóvel (Q59(b): sem morador), visita com boletim PE, trabalhado; "Pendentes de envio: 2"; volta a rede, sincroniza, zero; 1 domicílio e 1 visita com boletim `pe` aceitos (a visita cita o domicílio pelo `client_uuid`) |
+| `animal-register-offline.yaml` | 35b, ACS + zoonoses, modo avião: em "Domicílios", no domicílio do download, "Cadastrar animal": cão "Rex", raça "SRD", tutor = a moradora do download; o cartão "Cão · Rex" com o tutor e "Aguardando envio"; "Pendentes de envio: 1"; volta a rede, sincroniza, zero; o servidor tem 1 animal, com tutor |
+| `rabies-vaccination-offline.yaml` | 35b, ACS + zoonoses, modo avião: "Vacinar" o cão do download (a "Pipoca"), sem evento adverso; sincroniza; o servidor tem 1 vacinação |
+| `leish-collection-offline.yaml` | 35b, ACE + zoonoses, modo avião: "Coletar sangue (LV)" na "Pipoca", inquérito do download (vem escolhido), TR-DPP "Não reagente"; "Etiqueta depois de enviar" no cartão; sincroniza; "Etiqueta: LV-2026-…" em "Minhas visitas de hoje"; o servidor tem 1 coleta |
+| `collar-offline.yaml` | 35b, ACE + zoonoses, modo avião: "Coleiras a trocar: 1" no Início, a lista com a "Pipoca", "Abrir domicílio", "Colocar coleira"; a lista fica vazia e o Início com "Coleiras a trocar: 0"; sincroniza; o servidor tem 1 coleira |
 
 Duas coisas que valem para qualquer fluxo novo, aprendidas no tablet:
 
 - A barra de tarefas do Android cobre a faixa de baixo da tela, e o Maestro dá por "visível" o que está atrás dela. Antes de tocar no último botão de uma tela, role até o fim (`- scroll`); antes de tocar num campo perto do rodapé, traga-o para o meio (`scrollUntilVisible` com `centerElement: true`).
 - O texto digitado numa busca também casa com o seletor: a opção é a segunda ocorrência (`index: 1`).
+- Um botão que tem o mesmo texto do título da tela ("Vacinar", "Colocar coleira", "Coletar sangue (LV)", "Cadastrar animal") e o cartão de cada animal repetem o botão: o seletor leva `below:` com o nome do animal ("Cão · Pipoca") ou, no formulário longo, com o último campo ("Animal comunitário"). Os formulários curtos não rolam antes do botão: rolar tiraria o nome do animal da árvore.
 - No Android o Maestro só digita ASCII ("Unicode character input is not supported"): o texto de `inputText` vai sem acento ("das Industrias"), e a asserção que o lê de volta também.
 
 Com `FLAG_SECURE` ligada as capturas de tela saem pretas; o Maestro lê a árvore de acessibilidade e não depende delas.

@@ -11,6 +11,7 @@
 //                   { "next_status": 401, "error": "device_revoked" | "device_suspended" }
 //                   { "next_map": "cut:<bytes>" }   the next whole map download drops after that many bytes
 //                   { "profile": "ace" }   until /__reset, the endemic agent of 35a (session, reference and changes); "acs" is the default
+//                   { "zoonoses": true }   until /__reset, the zoonoses switch of 35b: session feature, reference block and animals; combines with the profile
 //   POST /__reset   GET /__state
 // Every 200 of the contract is validated against its schema before it leaves.
 // The emulator reaches the host's loopback at 10.0.2.2, so the default bind is 127.0.0.1.

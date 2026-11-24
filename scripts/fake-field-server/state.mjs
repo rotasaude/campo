@@ -1,7 +1,7 @@
 // State and rules of the fake field-sync server (module 24c, Task 24). It answers from the
 // examples of the pinned contract (contracts/field-sync, tag field-sync-v1.4.0) and keeps just
 // enough state for the Maestro flows: the idempotency book, the version of each target, a
-// one-shot script and the profile of the tablet (the ACS of the 24c, or the endemic agent of 35a). It is a test double: the api decides for real, this only keeps the shapes.
+// one-shot script, the profile of the tablet (the ACS of the 24c, or the endemic agent of 35a) and the zoonoses switch of 35b. It is a test double: the api decides for real, this only keeps the shapes.
 import { Buffer } from "node:buffer";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -21,6 +21,8 @@ const CITES = {
   visit_client_uuid: (receipt) => receipt.type === "home_visit",
   ovitrap_client_uuid: (receipt) => receipt.type === "ovitrap_installation",
   animal_client_uuid: (receipt) => receipt.type === "animal",
+  // The tutor of an animal born on the tablet: a patient of the same batch, or a registration that created one (Q29).
+  tutor_client_uuid: (receipt) => receipt.type === "patient" || receipt.createsPatient,
 };
 const NAMESPACE = Buffer.from("5f1e1d5c0de04a7e9c0dfa4ef1e1d5c0", "hex");
 const DEVICE_ERRORS = ["device_revoked", "device_suspended"];
@@ -29,6 +31,11 @@ const PROFILES = ["acs", "ace"];
 // The reasons the api derives from the bulletin and refuses in the visit's body (reason_derived).
 const DERIVED_REASONS = [34, 35, 36, 37];
 const DAY_MS = 86_400_000;
+// The year of the collection labels. The api takes it from the collection's day; the double fixes it at the year of the
+// contract's examples (LV-2026-…), so a flow written today still finds "LV-2026-" next year.
+const LABEL_YEAR = 2026;
+// The zoonoses downloads (35b): a collar due in this many days (inside "Coleiras a trocar"), a campaign and a survey open today.
+const COLLAR_DUE_IN_DAYS = 5;
 
 export class ScriptError extends Error {}
 
@@ -148,6 +155,43 @@ function withPaddleOf(page, days) {
   };
 }
 
+// The day `days` from today, in UTC: the fake's server_time is UTC, and so is the tablet's city day in the flows.
+const dayFrom = (days) => new Date(Date.now() + days * DAY_MS).toISOString().slice(0, 10);
+
+// The zoonoses reference (35b): the tag's example block with the fake catalogue (fixtures/zoonoses-products.json) in place
+// of its products and a campaign open today. Over the profile's reference, which keeps its own blocks; another version, so a
+// tablet that gets the switch turned on downloads it again.
+function zoonosesReference(reference, example, products) {
+  const campaign = example.zoonoses_domains.open_campaign;
+  const out = {
+    ...reference,
+    reference_version: "",
+    zoonoses_domains: { ...example.zoonoses_domains, products, open_campaign: { ...campaign, starts_on: dayFrom(-10), ends_on: dayFrom(20) } },
+  };
+  return { ...out, reference_version: createHash("sha256").update(JSON.stringify(out)).digest("hex") };
+}
+
+// The animals of the tag's example, in the profile's household (35b), and the survey that lists it (only the endemic agent
+// collects, Q10, so only his tablet gets one). The tutor is a resident the profile has there, as the app offers the tutor from
+// the residents; the first of the dogs with a collar comes due in COLLAR_DUE_IN_DAYS. Never a microchip number (§16).
+function zoonosesItems(first, page, { survey }) {
+  const household = first.items.find((item) => item.type === "household");
+  const resident = first.items.find((item) => item.type === "registration" && item.body.household_id === household.id);
+  const tutor = resident ? { patient_id: resident.body.patient.id, display_name: resident.body.patient.display_name } : null;
+  const animals = page.items.filter((item) => item.type === "animal").map((item) => ({
+    ...item,
+    body: {
+      ...item.body, household_id: household.id, tutor: item.body.tutor === null ? null : tutor,
+      collar_due_on: item.body.collar_due_on === null ? null : dayFrom(COLLAR_DUE_IN_DAYS),
+    },
+  }));
+  const surveys = survey ? page.items.filter((item) => item.type === "leish_survey").map((item) => ({
+    ...item,
+    body: { ...item.body, household_ids: [household.id, ...item.body.household_ids.filter((id) => id !== household.id)], starts_on: dayFrom(-21), ends_on: dayFrom(19) },
+  })) : [];
+  return [...animals, ...surveys];
+}
+
 // UUID v5 of the client_uuid: the same item always gets the same id.
 function uuidV5(name) {
   const hash = createHash("sha1").update(NAMESPACE).update(name).digest();
@@ -202,9 +246,22 @@ export function createState({ contractDir, mapFile }) {
   if (!validators["reference-response"](reference)) throw new Error(`referência do servidor falso fora do esquema: ${ajv.errorsText(validators["reference-response"].errors)}`);
   const sessionExample = read("examples/session-acs.json");
   const agentSessionExample = read("examples/session-endemic-agent.json");
+  // The sessions with the zoonoses switch on (35b): the ACS's with the key added (the tag has no ACS example with it), and the
+  // tag's own example of the endemic agent with it.
+  const zoonosesSessionExample = { ...sessionExample, features: { ...sessionExample.features, zoonoses: true } };
+  const zoonosesAgentSessionExample = read("examples/session-zoonoses-agent.json");
   const agentReference = vectorReference(reference, read("domains-v1.json").vector_control,
     JSON.parse(readFileSync(join(FIXTURES, "vector-products.json"), "utf8")).products, read("examples/reference-vector-control.json"));
   if (!validators["reference-response"](agentReference)) throw new Error(`referência do agente fora do esquema: ${ajv.errorsText(validators["reference-response"].errors)}`);
+  const zoonosesProducts = JSON.parse(readFileSync(join(FIXTURES, "zoonoses-products.json"), "utf8")).products;
+  const zoonosesExample = read("examples/reference-zoonoses.json");
+  const zoonosesPage = read("examples/changes-zoonoses-page.json");
+  // The zoonoses reference over each profile's (built each time: the campaign is open today), checked as the others are.
+  const withZoonoses = (base) => zoonosesReference(base, zoonosesExample, zoonosesProducts);
+  for (const [name, base] of [["acs", reference], ["ace", agentReference]]) {
+    const problem = validators["reference-response"](withZoonoses(base)) ? null : ajv.errorsText(validators["reference-response"].errors);
+    if (problem) throw new Error(`referência de zoonoses (${name}) fora do esquema: ${problem}`);
+  }
   // The contract's examples write the street type by its label ("RUA"); the api stores the code of the
   // dictionary ("081"), and the tablet refuses to save a household with anything else.
   const streetTypes = new Map(reference.string_domains.tipo_logradouro.map((row) => [row.label, row.code]));
@@ -226,7 +283,8 @@ export function createState({ contractDir, mapFile }) {
   const CURSOR_FIRST = Buffer.from(JSON.stringify({ v: 1, fake: "after-first-page" })).toString("base64url");
   const CURSOR_END = Buffer.from(JSON.stringify({ v: 1, fake: "end" })).toString("base64url");
   // The rows of the examples, by id; a scripted conflict rewrites one, so reset() builds them again.
-  const pristineRows = () => new Map([...firstPage.items, ...lastPage.items].map((item) => [item.id, item]));
+  // The animals of the zoonoses download are among them, so a scripted stale_version finds the row of an animal too.
+  const pristineRows = () => new Map([...firstPage.items, ...lastPage.items, ...zoonosesItems(firstPage, zoonosesPage, { survey: false })].map((item) => [item.id, item]));
   let fixtures = pristineRows();
 
   let receipts;
@@ -235,9 +293,14 @@ export function createState({ contractDir, mapFile }) {
   let deadTokens;
   let mapAnswers;
   let profile;
+  let zoonoses;
+  // The number of the next collection label; the double's own, as the api's counter is.
+  let labelSeq;
 
   function reset() {
     profile = "acs";
+    zoonoses = false;
+    labelSeq = 0;
     receipts = new Map();
     versions = new Map();
     script = { nextUpload: null, currentPatch: null, nextStatus: null, nextMapCut: null };
@@ -258,9 +321,10 @@ export function createState({ contractDir, mapFile }) {
 
   function setScript(body) {
     if (body === null || typeof body !== "object" || Array.isArray(body)) throw new ScriptError("script precisa ser um objeto");
-    const { next_upload: nextUpload = null, current_patch: currentPatch = null, next_status: nextStatus = null, error = null, next_map: nextMap = null, profile: nextProfile = null, ...rest } = body;
+    const { next_upload: nextUpload = null, current_patch: currentPatch = null, next_status: nextStatus = null, error = null, next_map: nextMap = null, profile: nextProfile = null, zoonoses: nextZoonoses = null, ...rest } = body;
     if (Object.keys(rest).length) throw new ScriptError(`chave desconhecida: ${Object.keys(rest).join(", ")}`);
     if (nextProfile !== null && !PROFILES.includes(nextProfile)) throw new ScriptError('profile aceita "acs" ou "ace"');
+    if (nextZoonoses !== null && typeof nextZoonoses !== "boolean") throw new ScriptError("zoonoses aceita true ou false");
     if (nextUpload !== null && nextUpload !== "stale_version" && !/^rejected:[a-z_]+$/.test(nextUpload)) {
       throw new ScriptError('next_upload aceita "stale_version" ou "rejected:<code>"');
     }
@@ -278,6 +342,8 @@ export function createState({ contractDir, mapFile }) {
     if (nextStatus !== null) script.nextStatus = error;
     // Unlike the others, the profile stays until /__reset.
     if (nextProfile !== null) profile = nextProfile;
+    // The same for the zoonoses switch (35b): it combines with the profile.
+    if (nextZoonoses !== null) zoonoses = nextZoonoses;
   }
 
   // The 401 a token gets, or null. A scripted revocation sticks to the token that met it.
@@ -290,7 +356,7 @@ export function createState({ contractDir, mapFile }) {
   }
 
   function session() {
-    const example = profile === "ace" ? agentSessionExample : sessionExample;
+    const example = profile === "ace" ? (zoonoses ? zoonosesAgentSessionExample : agentSessionExample) : (zoonoses ? zoonosesSessionExample : sessionExample);
     return {
       ...example,
       server_time: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
@@ -300,13 +366,15 @@ export function createState({ contractDir, mapFile }) {
   }
 
   function currentReference() {
-    return profile === "ace" ? agentReference : reference;
+    const base = profile === "ace" ? agentReference : reference;
+    return zoonoses ? withZoonoses(base) : base;
   }
 
   // { page } or { error } for GET /changes.
   function changes(cursor, limit) {
     if (limit !== null && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > 500)) return { error: "invalid_limit" };
-    const [first, last] = profile === "ace" ? [agentPages.first, withPaddleOf(agentPages.last, 5)] : [firstPage, lastPage];
+    const [served, last] = profile === "ace" ? [agentPages.first, withPaddleOf(agentPages.last, 5)] : [firstPage, lastPage];
+    const first = zoonoses ? { ...served, items: [...served.items, ...zoonosesItems(served, zoonosesPage, { survey: profile === "ace" })] } : served;
     if (cursor === null) return { page: { ...first, next_cursor: CURSOR_FIRST, has_more: true } };
     if (cursor === CURSOR_FIRST) return { page: { ...last, next_cursor: CURSOR_END, has_more: false } };
     if (cursor === CURSOR_END) return { page: { ...last, reset: false, items: [], removals: [], next_cursor: CURSOR_END, has_more: false } };
@@ -332,12 +400,10 @@ export function createState({ contractDir, mapFile }) {
     return { error, path };
   }
 
-  let labelSeq = 0;
   function leishLabel(surveyId) {
     labelSeq += 1;
-    const year = new Date().getFullYear();
     const where = surveyId ? surveyId.replace(/-/g, "").slice(0, 6).toUpperCase() : "AVUL";
-    return `LV-${year}-${where}-${String(labelSeq).padStart(4, "0")}`;
+    return `LV-${LABEL_YEAR}-${where}-${String(labelSeq).padStart(4, "0")}`;
   }
 
   // What the item changes: the row whose version it carries, and the id the result reports.
@@ -390,11 +456,13 @@ export function createState({ contractDir, mapFile }) {
 
     if (script.nextUpload?.startsWith("rejected:")) {
       const error = script.nextUpload.slice("rejected:".length);
-      // A taken sample label waits for a visit with samples, and points at the first one (the api's path).
+      // Two refusals wait for the item they are about, and point at the api's path: a taken sample label for a visit with
+      // samples (its first one), a taken microchip for an animal.
       const labelTaken = error === "sample_label_taken";
-      if (!labelTaken || (item.type === "home_visit" && item.body.vector_inspection?.samples?.length > 0)) {
+      const chipTaken = error === "microchip_taken";
+      if ((!labelTaken && !chipTaken) || (labelTaken && item.type === "home_visit" && item.body.vector_inspection?.samples?.length > 0) || (chipTaken && item.type === "animal")) {
         script.nextUpload = null;
-        return { ...head, error, ...(labelTaken ? { path: "vector_inspection.samples[0]" } : {}) };
+        return { ...head, error, ...(labelTaken ? { path: "vector_inspection.samples[0]" } : chipTaken ? { path: "microchip" } : {}) };
       }
     }
 
@@ -434,7 +502,11 @@ export function createState({ contractDir, mapFile }) {
 
     const version = where.isNew ? 1 : Math.max(versions.get(where.row) ?? 0, item.body.version ?? 0) + 1;
     versions.set(where.row, version);
-    receipts.set(item.client_uuid, { type: item.type, id: where.id, version, createsPatient: item.type === "individual_registration" && "new_patient" in item.body });
+    receipts.set(item.client_uuid, {
+      type: item.type, id: where.id, version, createsPatient: item.type === "individual_registration" && "new_patient" in item.body,
+      // Only whether the animal has a tutor, for the state; never who, never the microchip.
+      hasTutor: item.type === "animal" && (item.body.tutor_patient_id !== undefined || item.body.tutor_client_uuid !== undefined),
+    });
     return { ...head, status: "accepted", id: where.id, version };
   }
 
@@ -464,15 +536,20 @@ export function createState({ contractDir, mapFile }) {
   function snapshot() {
     const accepted = {};
     const vector = { inspections: 0, samples: 0, bodies_with_derived_reasons: 0, activities: [] };
+    const zoo = { animals: 0, animals_with_tutor: 0, vaccinations: 0, collections: 0, collars: 0 };
     for (const receipt of receipts.values()) {
       accepted[receipt.type] = (accepted[receipt.type] ?? 0) + 1;
+      if (receipt.type === "animal") { zoo.animals += 1; if (receipt.hasTutor) zoo.animals_with_tutor += 1; }
+      if (receipt.type === "rabies_vaccination") zoo.vaccinations += 1;
+      if (receipt.type === "leish_collection") zoo.collections += 1;
+      if (receipt.type === "collar") zoo.collars += 1;
       if (!receipt.inspection) continue;
       vector.inspections += 1;
       vector.samples += receipt.inspection.samples;
       vector.activities.push(receipt.inspection.activity);
       if (receipt.inspection.derivedInBody) vector.bodies_with_derived_reasons += 1;
     }
-    return { profile, accepted, vector, script: { next_upload: script.nextUpload, next_status: script.nextStatus }, dead_tokens: deadTokens.size, map: { ...mapAnswers } };
+    return { profile, accepted, vector, zoonoses: zoo, script: { next_upload: script.nextUpload, next_status: script.nextStatus }, dead_tokens: deadTokens.size, map: { ...mapAnswers } };
   }
 
   return { map, mapSha, reference: currentReference, problems, reset, setScript, deviceError, session, changes, upload, snapshot, mapCut, countMap };

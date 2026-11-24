@@ -1,0 +1,81 @@
+# 35b, offline: the endemic agent finds the dog whose collar falls due in "Coleiras a trocar" (5 days away, inside the
+# window of 15), opens its household and places the collar. The dog leaves the list at once (the due date is laid on top
+# of the animal from the line); one sync sends the collar, and the list stays without it.
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "profile": "ace" }'
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "zoonoses": true }'
+- runFlow: common/pair-ace.yaml
+- assertVisible: "Coleiras a trocar: 1"
+- setAirplaneMode: enabled
+- scrollUntilVisible:
+    element: "Coleiras a trocar"
+- tapOn: "Coleiras a trocar"
+- extendedWaitUntil:
+    visible: "vence em .*"
+    timeout: 30000
+- assertVisible: "Pipoca"
+- tapOn: "Abrir domicílio"
+- extendedWaitUntil:
+    visible: "Animais"
+    timeout: 30000
+- scrollUntilVisible:
+    element: "Cão · Pipoca"
+    centerElement: true
+- tapOn:
+    text: "Colocar coleira"
+    below: "Cão · Pipoca"
+# The reference's only collar product comes chosen. The form is short, so the button sits clear of the task bar; the title
+# has the same words as the button, and the button is the one below the animal's name.
+- extendedWaitUntil:
+    visible: "Produto"
+    timeout: 30000
+- tapOn:
+    text: "Colocar coleira"
+    below: "Cão · Pipoca"
+- extendedWaitUntil:
+    visible: "Cão · Pipoca"
+    timeout: 30000
+- assertVisible: "Aguardando envio"
+# Back to the list: the dog is gone from it.
+- back
+- extendedWaitUntil:
+    visible: "Nenhuma coleira a trocar nas suas microáreas."
+    timeout: 30000
+- assertNotVisible: "Pipoca"
+- repeat:
+    while:
+      notVisible: "Sincronizar"
+    times: 3
+    commands:
+      - back
+- assertVisible: "Coleiras a trocar: 0"
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 1"
+    timeout: 30000
+- setAirplaneMode: disabled
+- extendedWaitUntil:
+    visible: "Sincronizar"
+    timeout: 30000
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 0"
+    timeout: 60000
+- assertVisible: "Precisam de atenção: 0"
+- assertVisible: "Coleiras a trocar: 0"
+- runScript:
+    file: scripts/expect-zoonoses.js
+    env:
+      EXPECT: '{ "collars": 1 }'

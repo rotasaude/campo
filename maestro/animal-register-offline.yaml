@@ -1,0 +1,85 @@
+# 35b, offline: the ACS registers a dog at the household of the download, with one of its residents as the tutor (no
+# microchip: the number is never typed in a flow). The animal waits on the tablet; one sync sends it, and the server got it
+# with a tutor. Only ASCII is typed ("Rex", "SRD"): the Android keyboard of the Maestro takes nothing else.
+appId: br.rotasaude.campo
+---
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: reset
+- runScript:
+    file: scripts/server.js
+    env:
+      ACTION: script
+      BODY: '{ "zoonoses": true }'
+- runFlow: common/pair.yaml
+- setAirplaneMode: enabled
+- tapOn: "Domicílios"
+- tapOn: ".*Flores, 120.*"
+- extendedWaitUntil:
+    visible: "Animais"
+    timeout: 30000
+- scrollUntilVisible:
+    element: "Cadastrar animal"
+    centerElement: true
+- tapOn: "Cadastrar animal"
+- extendedWaitUntil:
+    visible: "Espécie"
+    timeout: 30000
+- tapOn: "Cão"
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Nome"
+      VALUE: "Rex"
+- scrollUntilVisible:
+    element: "Macho"
+    centerElement: true
+- tapOn: "Macho"
+# Fields near the end of the screen sit behind the tablet's task bar: bring each one to the middle first.
+- scrollUntilVisible:
+    element: "Raça"
+    centerElement: true
+- runFlow:
+    file: common/type.yaml
+    env:
+      LABEL: "Raça"
+      VALUE: "SRD"
+# The tutor is one of the residents the tablet downloaded for the household.
+- scrollUntilVisible:
+    element: "Joana Conceição"
+    centerElement: true
+- tapOn: "Joana Conceição"
+# To the end of the form: the last button sits behind the tablet's task bar until then. The title has the same words.
+- scroll
+- tapOn:
+    text: "Cadastrar animal"
+    below: "Animal comunitário"
+# Saved on the tablet: the household shows the animal waiting, with its tutor.
+- extendedWaitUntil:
+    visible: "Cão · Rex"
+    timeout: 30000
+- assertVisible: "Tutor: Joana Conceição"
+- assertVisible: "Aguardando envio"
+- repeat:
+    while:
+      notVisible: "Sincronizar"
+    times: 3
+    commands:
+      - back
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 1"
+    timeout: 30000
+- setAirplaneMode: disabled
+- extendedWaitUntil:
+    visible: "Sincronizar"
+    timeout: 30000
+- tapOn: "Sincronizar"
+- extendedWaitUntil:
+    visible: "Pendentes de envio: 0"
+    timeout: 60000
+- assertVisible: "Precisam de atenção: 0"
+- runScript:
+    file: scripts/expect-zoonoses.js
+    env:
+      EXPECT: '{ "animals": 1, "animals_with_tutor": 1 }'

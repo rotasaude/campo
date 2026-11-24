@@ -1,0 +1,17 @@
+{
+  "description": "Fake catalogue of the zoonoses products the fake field server serves when the zoonoses switch is on (module 35b): one rabies vaccine and one collar, so the forms open with the product already chosen. Names and ids are invented. Test data only.",
+  "products": [
+    {
+      "id": "3d4e5f6a-7b8c-4d9e-8f0a-2b3c4d5e6f7a",
+      "code": "VAF",
+      "name": "Vacina antirrabica falsa",
+      "use": "rabies_vaccine"
+    },
+    {
+      "id": "4e5f6a7b-8c9d-4e0f-9a1b-3c4d5e6f7a8b",
+      "code": "CLF",
+      "name": "Coleira falsa",
+      "use": "collar"
+    }
+  ]
+}

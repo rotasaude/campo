@@ -570,6 +570,175 @@ describe("ovitraps and the bulletin (35a)", () => {
   });
 });
 
+// Module 35b: the zoonoses switch, scripted once and kept until /__reset; it combines with the profile (acs or ace).
+describe("zoonoses (35b)", () => {
+  const zoo = () => script({ zoonoses: true });
+  const state = async () => (await call("GET", "/__state", { token: null })).json();
+  const pages = async (): Promise<Json[]> => {
+    const first = (await call("GET", "/field/v1/changes?limit=200")).json();
+    const last = (await call("GET", `/field/v1/changes?limit=200&cursor=${encodeURIComponent(first.next_cursor)}`)).json();
+    return [first, last];
+  };
+  // The fake's server_time is in UTC (Z): the tablet's city day is the UTC day.
+  const daysFromNow = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+  const batch = () => example("upload-zoonoses-same-batch.json").items as Json[];
+
+  test.each(["acs", "ace"])("with the %s profile, session, reference and changes are within the v1.4.0 schemas", async (profile) => {
+    await script({ profile });
+    expect((await zoo()).status).toBe(204);
+    const session = (await call("GET", "/field/v1/session")).json();
+    expectValid("session-response", session);
+    expect(session.features.zoonoses).toBe(true);
+    expect(session.professional.cbo).toBe(profile === "ace" ? "515140" : "515105");
+
+    const reference = (await call("GET", "/field/v1/reference")).json();
+    expectValid("reference-response", reference);
+    expect(session.reference_version).toBe(reference.reference_version);
+    const domains = reference.zoonoses_domains;
+    expect(domains.species.map((s: Json) => s.code)).toEqual(["dog", "cat", "other"]);
+    expect(domains.products.map((p: Json) => p.use).sort()).toEqual(["collar", "rabies_vaccine"]);
+    const today = daysFromNow(0);
+    expect(domains.open_campaign.starts_on <= today && today <= domains.open_campaign.ends_on).toBe(true);
+    expect(domains.parameters).toEqual(example("reference-zoonoses.json").zoonoses_domains.parameters);
+
+    const [first, last] = await pages();
+    expectValid("changes-response", first);
+    expectValid("changes-response", last);
+    const items = [...first.items, ...last.items] as Json[];
+    const household = items.find((item) => item.type === "household") as Json;
+    const animals = items.filter((item) => item.type === "animal");
+    expect(animals.map((a) => a.id)).toEqual(
+      (example("changes-zoonoses-page.json").items as Json[]).filter((item) => item.type === "animal").map((a) => a.id));
+    for (const animal of animals) expect(animal.body.household_id).toBe(household.id);
+    // One dog comes with its collar due in 5 days, the tutor is a resident the tablet has.
+    const dogs = animals.filter((a) => a.body.species === "dog" && a.body.collar_due_on !== null);
+    expect(dogs.map((a) => a.body.collar_due_on)).toEqual([daysFromNow(5)]);
+    const resident = items.find((item) => item.type === "registration" && item.body.household_id === household.id) as Json;
+    expect(dogs[0].body.tutor).toEqual({ patient_id: resident.body.patient.id, display_name: resident.body.patient.display_name });
+    expect(JSON.stringify(items)).not.toMatch(/"microchip"/);
+    // The survey is the endemic agent's: only he collects (Q10).
+    const surveys = items.filter((item) => item.type === "leish_survey");
+    if (profile === "ace") {
+      expect(surveys).toHaveLength(1);
+      expect(surveys[0].body.household_ids).toContain(household.id);
+    } else expect(surveys).toHaveLength(0);
+  });
+
+  test("the endemic agent keeps the vector domains beside the zoonoses ones", async () => {
+    await script({ profile: "ace" });
+    await zoo();
+    const reference = (await call("GET", "/field/v1/reference")).json();
+    expect(reference.vector_control_domains).toBeDefined();
+    expect(reference.zoonoses_domains).toBeDefined();
+    const session = (await call("GET", "/field/v1/session")).json();
+    expect(session.features).toMatchObject({ vector_control: true, zoonoses: true });
+  });
+
+  test("without the script there is nothing of it, and /__reset turns it off", async () => {
+    const quiet = async () => {
+      const session = (await call("GET", "/field/v1/session")).json();
+      expect(session.features.zoonoses).toBeUndefined();
+      expect((await call("GET", "/field/v1/reference")).json().zoonoses_domains).toBeUndefined();
+      const items = (await pages()).flatMap((page) => page.items as Json[]);
+      expect(items.filter((item) => ["animal", "leish_survey"].includes(item.type))).toEqual([]);
+    };
+    await quiet();
+    await zoo();
+    expect((await call("GET", "/field/v1/session")).json().features.zoonoses).toBe(true);
+    await call("POST", "/__reset", { token: null });
+    await quiet();
+  });
+
+  test("the switch takes a boolean only", async () => {
+    for (const zoonoses of ["yes", 1, null]) {
+      const reply = await script({ zoonoses });
+      expect([zoonoses, reply.status]).toEqual([zoonoses, zoonoses === null ? 204 : 422]);
+    }
+  });
+
+  test("an animal and the vaccination, the collection and the collar that cite it in one batch are all accepted", async () => {
+    const reply = (await upload(batch())).json();
+    expectValid("upload-response", reply);
+    expect((reply.results as Json[]).map((r) => [r.type, r.status])).toEqual([
+      ["patient", "accepted"], ["animal", "accepted"], ["rabies_vaccination", "accepted"], ["leish_collection", "accepted"], ["collar", "accepted"],
+    ]);
+    const animal = reply.results[1];
+    expect(animal.id).toMatch(UUID);
+    expect(animal.version).toBe(1);
+    expect(await state()).toMatchObject({ zoonoses: { animals: 1, animals_with_tutor: 1, vaccinations: 1, collections: 1, collars: 1 } });
+  });
+
+  test("the label of a collection is the api's shape, repeats on the duplicate, and the numbering starts again after a reset", async () => {
+    const [patient, animal, , leish] = batch();
+    await upload([patient, animal]);
+    const avulsa = { ...leish, client_uuid: "c0ffee06-0000-4000-9000-000000000006", body: { ...leish.body, leish_survey_id: undefined } };
+    const accepted = (await upload([leish, avulsa])).json().results as Json[];
+    // The year is the contract examples', not the clock's: a flow written today runs the same next year.
+    expect(accepted.map((r) => r.label)).toEqual(["LV-2026-F1A2B3-0001", "LV-2026-AVUL-0002"]);
+    const again = (await upload([leish])).json().results[0];
+    expect(again).toMatchObject({ status: "duplicate", type: "leish_collection", label: "LV-2026-F1A2B3-0001", id: accepted[0].id });
+    await call("POST", "/__reset", { token: null });
+    await upload([patient, animal]);
+    expect((await upload([avulsa])).json().results[0].label).toBe("LV-2026-AVUL-0001");
+  });
+
+  test("the animal itself comes back with its id on the duplicate and no label", async () => {
+    const [, animal] = batch();
+    const first = (await upload(batch())).json().results[1];
+    const again = (await upload([animal])).json().results[0];
+    expect(again).toMatchObject({ status: "duplicate", type: "animal", id: first.id });
+    expect(again.label).toBeUndefined();
+  });
+
+  test("citing an animal that was never accepted is rejected not_found at animal_client_uuid", async () => {
+    const [, , vaccination, , collar] = batch();
+    for (const item of [vaccination, collar]) {
+      const result = (await upload([item])).json().results[0];
+      expect(result).toMatchObject({ status: "rejected", type: item.type, error: "not_found", path: "animal_client_uuid" });
+    }
+  });
+
+  test("a tutor cited by client_uuid has to be a patient of the same batch, as the api answers", async () => {
+    const [, animal] = batch();
+    const dangling = (await upload([animal])).json().results[0];
+    expect(dangling).toMatchObject({ status: "rejected", type: "animal", error: "not_found", path: "tutor_client_uuid" });
+    expect(dangling.id).toBeUndefined();
+    // A registration that creates the person is a tutor too (Q29).
+    const [registration] = example("upload-registration-same-batch.json").items as Json[];
+    const tutor = { ...animal, body: { ...animal.body, tutor_client_uuid: registration.client_uuid } };
+    const results = (await upload([registration, tutor])).json().results as Json[];
+    expect(results.map((r) => r.status)).toEqual(["accepted", "accepted"]);
+  });
+
+  test("rejected:microchip_taken refuses the next animal at microchip, once, and waits for an animal", async () => {
+    const [patient, animal, vaccination] = batch();
+    await script({ next_upload: "rejected:microchip_taken" });
+    expect((await upload([patient])).json().results[0].status).toBe("accepted");
+    const results = (await upload([vaccination, animal])).json().results as Json[];
+    expect(results[1]).toEqual({ client_uuid: animal.client_uuid, status: "rejected", type: "animal", error: "microchip_taken", path: "microchip" });
+    expect((await upload([animal])).json().results[0].status).toBe("accepted");
+  });
+
+  test("stale_version also answers an animal the server has, with the current row and its version", async () => {
+    const [update] = example("upload-animal-update.json").items as Json[];
+    await script({ next_upload: "stale_version", current_patch: { name: "Frajola II" } });
+    const reply = (await upload([update])).json();
+    expectValid("upload-response", reply);
+    expect(reply.results[0]).toMatchObject({
+      status: "stale_version", type: "animal", id: update.body.animal_id, current_version: update.body.version + 1,
+      current: { id: update.body.animal_id, version: update.body.version + 1, name: "Frajola II", household_id: update.body.household_id },
+    });
+  });
+
+  test("the state counts what the server accepted, and the tutor only when one came", async () => {
+    expect((await state()).zoonoses).toEqual({ animals: 0, animals_with_tutor: 0, vaccinations: 0, collections: 0, collars: 0 });
+    const [patient, animal] = batch();
+    const community = { ...animal, client_uuid: "c0ffee07-0000-4000-9000-000000000007", body: { ...animal.body, tutor_client_uuid: undefined, community: true } };
+    await upload([patient, animal, community]);
+    expect((await state()).zoonoses).toEqual({ animals: 2, animals_with_tutor: 1, vaccinations: 0, collections: 0, collars: 0 });
+  });
+});
+
 describe("map", () => {
   const etag = `"${MAP_SHA}"`;
 
