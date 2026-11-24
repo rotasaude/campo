@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import type {
-  ChangeType, CityBlockBody, HouseholdBody, HouseholdVector, ItemType, LiraaItemBody, Location, OvitrapBody,
+  AnimalBody, AnimalItemBody, CollarItemBody, LeishCollectionItemBody, LeishSurveyBody, RabiesVaccinationItemBody, RemovalType,
+  ZoonosesDomainsRaw, ChangeType, CityBlockBody, HouseholdBody, HouseholdVector, ItemType, LiraaItemBody, Location, OvitrapBody,
   OvitrapCollectionItemBody, OvitrapInstallationItemBody, RegistrationBody, TransmissionBlockBody, UploadItem,
   UploadResult, VectorControlDomainsRaw, VectorInspectionBody, WhoItem,
 } from "./index";
@@ -41,4 +42,20 @@ test("the 35a aliases exist with the contract's shapes", () => {
   const domains: Pick<VectorControlDomainsRaw, "limits"> | null = null;
   expect([types.length, changes.length, inspection, installation, collection, block, ovitrap, liraa, transmission, vector, domains])
     .toEqual([2, 4, null, null, null, null, null, null, null, null, null]);
+});
+
+// field-sync-v1.4.0 (35b): the names the zoonoses tasks use.
+test("the 35b aliases exist with the contract's shapes", () => {
+  const types: ItemType[] = ["animal", "rabies_vaccination", "leish_collection", "collar"];
+  const changes: ChangeType[] = ["animal", "leish_survey"];
+  const removals: RemovalType[] = ["animal", "leish_survey"];
+  const animalItem: Pick<AnimalItemBody, "species" | "community"> | null = null;
+  const vaccination: Pick<RabiesVaccinationItemBody, "campaign_id" | "adverse_event"> | null = null;
+  const collection: Pick<LeishCollectionItemBody, "collected_on"> | null = null;
+  const collar: Pick<CollarItemBody, "placed_on"> | null = null;
+  const animal: Pick<AnimalBody, "id" | "has_microchip"> | null = null;
+  const survey: Pick<LeishSurveyBody, "id" | "household_ids"> | null = null;
+  const domains: Pick<ZoonosesDomainsRaw, "limits"> | null = null;
+  expect([types.length, changes.length, removals.length, animalItem, vaccination, collection, collar, animal, survey, domains])
+    .toEqual([4, 2, 2, null, null, null, null, null, null, null]);
 });

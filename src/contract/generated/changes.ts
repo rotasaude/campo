@@ -1,4 +1,4 @@
-// gerado de contracts/field-sync (field-sync-v1.3.0) — não editar
+// gerado de contracts/field-sync (field-sync-v1.4.0) — não editar
 
 /**
  * GET /field/v1/changes (contrato do 24b §9.3): uma página do download incremental do escopo do aparelho, em ordem (updated_at, id). reset: true = o escopo mudou desde o cursor; o app apaga o que baixou (nunca o que falta enviar) e aplica as páginas. who_to_visit vem só na última página (has_more: false), sempre completo; nas outras, null. next_cursor é opaco e sempre vem: o app o guarda para a próxima sincronização (K-10).
@@ -22,7 +22,16 @@ export type ChangesResponse = {
  * via the `definition` "change_item".
  */
 export type ChangeItem = {
-  type: "micro_area" | "household" | "registration" | "city_block" | "ovitrap" | "liraa_item" | "transmission_block";
+  type:
+    | "micro_area"
+    | "household"
+    | "registration"
+    | "city_block"
+    | "ovitrap"
+    | "liraa_item"
+    | "transmission_block"
+    | "animal"
+    | "leish_survey";
   id: Uuid;
   version?: number;
   body: {};
@@ -98,13 +107,13 @@ export type WhoReason = {
 };
 
 /**
- * No 24b só moved tem produtor (field_sync_tombstones). erased e out_of_scope ficam no enum mas são reservados no v1 (Q9): o api não os emite ainda, e o app já os trata (apaga o item).
+ * No 24b só moved tem produtor (field_sync_tombstones). erased e out_of_scope ficam no enum mas são reservados no v1 (Q9): o api não os emite ainda, e o app já os trata (apaga o item). animal e leish_survey (35b): sempre out_of_scope; o animal sai quando deixa o escopo ou o estado active, e o inquérito quando fecha ou deixa o escopo (Q21).
  *
  * This interface was referenced by `undefined`'s JSON-Schema
  * via the `definition` "removal".
  */
 export interface Removal {
-  type: "household" | "registration";
+  type: "household" | "registration" | "animal" | "leish_survey";
   id: Uuid;
   reason: "moved" | "erased" | "out_of_scope";
 }
@@ -388,6 +397,52 @@ export interface MicroArea {
     name: string | null;
   } | null;
   active: boolean;
+}
+/**
+ * Animal do domicílio (35b §11). Nunca o número do microchip (Q9): só has_microchip. Tutor só { patient_id, display_name }. last_rabies_vaccination_on e collar_due_on são derivados: mudam sem version nova (D10).
+ *
+ * This interface was referenced by `undefined`'s JSON-Schema
+ * via the `definition` "animal".
+ */
+export interface Animal {
+  id: Uuid;
+  version: number;
+  household_id: Uuid;
+  species: "dog" | "cat" | "other";
+  name: string | null;
+  sex: "male" | "female" | "unknown";
+  size: "small" | "medium" | "large" | null;
+  coat: string | null;
+  breed: string | null;
+  birth_estimate_on: DateOrNull;
+  status: "active" | "deceased" | "missing" | "transferred";
+  neutered: boolean;
+  tutor: {
+    patient_id: Uuid;
+    display_name: string;
+  } | null;
+  community: boolean;
+  last_rabies_vaccination_on: DateOrNull;
+  collar_due_on: DateOrNull;
+  has_microchip: boolean;
+}
+/**
+ * Só inquéritos open com domicílio no escopo do agente (Q21); household_ids = esses domicílios. O fechamento e a saída do escopo vêm por removal out_of_scope (Q21). Sem quarteirão, população, meta nem resultado.
+ *
+ * This interface was referenced by `undefined`'s JSON-Schema
+ * via the `definition` "leish_survey".
+ */
+export interface LeishSurvey {
+  id: Uuid;
+  version: number;
+  name: string;
+  kind: "sample" | "census" | "focus";
+  /**
+   * @minItems 1
+   */
+  household_ids: [Uuid, ...Uuid[]];
+  starts_on: Date;
+  ends_on: Date;
 }
 /**
  * This interface was referenced by `undefined`'s JSON-Schema

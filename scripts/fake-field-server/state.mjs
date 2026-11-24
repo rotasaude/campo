@@ -1,5 +1,5 @@
 // State and rules of the fake field-sync server (module 24c, Task 24). It answers from the
-// examples of the pinned contract (contracts/field-sync, tag field-sync-v1.3.0) and keeps just
+// examples of the pinned contract (contracts/field-sync, tag field-sync-v1.4.0) and keeps just
 // enough state for the Maestro flows: the idempotency book, the version of each target, a
 // one-shot script and the profile of the tablet (the ACS of the 24c, or the endemic agent of 35a). It is a test double: the api decides for real, this only keeps the shapes.
 import { Buffer } from "node:buffer";
@@ -11,8 +11,8 @@ import Ajv2020 from "ajv/dist/2020.js";
 
 const SCHEMAS = ["session-response", "upload-request", "upload-response", "changes-response", "reference-response"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const TYPES = ["home_visit", "home_visit_withdrawal", "collective_activity", "patient", "household", "family", "individual_registration", "ovitrap_installation", "ovitrap_collection"];
-const VERSIONED = ["household", "family", "individual_registration"];
+const TYPES = ["home_visit", "home_visit_withdrawal", "collective_activity", "patient", "household", "family", "individual_registration", "ovitrap_installation", "ovitrap_collection", "animal", "rabies_vaccination", "leish_collection", "collar"];
+const VERSIONED = ["household", "family", "individual_registration", "animal"];
 // Which accepted items a citation may point to (Q26, Q27).
 const CITES = {
   patient_client_uuid: (receipt) => receipt.type === "patient" || receipt.createsPatient,
@@ -20,6 +20,7 @@ const CITES = {
   family_client_uuid: (receipt) => receipt.type === "family",
   visit_client_uuid: (receipt) => receipt.type === "home_visit",
   ovitrap_client_uuid: (receipt) => receipt.type === "ovitrap_installation",
+  animal_client_uuid: (receipt) => receipt.type === "animal",
 };
 const NAMESPACE = Buffer.from("5f1e1d5c0de04a7e9c0dfa4ef1e1d5c0", "hex");
 const DEVICE_ERRORS = ["device_revoked", "device_suspended"];
@@ -331,10 +332,19 @@ export function createState({ contractDir, mapFile }) {
     return { error, path };
   }
 
+  let labelSeq = 0;
+  function leishLabel(surveyId) {
+    labelSeq += 1;
+    const year = new Date().getFullYear();
+    const where = surveyId ? surveyId.replace(/-/g, "").slice(0, 6).toUpperCase() : "AVUL";
+    return `LV-${year}-${where}-${String(labelSeq).padStart(4, "0")}`;
+  }
+
   // What the item changes: the row whose version it carries, and the id the result reports.
   function target(item, id) {
     const { body } = item;
     const cited = (clientUuid) => receipts.get(clientUuid)?.id;
+    if (item.type === "animal") return { row: body.animal_id ?? id, id: body.animal_id ?? id, isNew: !body.animal_id };
     if (item.type === "household") return { row: body.household_id ?? id, id: body.household_id ?? id, isNew: !body.household_id };
     if (item.type === "family") {
       const household = body.household_id ?? cited(body.household_client_uuid);
@@ -372,6 +382,7 @@ export function createState({ contractDir, mapFile }) {
       if (known.type !== item.type) return { ...head, error: "client_uuid_conflict" };
       return {
         ...head, status: "duplicate", id: known.id, ...(known.version === undefined ? {} : { version: known.version }),
+        ...(known.label ? { label: known.label } : {}),
         // The api's ledger brings the inspection's id on the duplicate too.
         ...(known.inspection ? { vector_inspection_id: known.inspection.id } : {}),
       };
@@ -402,8 +413,10 @@ export function createState({ contractDir, mapFile }) {
         id: uuidV5(`vector_inspection:${item.client_uuid}`), activity: bulletin.activity, samples: bulletin.samples?.length ?? 0,
         derivedInBody: (item.body.reasons ?? []).some((code) => DERIVED_REASONS.includes(code)),
       };
-      receipts.set(item.client_uuid, { type: item.type, id, inspection });
-      return { ...head, status: "accepted", id, ...(inspection ? { vector_inspection_id: inspection.id } : {}) };
+      // The api gives the blood sample its label (35b D2); the double keeps the shape, with a counter per double.
+      const label = item.type === "leish_collection" ? leishLabel(item.body.leish_survey_id) : undefined;
+      receipts.set(item.client_uuid, { type: item.type, id, inspection, label });
+      return { ...head, status: "accepted", id, ...(inspection ? { vector_inspection_id: inspection.id } : {}), ...(label ? { label } : {}) };
     }
 
     const id = uuidV5(item.client_uuid);

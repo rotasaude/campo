@@ -1,4 +1,4 @@
-// gerado de contracts/field-sync (field-sync-v1.3.0) — não editar
+// gerado de contracts/field-sync (field-sync-v1.4.0) — não editar
 
 /**
  * This interface was referenced by `UploadResponse`'s JSON-Schema
@@ -7,7 +7,7 @@
 export type Result = {
   client_uuid?: UuidOrNull;
   /**
-   * stale_version só para domicílio, família ou cadastro individual (versão esperada vencida); na família, nova ou existente, a versão é a do domicílio e id é o domicílio (Q4). Cadastro individual novo cujo domicílio citado mudou volta rejected household_changed (path household_id). Exceção inesperada num item volta rejected internal_error, sem path (Q63).
+   * stale_version só para domicílio, família, cadastro individual ou animal (35b, D3; versão esperada vencida); na família, nova ou existente, a versão é a do domicílio e id é o domicílio (Q4). Cadastro individual novo cujo domicílio citado mudou volta rejected household_changed (path household_id). Exceção inesperada num item volta rejected internal_error, sem path (Q63).
    */
   status: "accepted" | "duplicate" | "rejected" | "stale_version";
   type?:
@@ -20,9 +20,13 @@ export type Result = {
     | "individual_registration"
     | "ovitrap_installation"
     | "ovitrap_collection"
+    | "animal"
+    | "rabies_vaccination"
+    | "leish_collection"
+    | "collar"
     | null;
   /**
-   * accepted e duplicate: o id gravado. stale_version: o id do domicílio (também para family) ou do cadastro existente. rejected: só em already_registered (Q63), o registration_id do cadastro existente, e só quando ele está dentro do escopo do aparelho (6A); fora do escopo não há id. Proibido em qualquer outro rejected. Em ovitrap_installation e ovitrap_collection (35a), o id é o da ovitrampa (CV-3).
+   * accepted e duplicate: o id gravado. stale_version: o id do domicílio (também para family) ou do cadastro existente. rejected: só em already_registered (Q63), o registration_id do cadastro existente, e só quando ele está dentro do escopo do aparelho (6A); fora do escopo não há id. Proibido em qualquer outro rejected. Em ovitrap_installation e ovitrap_collection (35a), o id é o da ovitrampa (CV-3). No 35b, o id é o do animal, da vacinação, do teste (leish_tests) e da coleira.
    */
   id?: string;
   /**
@@ -54,9 +58,13 @@ export type Result = {
    */
   confirmable?: boolean;
   /**
-   * Versão que o registro ficou depois do item (24c, Q5): obrigatória no accepted de household, family (a versão do domicílio) e individual_registration; opcional no duplicate desses três (recibo anterior à coluna result_version não a tem); proibida nos outros tipos e em rejected e stale_version.
+   * Versão que o registro ficou depois do item (24c, Q5): obrigatória no accepted de household, family (a versão do domicílio), individual_registration e animal (35b, D3); opcional no duplicate desses três (recibo anterior à coluna result_version não a tem); proibida nos outros tipos e em rejected e stale_version.
    */
   version?: number;
+  /**
+   * Etiqueta da coleta (35b §6, D2): só no accepted/duplicate de leish_collection, e obrigatória ali.
+   */
+  label?: string;
   current_version?: number;
   current?: {};
 };
@@ -294,4 +302,32 @@ export interface Registration {
   registered_by: RegisteredBy;
   identity_changed_at: DatetimeOrNull;
   identity_review_pending: boolean;
+}
+/**
+ * Animal do domicílio (35b §11). Nunca o número do microchip (Q9): só has_microchip. Tutor só { patient_id, display_name }. last_rabies_vaccination_on e collar_due_on são derivados: mudam sem version nova (D10).
+ *
+ * This interface was referenced by `UploadResponse`'s JSON-Schema
+ * via the `definition` "animal".
+ */
+export interface Animal {
+  id: Uuid;
+  version: number;
+  household_id: Uuid;
+  species: "dog" | "cat" | "other";
+  name: string | null;
+  sex: "male" | "female" | "unknown";
+  size: "small" | "medium" | "large" | null;
+  coat: string | null;
+  breed: string | null;
+  birth_estimate_on: DateOrNull;
+  status: "active" | "deceased" | "missing" | "transferred";
+  neutered: boolean;
+  tutor: {
+    patient_id: Uuid;
+    display_name: string;
+  } | null;
+  community: boolean;
+  last_rabies_vaccination_on: DateOrNull;
+  collar_due_on: DateOrNull;
+  has_microchip: boolean;
 }

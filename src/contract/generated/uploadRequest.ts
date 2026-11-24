@@ -1,4 +1,4 @@
-// gerado de contracts/field-sync (field-sync-v1.3.0) — não editar
+// gerado de contracts/field-sync (field-sync-v1.4.0) — não editar
 
 /**
  * This interface was referenced by `UploadRequest`'s JSON-Schema
@@ -18,7 +18,11 @@ export type Item = {
     | "family"
     | "individual_registration"
     | "ovitrap_installation"
-    | "ovitrap_collection";
+    | "ovitrap_collection"
+    | "animal"
+    | "rabies_vaccination"
+    | "leish_collection"
+    | "collar";
   body: {};
 };
 /**
@@ -882,6 +886,94 @@ export type OvitrapCollectionBody = {
   remove?: boolean;
 } & OvitrapCollectionBody1;
 export type OvitrapCollectionBody1 = {
+  [k: string]: unknown | undefined;
+};
+/**
+ * corpo inteiro na criação e na edição (D4): ausente = vazio, salvo microchip e registry_number, que só vão na criação (Q9); household_client_uuid cita um item household aceito antes; tutor opcional também com domicílio (tutor não identificado, Q22), proibido com community true; tutor_client_uuid cita um item patient ou um individual_registration com new_patient do mesmo lote (Q29); status/status_on só na edição, e o animal que deixa active sai do download (D6); neutered nunca vem (§7)
+ *
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "animal_body".
+ */
+export type AnimalBody = {
+  animal_id?: Uuid;
+  version?: number;
+  household_id?: Uuid;
+  household_client_uuid?: Uuid;
+  species: "dog" | "cat" | "other";
+  sex: "male" | "female" | "unknown";
+  size?: "small" | "medium" | "large";
+  name?: string;
+  coat?: string;
+  breed?: string;
+  birth_estimate_month?: string;
+  tutor_patient_id?: Uuid;
+  tutor_client_uuid?: Uuid;
+  community: boolean;
+  microchip?: string;
+  registry_number?: string;
+  status?: "active" | "deceased" | "missing" | "transferred";
+  status_on?: Date;
+} & AnimalBody1;
+export type AnimalBody1 = {
+  [k: string]: unknown | undefined;
+};
+/**
+ * modalidade sempre house (§11); adverse_note só com adverse_event true (Q20); falta de estoque não é recusa (§3); a segunda dose na campanha só o api barra (Q19)
+ *
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "rabies_vaccination_body".
+ */
+export type RabiesVaccinationBody = {
+  animal_id?: Uuid;
+  /**
+   * cita um item animal aceito antes, no mesmo lote ou em outro (resolve pelo livro de idempotência; falta → not_found)
+   */
+  animal_client_uuid?: string;
+  campaign_id: Uuid;
+  vaccinated_on: Date;
+  vector_product_id: Uuid;
+  adverse_event: boolean;
+  adverse_note?: string;
+} & RabiesVaccinationBody1;
+export type RabiesVaccinationBody1 = {
+  [k: string]: unknown | undefined;
+};
+/**
+ * etiqueta dada pelo api no resultado (label, D2); sem leish_survey_id = avulsa
+ *
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "leish_collection_body".
+ */
+export type LeishCollectionBody = {
+  leish_survey_id?: Uuid;
+  animal_id?: Uuid;
+  /**
+   * cita um item animal aceito antes, no mesmo lote ou em outro (resolve pelo livro de idempotência; falta → not_found)
+   */
+  animal_client_uuid?: string;
+  collected_on: Date;
+  dpp_result?: "reactive" | "non_reactive" | "invalid";
+  dpp_on?: Date;
+} & LeishCollectionBody1;
+export type LeishCollectionBody1 = {
+  [k: string]: unknown | undefined;
+};
+/**
+ * due_on é do api (placed_on + collar_months)
+ *
+ * This interface was referenced by `UploadRequest`'s JSON-Schema
+ * via the `definition` "collar_body".
+ */
+export type CollarBody = {
+  animal_id?: Uuid;
+  /**
+   * cita um item animal aceito antes, no mesmo lote ou em outro (resolve pelo livro de idempotência; falta → not_found)
+   */
+  animal_client_uuid?: string;
+  vector_product_id: Uuid;
+  placed_on: Date;
+} & CollarBody1;
+export type CollarBody1 = {
   [k: string]: unknown | undefined;
 };
 

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { KNOWN_HTTP_ERRORS, KNOWN_ITEM_ERRORS, type ReferenceResponse, type SessionResponse, type UploadRequest } from "./index";
+import { KNOWN_HTTP_ERRORS, KNOWN_ITEM_ERRORS, type ChangesResponse, type ReferenceResponse, type SessionResponse, type UploadRequest, type UploadResponse } from "./index";
 import { example } from "./fixtures";
 import { expectValid, type SchemaName } from "./validate";
 
@@ -91,4 +91,73 @@ test("the new item codes are in errors.item", () => {
     "liraa_item_not_found", "transmission_block_not_active", "deposit_counts_inconsistent", "product_not_allowed", "samples_exceed_larvae",
     "inspection_times_invalid", "reason_derived", "block_already_set", "household_without_block", "consent_required",
     "ovitrap_number_taken", "collection_out_of_range", "reading_not_open", "ovitrap_not_active", "vector_inspection_invalid", "sample_label_taken"]));
+});
+
+// field-sync-v1.4.0 (35b): zoonoses. Everything new is optional.
+test("session and reference of v1.3.0 stay valid without the zoonoses keys", () => {
+  const session = example<SessionResponse>("session-endemic-agent.json");
+  expect(session.features).not.toHaveProperty("zoonoses");
+  expect(() => expectValid("session-response", session)).not.toThrow();
+  const reference = example<ReferenceResponse>("reference-vector-control.json");
+  expect(reference).not.toHaveProperty("zoonoses_domains");
+  expect(() => expectValid("reference-response", reference)).not.toThrow();
+  expect(example<SessionResponse>("session-zoonoses-agent.json").features.zoonoses).toBe(true);
+});
+
+test("animal, rabies_vaccination, leish_collection and collar examples validate; each invalid example is refused", () => {
+  const valid = ["upload-animal-new.json", "upload-animal-update.json", "upload-animal-community.json", "upload-rabies-vaccination.json",
+    "upload-leish-collection.json", "upload-leish-collection-off-survey.json", "upload-collar.json", "upload-zoonoses-same-batch.json"];
+  const types = valid.flatMap((file) => {
+    const request = example<UploadRequest>(file);
+    expect(() => expectValid("upload-request", request)).not.toThrow();
+    return request.items.map((item) => item.type);
+  });
+  expect(types).toEqual(expect.arrayContaining(["animal", "rabies_vaccination", "leish_collection", "collar"]));
+  const invalid = ["invalid-animal-microchip-14-digits.json", "invalid-animal-microchip-on-update.json", "invalid-animal-community-with-tutor.json",
+    "invalid-animal-status-on-create.json", "invalid-rabies-vaccination-note-without-event.json", "invalid-leish-collection-dpp-without-date.json",
+    "invalid-collar-due-on-in-body.json"];
+  for (const file of invalid) expect(() => expectValid("upload-request", example(file))).toThrow();
+});
+
+test("the animal change body has has_microchip and no microchip key", () => {
+  const page = example<ChangesResponse>("changes-zoonoses-page.json");
+  expect(() => expectValid("changes-response", page)).not.toThrow();
+  const animal = page.items.find((i) => i.type === "animal")!.body;
+  expect(animal).toHaveProperty("has_microchip");
+  expect(Object.keys(animal)).not.toContain("microchip");
+  expect(() => expectValid("changes-response", example("invalid-changes-animal-with-microchip.json"))).toThrow();
+});
+
+test("leish_survey carries household_ids (Q21)", () => {
+  const page = example<ChangesResponse>("changes-zoonoses-page.json");
+  const survey = page.items.find((i) => i.type === "leish_survey")!.body as { household_ids: string[] };
+  expect(Array.isArray(survey.household_ids)).toBe(true);
+  expect(() => expectValid("changes-response", example("invalid-changes-leish-survey-without-household-ids.json"))).toThrow();
+});
+
+test("removals accept animal and leish_survey with out_of_scope", () => {
+  const removals = example<ChangesResponse>("changes-zoonoses-removals.json");
+  expect(() => expectValid("changes-response", removals)).not.toThrow();
+  expect(removals.removals.map((r) => r.type)).toEqual(expect.arrayContaining(["animal", "leish_survey"]));
+  expect(removals.removals.some((r) => r.reason === "out_of_scope")).toBe(true);
+});
+
+test("accepted animal carries version; leish_collection accepted and duplicate carry label", () => {
+  const accepted = example<UploadResponse>("upload-response-zoonoses-accepted.json");
+  expect(() => expectValid("upload-response", accepted)).not.toThrow();
+  expect(accepted.results.some((r) => "version" in r && typeof r.version === "number")).toBe(true);
+  expect(accepted.results.some((r) => "label" in r && /^LV-/.test(String(r.label)))).toBe(true);
+  expect(() => expectValid("upload-response", example("invalid-response-animal-accepted-without-version.json"))).toThrow();
+  expect(() => expectValid("upload-response", example("invalid-response-leish-collection-without-label.json"))).toThrow();
+});
+
+test("the zoonoses reference carries the limits and the product uses", () => {
+  const reference = example<ReferenceResponse>("reference-zoonoses.json");
+  expect(() => expectValid("reference-response", reference)).not.toThrow();
+  expect(reference.zoonoses_domains).toBeDefined();
+});
+
+test("the new item codes are in errors.item", () => {
+  expect(KNOWN_ITEM_ERRORS).toEqual(expect.arrayContaining(["microchip_taken", "registry_number_taken", "already_vaccinated_in_campaign",
+    "campaign_not_open", "survey_not_open", "animal_not_dog", "animal_not_active", "date_out_of_range", "household_not_in_survey"]));
 });

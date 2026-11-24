@@ -29,6 +29,7 @@ export const ITEM_TYPE_LABEL: Record<ItemType, string> = {
   home_visit: "Visita domiciliar", home_visit_withdrawal: "Retirada de visita", collective_activity: "Atividade coletiva",
   patient: "Pessoa", household: "Domicílio", family: "Família", individual_registration: "Cadastro individual",
   ovitrap_installation: "Instalação de ovitrampa", ovitrap_collection: "Coleta de ovitrampa",
+  animal: "Cadastro de animal", rabies_vaccination: "Vacina antirrábica", leish_collection: "Coleta de sangue (LV)", collar: "Coleira",
 };
 export const ITEM_STATE_LABEL: Record<OutboxState, string> = {
   pending: "aguardando envio", sending: "enviando", needs_attention: "precisa de atenção", conflict: "conflito com o posto",

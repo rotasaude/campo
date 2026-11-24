@@ -1,4 +1,4 @@
-// gerado de contracts/field-sync (field-sync-v1.3.0) — não editar
+// gerado de contracts/field-sync (field-sync-v1.4.0) — não editar
 
 /**
  * This interface was referenced by `ReferenceResponse`'s JSON-Schema
@@ -10,9 +10,14 @@ export type Uuid = string;
  * via the `definition` "uuid_or_null".
  */
 export type UuidOrNull = string | null;
+/**
+ * This interface was referenced by `ReferenceResponse`'s JSON-Schema
+ * via the `definition` "date".
+ */
+export type Date = string;
 
 /**
- * GET /field/v1/reference (contrato do 24c §3.5): o que o app precisa para montar os formulários sem rede — dicionários do cadastro, bairros, unidades, profissionais da equipe e domínios da visita e da atividade coletiva e, só com o gate vector_control utilizável, vector_control_domains (35a). Nenhum dado de cidadão; do profissional, só nome, CBO e se tem CNS (nunca CPF nem CNS). Fechado no topo; as seções de dicionário ficam abertas, porque a fonte é o YAML do api (K-2). reference_version é o mesmo valor da sessão: o app compara, nunca recalcula.
+ * GET /field/v1/reference (contrato do 24c §3.5): o que o app precisa para montar os formulários sem rede — dicionários do cadastro, bairros, unidades, profissionais da equipe e domínios da visita e da atividade coletiva e, só com o gate vector_control utilizável, vector_control_domains (35a), e só com Zoonoses::Gate.field_usable?, zoonoses_domains (35b). Nenhum dado de cidadão; do profissional, só nome, CBO e se tem CNS (nunca CPF nem CNS). Fechado no topo; as seções de dicionário ficam abertas, porque a fonte é o YAML do api (K-2). reference_version é o mesmo valor da sessão: o app compara, nunca recalcula.
  */
 export interface ReferenceResponse {
   reference_version: string;
@@ -68,6 +73,7 @@ export interface ReferenceResponse {
     rules: CollectiveActivityRules;
   };
   vector_control_domains?: VectorControlDomains;
+  zoonoses_domains?: ZoonosesDomains;
 }
 /**
  * This interface was referenced by `ReferenceResponse`'s JSON-Schema
@@ -185,6 +191,55 @@ export interface VectorControlDomains {
   };
 }
 /**
+ * Só com Zoonoses::Gate.field_usable? (§11). open_campaign muda o reference_version (D9).
+ */
+export interface ZoonosesDomains {
+  /**
+   * @minItems 1
+   */
+  species: [StringEntry, ...StringEntry[]];
+  /**
+   * @minItems 1
+   */
+  sexes: [StringEntry, ...StringEntry[]];
+  /**
+   * @minItems 1
+   */
+  sizes: [StringEntry, ...StringEntry[]];
+  /**
+   * @minItems 1
+   */
+  animal_statuses: [StringEntry, ...StringEntry[]];
+  /**
+   * @minItems 1
+   */
+  dpp_results: [StringEntry, ...StringEntry[]];
+  products: {
+    id: Uuid;
+    code: string;
+    name: string;
+    use: "rabies_vaccine" | "collar";
+  }[];
+  open_campaign: {
+    id: Uuid;
+    name: string;
+    starts_on: Date;
+    ends_on: Date;
+  } | null;
+  parameters: {
+    collar_months: number;
+  };
+  limits: {
+    name_max: number;
+    coat_max: number;
+    breed_max: number;
+    microchip_digits: number;
+    registry_number_max: number;
+    adverse_note_min: number;
+    adverse_note_max: number;
+  };
+}
+/**
  * Domínios do controle vetorial (35a, contrato §13): listas de {code, label} espelhadas de domains-v1.json (vector_control), produtos, cadências, parâmetros e limites.
  *
  * This interface was referenced by `ReferenceResponse`'s JSON-Schema
@@ -247,5 +302,57 @@ export interface VectorControlDomains1 {
     samples_max: number;
     larvae_collected_max: number;
     measures_max: number;
+  };
+}
+/**
+ * Domínios da zoonoses (35b, contrato §11): listas de {code, label} espelhadas de domains-v1.json (zoonoses), produtos, campanha aberta, parâmetros e limites. open_campaign é obrigatório e pode ser null.
+ *
+ * This interface was referenced by `ReferenceResponse`'s JSON-Schema
+ * via the `definition` "zoonoses_domains".
+ */
+export interface ZoonosesDomains1 {
+  /**
+   * @minItems 1
+   */
+  species: [StringEntry, ...StringEntry[]];
+  /**
+   * @minItems 1
+   */
+  sexes: [StringEntry, ...StringEntry[]];
+  /**
+   * @minItems 1
+   */
+  sizes: [StringEntry, ...StringEntry[]];
+  /**
+   * @minItems 1
+   */
+  animal_statuses: [StringEntry, ...StringEntry[]];
+  /**
+   * @minItems 1
+   */
+  dpp_results: [StringEntry, ...StringEntry[]];
+  products: {
+    id: Uuid;
+    code: string;
+    name: string;
+    use: "rabies_vaccine" | "collar";
+  }[];
+  open_campaign: {
+    id: Uuid;
+    name: string;
+    starts_on: Date;
+    ends_on: Date;
+  } | null;
+  parameters: {
+    collar_months: number;
+  };
+  limits: {
+    name_max: number;
+    coat_max: number;
+    breed_max: number;
+    microchip_digits: number;
+    registry_number_max: number;
+    adverse_note_min: number;
+    adverse_note_max: number;
   };
 }
