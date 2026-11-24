@@ -5,7 +5,9 @@ import { collectLeish, placeCollar, saveAnimal, vaccinate } from "../features/an
 import { pathLabel } from "../features/conflicts/fieldText";
 import { phraseForItem } from "../features/messages/errorPhrases";
 import { ZOONOSES_ERRORS, type ZoonosesErrorCode } from "../rules/zoonosesErrors";
-import { ANIMAL, HH, JOANA, endemicTablet, zoonosesTablet } from "../features/testing";
+import { saveHousehold } from "../features/households/save";
+import { saveRegistration, type RegistrationFields } from "../features/registrations/save";
+import { ANIMAL, AREA, HH, JOANA, endemicTablet, loadedTablet, zoonosesTablet } from "../features/testing";
 import { emptyAnimalDraft, type AnimalDraft } from "../rules/animal";
 import { outboxRepo, type OutboxItem } from "../db/repos/outboxRepo";
 import { createTestDb } from "../db/testing/sqljsDb";
@@ -726,5 +728,58 @@ describe("an animal and what cites it", () => {
     await sendQueue({ db, client, ...noStale });
     expect(batches.flat().map((i) => (i.body as Record<string, unknown>).name)).toEqual(["Rajá"]);
     expect(JSON.parse((await db.get<{ body: string }>("SELECT body FROM animals WHERE key = ?", [key]))!.body)).toMatchObject({ name: "Rajá" });
+  });
+});
+
+// The same race as the animal's (Task 9, ruling 3) on the 24c creations: an edit made while the creation was on its way
+// waits for its version; the creation is refused and corrected; only the correction may reach the server.
+describe("a corrected creation is not overwritten by an older edit", () => {
+  const NOW = Date.parse("2026-11-24T15:00:00Z");
+  const saveDeps = { newUuid, now: () => NOW };
+  const BENEDITA = { full_name: "Benedita Aparecida Rocha", birth_date: "1948-05-02", sex: "female" as const, mother_name: "Maria José Rocha", no_cpf_reason: "2" };
+  const person = (over: Partial<RegistrationFields> = {}): RegistrationFields => ({
+    is_responsible: false, refused: true, patient_demographics: { race_color: null, ethnicity: null }, identification: {}, sociodemographic: {}, health_conditions: {}, ...over,
+  });
+  // Answers without checking the request: what is under test is which bodies leave, not their shape.
+  const acceptAll = () => {
+    const sent: UploadItem[] = [];
+    const client = { uploads: jest.fn(async (items: UploadItem[]) => {
+      sent.push(...items);
+      return { results: items.map((i) => accepted(i, { id: newUuid(), version: 1 })) } as UploadResponse;
+    }) };
+    return { client, sent };
+  };
+  async function race(db: Db, type: string, create: () => Promise<string>, edit: (key: string) => Promise<unknown>, correct: (key: string) => Promise<unknown>) {
+    const key = await create();
+    const [creation] = await outboxRepo.all(db);
+    await outboxRepo.update(db, creation.seq, { state: "sending" });
+    await edit(key);
+    expect((await outboxRepo.all(db)).map((i) => i.depends_on)).toEqual([[], [{ client_uuid: key, kind: "version" }]]);
+    await applyResults(db, [{ ...creation, state: "sending" }], [rejected(creation, "invalid_request")], noStale);
+    expect(await states(db)).toEqual([[type, "needs_attention"], [type, "blocked"]]);
+    await correct(key);
+    expect((await outboxRepo.all(db)).map((i) => [i.client_uuid, i.state])).toEqual([[key, "pending"]]);
+    const { client, sent } = acceptAll();
+    await sendQueue({ db, client, ...noStale });
+    expect(sent.map((i) => i.client_uuid)).toEqual([key]);
+    return sent[0].body as Record<string, unknown>;
+  }
+
+  test("household: the older edit goes, the correction is what is sent", async () => {
+    const db = await loadedTablet();
+    const body = await race(db, "household",
+      async () => (await saveHousehold(db, { fields: { micro_area_id: AREA, property_type: "1" } }, saveDeps)).key,
+      (key) => saveHousehold(db, { key, fields: { micro_area_id: AREA, property_type: "1", contact_phone: "41988887777" } }, saveDeps),
+      (key) => saveHousehold(db, { key, fields: { micro_area_id: AREA, property_type: "1", contact_phone: "41911112222" } }, saveDeps));
+    expect(body).toMatchObject({ contact_phone: "41911112222" });
+  });
+
+  test("individual registration: the older edit goes, the correction is what is sent", async () => {
+    const db = await loadedTablet();
+    const body = await race(db, "individual_registration",
+      async () => (await saveRegistration(db, { householdKey: HH, familyId: null, person: { kind: "new", patient: BENEDITA }, fields: person() }, saveDeps)).key,
+      (key) => saveRegistration(db, { key, fields: person({ is_responsible: true }) }, saveDeps),
+      (key) => saveRegistration(db, { key, fields: person({ is_responsible: false, refused: false }) }, saveDeps));
+    expect(body).toMatchObject({ new_patient: { full_name: BENEDITA.full_name }, is_responsible: false, refused: false });
   });
 });

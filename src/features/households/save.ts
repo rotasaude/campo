@@ -12,7 +12,7 @@ import { territoryRepo } from "../../db/repos/territoryRepo";
 import type { Db } from "../../db/types";
 import type { Problem } from "../../rules/registry";
 import { applyHouseholdFields } from "../../sync/editable";
-import { coalesceOrEnqueue, enqueue, type Dep } from "../../sync/outbox";
+import { coalesceOrEnqueue, dropEditsAwaiting, enqueue, type Dep } from "../../sync/outbox";
 import { normalizeText } from "../../sync/text";
 import { AGENT_CBO_NOT_ALLOWED, AGENT_HAS_RESIDENT, ERROR_PHRASES } from "../messages/errorPhrases";
 import { agentRegistersNonResidential, canEditHousehold, loadSession, myMicroAreas } from "../session";
@@ -105,6 +105,8 @@ export async function saveHousehold(
       body: row.id === null ? fields : { household_id: row.id, ...fields },
       editBase: input.editBase ?? (row.base_version !== null && row.base_body !== null ? { version: row.base_version, body: JSON.parse(row.base_body) as Body } : undefined),
     }, deps.newUuid);
+    // The creation itself took the edit: an older edit waiting for its version must not overwrite it.
+    if (creation && item.client_uuid === creation.client_uuid) await dropEditsAwaiting(tx, item);
     return { key: input.key, clientUuid: item.client_uuid };
   });
   dbEvents.emit("households");

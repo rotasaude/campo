@@ -48,6 +48,16 @@ export async function coalesceOrEnqueue(db: Db, input: EnqueueInput, newUuid: ()
   return enqueue(db, input, newUuid);
 }
 
+// A creation still in the line that took an edit (coalesce): the edits of the same record written while it was on its
+// way, waiting for its version, go. The new body has what they had (the form opened with them on top) and what came
+// after; sent after the creation, their older body would overwrite the correction.
+export async function dropEditsAwaiting(tx: Db, creation: OutboxItem): Promise<void> {
+  for (const later of await outboxRepo.all(tx)) {
+    if (later.type === creation.type && later.target_id === creation.target_id && later.client_uuid !== creation.client_uuid
+      && later.depends_on.some((dep) => dep.client_uuid === creation.client_uuid && dep.kind === "version")) await outboxRepo.remove(tx, later.seq);
+  }
+}
+
 // At every open: an item caught mid-flight by a crash goes back to the line. If the server did receive it, the resend answers duplicate.
 export async function recoverSending(db: Db): Promise<number> {
   const stuck = (await outboxRepo.all(db)).filter((item) => item.state === "sending");

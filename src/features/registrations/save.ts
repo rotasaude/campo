@@ -10,7 +10,7 @@ import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
 import type { NewPatient } from "../../rules/registry";
 import { applyRegistrationFields } from "../../sync/editable";
-import { coalesceOrEnqueue, enqueue, type Dep } from "../../sync/outbox";
+import { coalesceOrEnqueue, dropEditsAwaiting, enqueue, type Dep } from "../../sync/outbox";
 import { normalizeText } from "../../sync/text";
 
 type Values = Record<string, unknown>;
@@ -56,6 +56,8 @@ export async function saveRegistration(db: Db, input: SaveRegistrationInput, dep
         body: merges ? { ...creation.body, ...fields } : row.id === null ? fields : { registration_id: row.id, ...fields },
         editBase: input.editBase ?? (row.base_version !== null && row.base_body !== null ? { version: row.base_version, body: JSON.parse(row.base_body) as Values } : undefined),
       }, deps.newUuid);
+      // The creation itself took the edit: an older edit waiting for its version must not overwrite it.
+      if (creation && edit.client_uuid === creation.client_uuid) await dropEditsAwaiting(tx, edit);
       return { key, clientUuid: edit.client_uuid };
     }
 
