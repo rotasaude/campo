@@ -468,7 +468,8 @@ export function createState({ contractDir, mapFile }) {
 
     for (const cite of citations(item.body)) {
       const receipt = receipts.get(cite.client_uuid);
-      if (!receipt || !CITES[cite.key](receipt)) return { ...head, error: "not_found", path: cite.path };
+      // A tutor that does not resolve is tutor_not_found (Q29, as the contract's rejected example); any other citation, not_found.
+      if (!receipt || !CITES[cite.key](receipt)) return { ...head, error: cite.key === "tutor_client_uuid" ? "tutor_not_found" : "not_found", path: cite.path };
     }
 
     if (!VERSIONED.includes(item.type)) {

@@ -701,7 +701,7 @@ describe("zoonoses (35b)", () => {
   test("a tutor cited by client_uuid has to be a patient of the same batch, as the api answers", async () => {
     const [, animal] = batch();
     const dangling = (await upload([animal])).json().results[0];
-    expect(dangling).toMatchObject({ status: "rejected", type: "animal", error: "not_found", path: "tutor_client_uuid" });
+    expect(dangling).toMatchObject({ status: "rejected", type: "animal", error: "tutor_not_found", path: "tutor_client_uuid" });
     expect(dangling.id).toBeUndefined();
     // A registration that creates the person is a tutor too (Q29).
     const [registration] = example("upload-registration-same-batch.json").items as Json[];
