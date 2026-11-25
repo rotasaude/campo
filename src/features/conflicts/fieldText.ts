@@ -66,6 +66,7 @@ const ANIMAL_LABEL: Record<string, string> = {
   animal_id: "Animal", animal_client_uuid: "Animal", species: "Espécie", name: "Nome", sex: "Sexo", size: "Porte", coat: "Pelagem", breed: "Raça",
   birth_estimate_month: "Mês de nascimento (estimado)", microchip: "Microchip", tutor_patient_id: "Tutor", tutor_client_uuid: "Tutor",
   community: "Comunitário", household_id: "Domicílio", household_client_uuid: "Domicílio", status: "Nova situação",
+  status_on: "Data da nova situação",
 };
 const VACCINATION_LABEL: Record<string, string> = {
   animal_id: "Animal", animal_client_uuid: "Animal", campaign_id: "Campanha", vaccinated_on: "Data da vacinação", vector_product_id: "Produto",

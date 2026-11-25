@@ -8,7 +8,7 @@ const LABELS: [ItemType, string, string][] = [
   ["rabies_vaccination", "animal_id", "Animal"], ["rabies_vaccination", "animal_client_uuid", "Animal"],
   ["collar", "animal_id", "Animal"], ["leish_collection", "animal_client_uuid", "Animal"],
   ["animal", "microchip", "Microchip"], ["animal", "tutor_patient_id", "Tutor"], ["animal", "tutor_client_uuid", "Tutor"],
-  ["animal", "birth_estimate_month", "Mês de nascimento (estimado)"], ["animal", "status", "Nova situação"],
+  ["animal", "birth_estimate_month", "Mês de nascimento (estimado)"], ["animal", "status", "Nova situação"], ["animal", "status_on", "Data da nova situação"],
   ["rabies_vaccination", "campaign_id", "Campanha"], ["rabies_vaccination", "vector_product_id", "Produto"], ["collar", "vector_product_id", "Produto"],
   ["rabies_vaccination", "vaccinated_on", "Data da vacinação"], ["rabies_vaccination", "adverse_note", "Nota do evento adverso"],
   ["leish_collection", "leish_survey_id", "Inquérito"], ["leish_collection", "collected_on", "Data da coleta"],
