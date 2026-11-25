@@ -19,11 +19,15 @@ appId: br.rotasaude.campo
       BODY: '{ "zoonoses": true }'
 - runFlow: common/pair-ace.yaml
 - setAirplaneMode: enabled
+- scrollUntilVisible:
+    element: "Domicílios"
+    centerElement: true
 - tapOn: "Domicílios"
 - tapOn: ".*Flores, 120.*"
-- extendedWaitUntil:
-    visible: "Animais"
-    timeout: 30000
+# The section sits below the fold of the household's detail.
+- scrollUntilVisible:
+    element: "Animais"
+    timeout: 60000
 - scrollUntilVisible:
     element: "Cão · Pipoca"
     centerElement: true
@@ -37,10 +41,12 @@ appId: br.rotasaude.campo
     element: "Não reagente"
     centerElement: true
 - tapOn: "Não reagente"
-# The form is short, so the button sits clear of the task bar; the title has the same words, and the button is below the name.
+# To the end of the form: the last button sits behind the task bar until then. Scrolling takes the animal's name out of the
+# tree, so the anchor is the last field: the title has the same words as the button, and the button is below it.
+- scroll
 - tapOn:
     text: "Coletar sangue \\(LV\\)"
-    below: "Cão · Pipoca"
+    below: "Resultado do TR-DPP"
 # Saved on the tablet: the card says the label comes after the sending, and shows no label of the app's own.
 - extendedWaitUntil:
     visible: "Etiqueta depois de enviar"
@@ -52,9 +58,11 @@ appId: br.rotasaude.campo
     times: 3
     commands:
       - back
-- extendedWaitUntil:
-    visible: "Pendentes de envio: 1"
-    timeout: 30000
+# The Home kept the scroll that took "Domicílios" into sight: the counters are above it, out of the tree until scrolled back.
+- scrollUntilVisible:
+    element: "Pendentes de envio: 1"
+    direction: UP
+    timeout: 60000
 - setAirplaneMode: disabled
 - extendedWaitUntil:
     visible: "Sincronizar"

@@ -14,11 +14,15 @@ appId: br.rotasaude.campo
       BODY: '{ "zoonoses": true }'
 - runFlow: common/pair.yaml
 - setAirplaneMode: enabled
+- scrollUntilVisible:
+    element: "Domicílios"
+    centerElement: true
 - tapOn: "Domicílios"
 - tapOn: ".*Flores, 120.*"
-- extendedWaitUntil:
-    visible: "Animais"
-    timeout: 30000
+# The section sits below the fold of the household's detail.
+- scrollUntilVisible:
+    element: "Animais"
+    timeout: 60000
 - scrollUntilVisible:
     element: "Cadastrar animal"
     centerElement: true

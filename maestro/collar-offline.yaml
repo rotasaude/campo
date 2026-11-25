@@ -28,27 +28,29 @@ appId: br.rotasaude.campo
     timeout: 30000
 - assertVisible: "Pipoca"
 - tapOn: "Abrir domicílio"
-- extendedWaitUntil:
-    visible: "Animais"
-    timeout: 30000
+# The section sits below the fold of the household's detail.
+- scrollUntilVisible:
+    element: "Animais"
+    timeout: 60000
 - scrollUntilVisible:
     element: "Cão · Pipoca"
     centerElement: true
 - tapOn:
     text: "Colocar coleira"
     below: "Cão · Pipoca"
-# The reference's only collar product comes chosen. The form is short, so the button sits clear of the task bar; the title
-# has the same words as the button, and the button is the one below the animal's name.
+# The reference's only collar product comes chosen. To the end of the form: the last button sits behind the task bar until
+# then. Scrolling takes the animal's name out of the tree, so the anchor is "Produto": the title has the same words as the
+# button, and the button is below it.
 - extendedWaitUntil:
     visible: "Produto"
     timeout: 30000
+- scroll
 - tapOn:
     text: "Colocar coleira"
-    below: "Cão · Pipoca"
+    below: "Produto"
 - extendedWaitUntil:
-    visible: "Cão · Pipoca"
+    visible: "Aguardando envio"
     timeout: 30000
-- assertVisible: "Aguardando envio"
 # Back to the list: the dog is gone from it.
 - back
 - extendedWaitUntil:

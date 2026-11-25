@@ -13,11 +13,15 @@ appId: br.rotasaude.campo
       BODY: '{ "zoonoses": true }'
 - runFlow: common/pair.yaml
 - setAirplaneMode: enabled
+- scrollUntilVisible:
+    element: "Domicílios"
+    centerElement: true
 - tapOn: "Domicílios"
 - tapOn: ".*Flores, 120.*"
-- extendedWaitUntil:
-    visible: "Animais"
-    timeout: 30000
+# The section sits below the fold of the household's detail.
+- scrollUntilVisible:
+    element: "Animais"
+    timeout: 60000
 # The household has another dog (the community one) with its own "Vacinar": the button is the one below this card's name.
 - scrollUntilVisible:
     element: "Cão · Pipoca"
@@ -29,13 +33,14 @@ appId: br.rotasaude.campo
     visible: "Campanha: .*"
     timeout: 30000
 - assertVisible: "Evento adverso"
-# The form is short, so the button sits clear of the task bar; the screen's title has the same words as the button, and the
-# button is the one below the animal's name.
+# To the end of the form: the last button sits behind the task bar until then. Scrolling takes the animal's name out of
+# the tree, so the anchor is "Evento adverso": the title has the same words as the button, and the button is below it.
+- scroll
 - tapOn:
     text: "Vacinar"
-    below: "Cão · Pipoca"
+    below: "Evento adverso"
 - extendedWaitUntil:
-    visible: "Cão · Pipoca"
+    visible: "Aguardando envio"
     timeout: 30000
 - assertVisible: "Aguardando envio"
 - repeat:
