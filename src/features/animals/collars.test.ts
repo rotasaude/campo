@@ -1,3 +1,4 @@
+import { outboxRepo } from "../../db/repos/outboxRepo";
 import type { Db } from "../../db/types";
 import { loadDue } from "../vector/dueData";
 import { ANIMAL, COMMUNITY_ANIMAL, HH, zoonosesTablet } from "../testing";
@@ -79,4 +80,20 @@ test("Imóveis a visitar is untouched: a dog with collar due adds nothing to loa
   const before = (await loadDue(db, NOW)).items;
   await setAnimal(db, ANIMAL, { collar_due_on: "2026-11-01" });
   expect((await loadDue(db, NOW)).items).toEqual(before);
+});
+
+// Review I3: the line is read once for the whole list, however many households there are (and not once per household).
+test("reading the line does not grow with the number of households", async () => {
+  const db = await zoonosesTablet();
+  const reads = async () => {
+    const all = jest.spyOn(outboxRepo, "all");
+    try { await loadCollarsDue(db, NOW); return all.mock.calls.length; } finally { all.mockRestore(); }
+  };
+  const before = await reads();
+  for (const n of [1, 2, 3]) {
+    await db.run("INSERT INTO households (key, id, micro_area_id, version, body, base_version, street_norm, number) SELECT ?, ?, micro_area_id, version, body, base_version, street_norm, number FROM households WHERE key = ?", [`hh-extra-${n}`, `hh-extra-${n}`, HH]);
+    await db.run("INSERT INTO animals (key, id, client_uuid, household_key, species, status, version, base_version, needs_reload, body) SELECT ?, ?, NULL, ?, species, status, version, base_version, needs_reload, body FROM animals WHERE key = ?", [`an-extra-${n}`, `an-extra-${n}`, `hh-extra-${n}`, ANIMAL]);
+  }
+  expect((await loadCollarsDue(db, NOW)).length).toBe(4);
+  expect(await reads()).toBe(before);
 });

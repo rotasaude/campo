@@ -7,7 +7,7 @@ import type { Db } from "../../db/types";
 import { addressShort, listHouseholds } from "../households/view";
 import { loadReference } from "../../sync/reference";
 import { canUseZoonoses, cityTodayOf, loadSession, myMicroAreas } from "../session";
-import { readAnimals } from "./view";
+import { animalsContext, readAnimals } from "./view";
 
 export const COLLAR_DUE_DAYS = 15;
 export const COLLARS_TABLES = ["animals", "outbox", "households", "reference", "session"];
@@ -25,12 +25,15 @@ export async function loadCollarsDue(db: Db, now: number): Promise<CollarDue[]> 
   if (!canUseZoonoses(session, reference)) return [];
   const limit = plusDays(await cityTodayOf(db, now), COLLAR_DUE_DAYS);
   const dict = reference?.dictionaries ?? null;
+  // The line and the domains once for the whole list, and only the households that have a dog.
+  const context = await animalsContext(db, reference);
+  const withDogs = new Set((await db.all<{ household_key: string }>("SELECT DISTINCT household_key FROM animals WHERE species = 'dog'")).map((r) => r.household_key));
   const out: CollarDue[] = [];
   for (const area of myMicroAreas(session)) {
     for (const household of await listHouseholds(db, area.id)) {
-      if (household.body.status !== "active") continue;
+      if (household.body.status !== "active" || !withDogs.has(household.key)) continue;
       const address = addressShort(household.body, dict);
-      for (const animal of await readAnimals(db, household.key)) {
+      for (const animal of await readAnimals(db, household.key, context)) {
         if (animal.species !== "dog" || animal.status !== "active" || animal.collarDueOn === null || animal.collarDueOn > limit) continue;
         out.push({ animalKey: animal.key, animalName: animal.name, householdKey: household.key, address, dueOn: animal.collarDueOn });
       }

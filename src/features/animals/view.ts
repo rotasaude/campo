@@ -13,7 +13,8 @@ import { territoryRepo } from "../../db/repos/territoryRepo";
 import { applyAnimalItem, tutorOf, zoonosesRepo } from "../../db/repos/zoonosesRepo";
 import type { Db } from "../../db/types";
 import { collarDueOn } from "../../rules/animal";
-import { loadReference } from "../../sync/reference";
+import { loadReference, type Reference } from "../../sync/reference";
+import type { ZoonosesDomains } from "../../rules/zoonosesDomains";
 import { ANIMAL_CHANGED } from "../../sync/stale";
 
 export interface AnimalView {
@@ -78,10 +79,17 @@ async function onTop(db: Db, body: AnimalBody, mine: OutboxItem[]): Promise<Anim
 const heldOf = (mine: OutboxItem[]): AnimalView["held"] =>
   mine.some((item) => item.state === "needs_attention") ? "needs_attention" : mine.some((item) => item.state === "blocked") ? "blocked" : null;
 
-export async function readAnimals(db: Db, householdKey: string): Promise<AnimalView[]> {
+// What a caller reading many households loads once: the line and the reference's zoonoses domains.
+export interface AnimalsContext { queue: OutboxItem[]; domains: ZoonosesDomains | null }
+
+export async function animalsContext(db: Db, reference?: Reference | null): Promise<AnimalsContext> {
+  const loaded = reference !== undefined ? reference : await loadReference(db).catch(() => null);
+  return { queue: await outboxRepo.all(db), domains: loaded?.zoonosesDomains ?? null };
+}
+
+export async function readAnimals(db: Db, householdKey: string, context?: AnimalsContext): Promise<AnimalView[]> {
   const rows = await zoonosesRepo.animalsOf(db, householdKey);
-  const queue = await outboxRepo.all(db);
-  const domains = (await loadReference(db).catch(() => null))?.zoonosesDomains ?? null;
+  const { queue, domains } = context ?? await animalsContext(db);
   const sexes = domains?.sexes ?? [];
   const views: AnimalView[] = [];
   for (const row of rows) {
