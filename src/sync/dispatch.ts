@@ -204,11 +204,11 @@ export async function applyResults(db: Db, sent: OutboxItem[], results: UploadRe
     } else if (result.error !== undefined && TRANSIENT.has(result.error)) {
       if (item.attempts + 1 >= TRANSIENT_ATTEMPTS) await attention(item, result);
       else await back(item, item.attempts + 1);
-    } else if (result.error === "not_found" && (result.path ?? "").endsWith("_client_uuid")
+    } else if (citesMissing(result)
       && item.depends_on.some((dep) => signal.deferred.includes(dep.client_uuid))) {
       // The record it cites only went back to the line (rate limit, a transient refusal): this one goes back with it.
       await back(item);
-    } else if (result.error === "not_found" && (result.path ?? "").endsWith("_client_uuid")
+    } else if (citesMissing(result)
       && item.depends_on.some((dep) => refused.has(dep.client_uuid))) {
       // The record it cites was refused in this same batch: nothing wrong with this one.
       await outboxRepo.update(db, item.seq, { state: "blocked" });
@@ -222,6 +222,13 @@ export async function applyResults(db: Db, sent: OutboxItem[], results: UploadRe
   for (const item of sent) if (!answered.has(item.client_uuid)) await back(item);
   await refreshBlocked(db);
   return signal;
+}
+
+// The answer for a record cited by client_uuid that did not resolve: `not_found` on `*_client_uuid`, or (Q29) the animal's
+// `tutor_not_found` on `tutor_client_uuid`.
+function citesMissing(result: UploadResult): boolean {
+  const path = result.path ?? "";
+  return (result.error === "not_found" && path.endsWith("_client_uuid")) || (result.error === "tutor_not_found" && path === "tutor_client_uuid");
 }
 
 export interface SendDeps { db: Db; client: Pick<FieldClient, "uploads">; onStale: ApplyHooks["onStale"] }

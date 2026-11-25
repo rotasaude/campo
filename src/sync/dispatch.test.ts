@@ -783,3 +783,35 @@ describe("a corrected creation is not overwritten by an older edit", () => {
     expect(body).toMatchObject({ new_patient: { full_name: BENEDITA.full_name }, is_responsible: false, refused: false });
   });
 });
+
+// Review I1: the animal that cites a tutor registered in the same batch (Q29: tutor_not_found, path tutor_client_uuid).
+describe("an animal citing a tutor registration of the same batch", () => {
+  const tutorNotFound = (i: OutboxItem) => rejected(i, "tutor_not_found", { path: "tutor_client_uuid" });
+  async function queued(db: Db) {
+    const registration = await enqueue(db, { type: "individual_registration", body: { registration: true } }, newUuid);
+    const animal = await enqueue(db, {
+      type: "animal", body: { name: "Rex", tutor_client_uuid: registration.client_uuid },
+      deps: [{ client_uuid: registration.client_uuid, kind: "cite" }],
+    }, newUuid);
+    const sent = (await outboxRepo.all(db)).map((i) => ({ ...i, state: "sending" as const }));
+    return { registration, animal, sent };
+  }
+
+  test("registration refused: the animal is blocked, not needs_attention, and returns when the registration is resolved", async () => {
+    const db = await createTestDb();
+    const { registration, animal, sent } = await queued(db);
+    await applyResults(db, sent, [rejected(registration, "duplicate_suspected"), tutorNotFound(animal)], noStale);
+    expect(await states(db)).toEqual([["individual_registration", "needs_attention"], ["animal", "blocked"]]);
+    expect(await outboxRepo.byClientUuid(db, animal.client_uuid)).toMatchObject({ error: null });
+    await resend(db, registration.seq, registration.body);
+    expect(await states(db)).toEqual([["individual_registration", "pending"], ["animal", "pending"]]);
+  });
+
+  test("registration deferred (too_many_requests): the animal stays pending", async () => {
+    const db = await createTestDb();
+    const { registration, animal, sent } = await queued(db);
+    const signal = await applyResults(db, sent, [rejected(registration, "too_many_requests"), tutorNotFound(animal)], noStale);
+    expect((await outboxRepo.all(db)).map((i) => [i.type, i.state, i.error])).toEqual([["individual_registration", "pending", null], ["animal", "pending", null]]);
+    expect(signal.deferred).toEqual(expect.arrayContaining([registration.client_uuid, animal.client_uuid]));
+  });
+});
