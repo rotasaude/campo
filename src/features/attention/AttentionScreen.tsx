@@ -24,6 +24,7 @@ import { phraseForItem, type ItemContext } from "../messages/errorPhrases";
 import { DISCARD_WARNING, ITEM_TYPE_LABEL, dependentsWarning } from "../outbox/OutboxScreen";
 import { confirmOtherPerson, confirmSamePerson, discardForExisting } from "../registrations/duplicates";
 import { confirmOtherParticipant } from "./participants";
+import { ANIMAL_CHANGED } from "../../sync/stale";
 import { canRenumber, correctNumber } from "../ovitraps/save";
 import { takenNumbers } from "../ovitraps/view";
 import { installProblems, numberTaken } from "../../rules/ovitrap";
@@ -89,6 +90,8 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
   const hasForm = WITH_FORM.includes(item.type) && item.target_id !== null && !suspected && !registered;
   const renumber = canRenumber(item);
   const relabel = canRelabel(item);
+  // The station changed the animal: the whole body would overwrite it (Q20), so only "Corrigir" (on the current version).
+  const animalChanged = item.type === "animal" && item.error === ANIMAL_CHANGED;
   const card = { gap: 6, padding: SIZES.gap, borderRadius: SIZES.radius, borderWidth: 1, borderColor: colors.rule, backgroundColor: colors.panel } as const;
 
   const openExisting = async () => {
@@ -156,7 +159,7 @@ export function AttentionScreen({ seq, onFix, onOpenRegistration, onDone }: {
         </>
       )}
       {!hasForm && !suspected && !registered && !renumber && !relabel && <Muted>{NO_FORM_FOR_THIS}</Muted>}
-      {!suspected && !registered && !renumber && !relabel && <Button label="Reenviar" variant="secondary" onPress={() => run(() => resend(db, seq))} />}
+      {!suspected && !registered && !renumber && !relabel && !animalChanged && <Button label="Reenviar" variant="secondary" onPress={() => run(() => resend(db, seq))} />}
       {confirming ? (
         <>
           <Notice tone="down">{DISCARD_WARNING}</Notice>

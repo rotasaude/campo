@@ -446,6 +446,19 @@ test("after microchip_taken the form asks the number again, empty: blank removes
   expect((await outboxRepo.byClientUuid(db, key))!.body).toMatchObject({ microchip: CHIP });
 });
 
+// Review I2: Reenviar would put the tablet's whole body over what the station changed (Q20); Corrigir is the way to check.
+test("animal_changed offers Corrigir and Descartar, never Reenviar", async () => {
+  const db = await zoonosesTablet();
+  await saveAnimal(db, { householdKey: HH, animalKey: ANIMAL, draft: { ...animalDraft("Rex"), sex: "female", tutorKey: JOANA }, newUuid });
+  const [edit] = await outboxRepo.all(db);
+  await handleStale(db, edit, answer("upload-response-stale-animal.json"));
+  await mount(db, edit.seq);
+  await screen.findByText(ZOONOSES_ERRORS.animal_changed, {}, FIRST);
+  expect(screen.getByRole("button", { name: "Corrigir" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Descartar" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Reenviar" })).toBeNull();
+});
+
 test("animal in needs_attention after stale_version: Corrigir opens the form on the current version and resends the same client_uuid", async () => {
   const db = await zoonosesTablet();
   await saveAnimal(db, { householdKey: HH, animalKey: ANIMAL, draft: { ...animalDraft("Rex"), sex: "female", tutorKey: JOANA }, newUuid });
